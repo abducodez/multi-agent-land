@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from dataclasses import dataclass, field
 
 
@@ -31,6 +33,65 @@ class ModelProvider:
         )
 
 
+# ── offline structured-output support ───────────────────────────────────────────
+#
+# A real small model, handed the JSON OUTPUT FORMAT block that ``json_instruction``
+# appends, replies with a JSON object carrying every requested field.  The offline
+# stub mirrors that **only when an agent opts into extra fields** (``output_extra_fields``
+# on its manifest): it parses the requested schema back out of the prompt and emits a
+# matching JSON object, so the say-vs-think ``thought``/``mood`` pairing the Fishbowl UI
+# renders is present in the ledger with no API key (ADR-0021).  Plain agents (no extra
+# fields) and non-schema prompts (e.g. reflection) are untouched — the stub returns the
+# same bare prose as before, so existing behaviour is byte-identical.
+
+# Demo-flavour moods the stub rotates through so the mind-reader has variety to show
+# offline.  This is the open mood vocabulary the UI adapter knows how to render; an
+# unrecognised mood simply degrades to "calm" there.  Demo content, like the curated
+# lines below — not an engine contract.
+_STUB_MOODS: tuple[str, ...] = ("calm", "thinking", "smug", "lying", "panic", "gossip", "truth")
+
+# Curated private monologue per role, paired with the public ``text`` lines to make the
+# say-vs-think split land offline.  Deterministic by prompt hash.
+_STUB_THOUGHTS: dict[str, list[str]] = {
+    "pocket-actor": [
+        "If I look like I meant to do that, maybe the ladder becomes real by morning.",
+        "Don't let them see the shadow sweat. Stay loose, stay impossible.",
+        "The postcards lie, but they are MY lies and I love them.",
+    ],
+    "hypothesis-former": [
+        "It only holds if the cause came before the clue. Watch the order.",
+        "I am ninety percent sure and one hundred percent going to say it like I'm certain.",
+        "If I'm wrong the devil's advocate will pounce — say it anyway.",
+    ],
+    "echo": [
+        "Give it back changed, never opposite — keep the shape, bend the meaning.",
+        "Whatever they dropped, I have already swallowed and re-coloured it.",
+    ],
+}
+_STUB_THOUGHT_DEFAULT = ["Best to keep this part to myself for now."]
+
+
+def _parse_output_schema(prompt: str) -> tuple[list[str], list[str]] | None:
+    """Recover ``(allowed_kinds, fields)`` from a ``json_instruction`` block.
+
+    Returns ``None`` when the prompt carries no such block (e.g. the reflection
+    prompt or a non-agent call), so the stub falls back to bare prose unchanged.
+    Coupled to the format emitted by ``src/core/structured.py:json_instruction``;
+    if that format drifts, parsing yields ``None`` and the stub degrades safely.
+    """
+    if "Schema:" not in prompt or "kind must be one of:" not in prompt:
+        return None
+    schema_m = re.search(r"Schema:\s*\{(.+?)\}", prompt)
+    kinds_m = re.search(r"kind must be one of:\s*(.+)", prompt)
+    if not schema_m or not kinds_m:
+        return None
+    fields = re.findall(r'"([A-Za-z_][\w]*)"', schema_m.group(1))
+    allowed = [k.strip() for k in kinds_m.group(1).split("|") if k.strip()]
+    if not fields or not allowed:
+        return None
+    return allowed, fields
+
+
 @dataclass
 class DeterministicTinyModel(ModelProvider):
     """Local deterministic stand-in until small hosted models are wired in.
@@ -38,6 +99,9 @@ class DeterministicTinyModel(ModelProvider):
     Serves every model profile offline so demos and tests are fully reproducible
     without an API key.  The ``variant`` (e.g. ``"stub:tiny"``) is folded into the
     hash so different profiles can produce different lines from the same prompt.
+    When an agent opts into ``output_extra_fields`` the stub emits a JSON object
+    carrying those fields (e.g. ``thought``/``mood``); otherwise it returns bare
+    prose exactly as before.
     """
 
     variant: str = "stub<=4b"
@@ -63,10 +127,35 @@ class DeterministicTinyModel(ModelProvider):
             ],
         }
         options = choices.get(role, ["The wood hums and waits."])
-        out = options[int(digest[:2], 16) % len(options)]
+        text = options[int(digest[:2], 16) % len(options)]
+
+        out = text
+        schema = _parse_output_schema(prompt)
+        if schema is not None:
+            allowed_kinds, fields = schema
+            extra = [f for f in fields if f not in ("kind", "text")]
+            if extra:  # only agents that opted into extra fields take the JSON path
+                obj: dict[str, str] = {
+                    "kind": allowed_kinds[int(digest[2:4], 16) % len(allowed_kinds)],
+                    "text": text,
+                }
+                for name in extra:
+                    obj[name] = self._synth_field(name, role, digest)
+                out = json.dumps(obj, ensure_ascii=False)
+
         self._last_usage = {
             "prompt_tokens": estimate_tokens(prompt),
             "completion_tokens": estimate_tokens(out),
             "total_tokens": estimate_tokens(prompt) + estimate_tokens(out),
         }
         return out
+
+    def _synth_field(self, name: str, role: str, digest: str) -> str:
+        """Deterministically synthesise a value for one requested extra field."""
+        if name == "mood":
+            return _STUB_MOODS[int(digest[4:6], 16) % len(_STUB_MOODS)]
+        if name == "thought":
+            opts = _STUB_THOUGHTS.get(role, _STUB_THOUGHT_DEFAULT)
+            return opts[int(digest[6:8], 16) % len(opts)]
+        # Unknown extra field: a short, stable placeholder keeps the output valid.
+        return f"{name}:{digest[:4]}"

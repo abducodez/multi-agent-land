@@ -15,3 +15,5 @@ memory:
   window: 6
   reflection_threshold: 12   # forms a belief in long runs; off for short demos/tests
 tools: []
+hue: 152
+archetype: the seedkeeper

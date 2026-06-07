@@ -1,6 +1,7 @@
 # Fishbowl UI — Assessment & Plan of Record
 
-> **Status: ○ Planned.** Decisions locked 2026-06-08. The binding decision is
+> **Status: ◐ In progress — Phases 0–1 shipped (the data foundation); Phases 2–4
+> (the Gradio shell) pending.** Decisions locked 2026-06-08. The binding decision is
 > [ADR-0021](../../adr/0021-fishbowl-ui-gradio-presenter.md). This page is the
 > assessment and phased plan; it gains a "✅ Realized" banner and an as-built
 > companion (`architecture/fishbowl-ui.md`) once shipped.
@@ -91,14 +92,18 @@ the presenter, not the core.
 
 Each phase is shippable and keeps the no-API-key stub working and the suite green.
 
-- **Phase 0 — Foundation (unconditional).** `derive_cast_state` (G1) + adapter +
-  `view_model_at`; map events → the design vocabulary, derive hue (G7) and tier colour
-  (G8), read real tokens/rounds (G9). Unit-test prefix replay `k=0..N` for determinism
-  and the unknown-kind fallback.
-- **Phase 1 — Triples are real.** Add `thought` + `mood` to the relevant agents'
-  `output_extra_fields` and output schema; teach the deterministic stub to synthesize
-  them; add optional `voice` on `world.observed` (G4). Additive; old scenarios
-  unaffected.
+- **Phase 0 — Foundation ✅ (shipped).** `src/ui/fishbowl/`: `derive_cast_state` (G1) +
+  `adapter` (hue/tier/voice/mood + say/narrate/poke/verdict mapping, G7/G8) +
+  `view_model_at` (prefix-replay snapshot, real tokens/rounds from `governor.stats`, G9).
+  Pure, no Gradio. Covered by `tests/test_fishbowl.py` (prefix replay `k=0..N`, unknown
+  actor/kind fallbacks).
+- **Phase 1 — Triples are real ✅ (shipped).** Cast manifests declare
+  `output_extra_fields: [thought, mood]` (G2/G3) plus optional `hue`/`archetype` (G7);
+  the deterministic stub is now schema-aware and synthesises `thought`/`mood` offline, so
+  the ledger carries the say-vs-think pairing with no API key (proven by
+  `tests/test_fishbowl.py::TestOfflineEmitsMoodAndThought`). `inject_user_event` gained an
+  optional `label` (G6); the adapter assigns a per-scenario narrator `voice` (G4) and
+  reads an optional verdict `reveal` (G5) when present. Additive; 277 tests green.
 - **Phase 2 — The Show (`gr.HTML` + `gr.Timer`, hybrid transport).** Port the CSS;
   render Constellation first, then Feed and Split; the play-head state machine in
   `gr.State`; poke strip → `inject_user_event` (with `label`, G6); verdict banner +

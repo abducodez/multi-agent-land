@@ -118,6 +118,17 @@ class AgentManifest(BaseModel):
     Example: ["emotion"] -> {"kind": "...", "text": "...", "emotion": "..."}.
     Lets a scenario shape agent output without engine edits."""
 
+    # Presentation metadata — optional, consumed by the UI presenter and ignored
+    # by the engine (ADR-0021).  Additive and defaulted, so existing manifests and
+    # tests are unaffected; the presenter derives sensible values when these are None.
+    hue: int | None = None
+    """Optional 0–360 colour hue for this agent's mind on stage.
+    None → the presenter derives a stable hue from the name."""
+
+    archetype: str | None = None
+    """Optional short, human-readable archetype (e.g. "the over-thinker").
+    None → the presenter derives one from the role/persona."""
+
 
 # ── model profile resolution ─────────────────────────────────────────────────
 

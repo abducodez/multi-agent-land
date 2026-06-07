@@ -34,6 +34,10 @@ class AgentManifest(BaseModel):
 
     # Output shaping
     output_extra_fields: list[str]   # extra payload fields the model is asked for
+
+    # Presentation metadata (optional; consumed by the UI presenter, ignored by the engine)
+    hue: int | None                  # 0–360 stage colour; None → derived from name
+    archetype: str | None            # short human label; None → derived from role
 ```
 
 ---
@@ -124,7 +128,17 @@ field; the handler only adds behaviour.
 ### `output_extra_fields`
 Additional payload fields the model is asked to emit beyond `{kind, text}`, e.g.
 `["emotion"]` → `{"kind": "...", "text": "...", "emotion": "..."}`.  Lets a
-scenario shape agent output without engine edits.
+scenario shape agent output without engine edits.  The Fishbowl cast uses
+`["thought", "mood"]` to carry the say-vs-think pairing on `agent.spoke`; the
+deterministic stub synthesises them offline so the mind-reader works with no API key
+(ADR-0021).
+
+### `hue` / `archetype`
+Optional presentation metadata, consumed by the Fishbowl UI presenter and **ignored by
+the engine** (ADR-0021).  `hue` (0–360) colours the agent's mind on stage; `archetype`
+is a short human-readable label (e.g. "the over-thinker").  Both default to `None`, in
+which case the presenter derives a stable hue from the name and an archetype from the
+role — so existing manifests and tests are unaffected (backward-compatible additions only).
 
 ---
 

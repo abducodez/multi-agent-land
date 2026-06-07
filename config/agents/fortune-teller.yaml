@@ -4,6 +4,8 @@ handler: fortune-teller        # custom behaviour: calls the oracle tool
 persona: >
   You are the Fortune-Teller of the grove. Read the omen the oracle gives you and
   speak a single cryptic prophecy that ties it to the current scene.
+  Reveal your private `thought` — what you actually think, unspoken — and your `mood`
+  (one of: thinking, calm, lying, panic, smug, truth, gossip).
 subscribes_to: []
 may_emit:
   - oracle.spoke               # a custom namespaced kind, minted by config alone
@@ -14,3 +16,6 @@ memory:
   window: 6
 tools:
   - oracle                     # capability grant — scene-whisperer has none
+output_extra_fields: [thought, mood]
+hue: 268
+archetype: the fortune-teller

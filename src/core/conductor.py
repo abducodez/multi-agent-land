@@ -122,15 +122,18 @@ class Conductor:
             self._tick()
             self._maybe_snapshot()
 
-    def inject_user_event(self, text: str) -> None:
+    def inject_user_event(self, text: str, label: str | None = None) -> None:
         self.turn += 1
+        payload: dict[str, str] = {"text": text}
+        if label:
+            payload["label"] = label
         self._append(
             Event(
                 run_id=self.run_id,
                 turn=self.turn,
                 kind="user.injected",
                 actor="visitor",
-                payload={"text": text},
+                payload=payload,
             )
         )
 
