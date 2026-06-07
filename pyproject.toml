@@ -30,6 +30,14 @@ store = [
 litellm = [
   "litellm>=1.40",
 ]
+# Validated structured output (ADR-0016). Optional: wraps the LiteLLM gateway
+# with Instructor so the live path returns schema-valid, kind-constrained event
+# payloads (retried on validation failure) instead of parsing prose. The system
+# runs fully offline on the deterministic stub + tolerant parser without this;
+# instructor is imported lazily so importing src.* never requires it.
+instructor = [
+  "instructor>=1.5",
+]
 
 [tool.ruff]
 line-length = 120

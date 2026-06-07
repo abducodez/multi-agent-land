@@ -26,7 +26,7 @@ from src.core.events import Event
 from src.core.manifest import AgentManifest
 from src.core.memory import EpisodicMemory, ReflectionTracker, SalienceMemory
 from src.core.projections import StageProjection
-from src.core.structured import json_instruction, parse_agent_output
+from src.core.structured import build_output_model, json_instruction, parse_agent_output
 from src.models.router import ModelRouter
 
 if TYPE_CHECKING:
@@ -108,11 +108,10 @@ class ManifestAgent(Agent):
         extra = self._build_extra_prompt(projection, recent_events)
         tools_block = self._tools_block()
         allowed = self._content_kinds()
-        instruction = json_instruction(allowed, extra_fields=self.manifest.output_extra_fields or None)
-        full_prompt = "\n".join(filter(None, [context, extra, tools_block, instruction]))
+        extra_fields = self.manifest.output_extra_fields or None
+        base_prompt = "\n".join(filter(None, [context, extra, tools_block]))
 
-        raw = self._complete(self.manifest.name, full_prompt)
-        parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
+        parsed = self._resolve_payload(self.manifest.name, base_prompt, allowed, extra_fields)
 
         return Event(
             run_id=run_id,
@@ -131,6 +130,39 @@ class ManifestAgent(Agent):
         return ""
 
     # ── model routing ─────────────────────────────────────────────────────────
+
+    def _resolve_payload(
+        self,
+        role: str,
+        prompt: str,
+        allowed: list[str],
+        extra_fields: list[str] | None,
+    ) -> dict:
+        """Produce a validated ``{kind, text, …}`` payload for *role*.
+
+        Live path: if the routed provider supports structured output, ask it for
+        a Pydantic model whose ``kind`` is constrained to *allowed* and return
+        its fields — validated by construction, no ``_raw_fallback``.  Offline
+        path (deterministic stub, no ``complete_structured``): append the JSON
+        instruction and run the tolerant parser as before.  Token/cost usage is
+        recorded from the provider in both paths.
+        """
+        provider = self.router.for_profile(self.manifest.model_profile)
+        if hasattr(provider, "complete_structured"):
+            model = build_output_model(allowed, extra_fields)
+            try:
+                result = provider.complete_structured(role, prompt, model)
+                self.last_usage = dict(provider.last_usage)
+                return result.model_dump()
+            except Exception:
+                # Live structured call failed (validation/transport); fall back to
+                # the tolerant parser below so a turn still produces an event.
+                pass
+
+        instruction = json_instruction(allowed, extra_fields=extra_fields)
+        raw = provider.complete(role, f"{prompt}\n{instruction}")
+        self.last_usage = dict(provider.last_usage)
+        return parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
 
     def _complete(self, role: str, prompt: str) -> str:
         """Route to the provider for this agent's profile and record token usage."""

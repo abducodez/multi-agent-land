@@ -1,30 +1,80 @@
-"""Structured JSON output parsing for agent responses.
+"""Structured output for agent responses — two layers, one schema.
 
 Small models comply better under constraint.  Asking for free prose is
 where they drift.  Asking for a specific JSON schema is where they stay
 in character.
 
-Design:
-  - ContextBuilder appends a JSON instruction block to every prompt.
-  - The model emits JSON (or tries to).
-  - parse_agent_output() validates and normalises the response.
-  - Fallback: if the model doesn't comply, wrap the raw text in the
-    schema so downstream systems always get a typed dict.
+Two paths share the same ``{kind, text, …}`` shape:
 
-This is *not* OpenAI function-calling — it works with any model, any
-provider, any inference endpoint, because the constraint is in the prompt.
+  - **Live path (validated).**  ``build_output_model`` turns an agent's
+    ``may_emit`` grant + ``output_extra_fields`` into a Pydantic model whose
+    ``kind`` is constrained to the allowed kinds.  The live provider asks the
+    model for *that* model and retries on validation failure, so the payload is
+    valid by construction — no malformed prose ever reaches the ledger.
+  - **Offline path (tolerant parse).**  ``json_instruction`` appends a JSON
+    block to the prompt and ``parse_agent_output`` normalises whatever text the
+    deterministic stub returns, wrapping non-compliant prose in the fallback
+    kind.  This keeps demos and tests fully offline with no dependency.
+
+Both paths are model/provider-agnostic: the live constraint rides on the same
+``{kind, text, …}`` contract the parser produces, so downstream
+(``Event`` construction, conductor, ledger) is identical either way.
 """
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 
 # ── output schema ─────────────────────────────────────────────────────────────
 
 class AgentOutputError(ValueError):
     """Raised when output cannot be normalised to a valid event payload."""
+
+
+# ── validated output model (live path) ─────────────────────────────────────────
+
+def build_output_model(
+    allowed_kinds: list[str],
+    extra_fields: list[str] | None = None,
+) -> type["BaseModel"]:
+    """Build a Pydantic model for an agent's validated output.
+
+    ``kind`` is constrained to *allowed_kinds* via a ``Literal``, so the model
+    cannot emit a kind it is not authorised for; ``text`` plus any *extra_fields*
+    are required strings.  Used on the live path with structured output: the
+    provider retries on validation failure and returns a valid instance, which
+    means the malformed-prose ``_raw_fallback`` path is never taken.
+
+    Args:
+        allowed_kinds: event kinds this agent may emit (the ``may_emit`` grant,
+            reflection excluded).  Must be non-empty.
+        extra_fields: optional additional payload fields (e.g. ``"emotion"``),
+            each a required string alongside ``text``.
+    """
+    if not allowed_kinds:
+        raise AgentOutputError("build_output_model requires at least one allowed kind")
+
+    from pydantic import create_model
+
+    # A single-element Literal is legal and still constrains to that one kind.
+    kind_type = Literal[tuple(allowed_kinds)]  # type: ignore[valid-type]
+    fields: dict[str, Any] = {
+        "kind": (kind_type, ...),
+        "text": (str, ...),
+    }
+    for name in extra_fields or []:
+        fields[name] = (str, ...)
+
+    return create_model(
+        "AgentOutput",
+        __doc__="Validated agent event payload (kind constrained to may_emit).",
+        **fields,
+    )
 
 
 # ── prompt instruction ────────────────────────────────────────────────────────
