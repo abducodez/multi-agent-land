@@ -1,0 +1,25 @@
+<!-- FISHBOWL — <head> injection for demo.launch(head=...)
+
+     Loads the two display/body fonts the phosphor theme relies on:
+       * Martian Mono   — display (logos, eyebrows, headings, tags)
+       * IBM Plex Mono   — body (everything else, incl. italic thoughts)
+
+     The CRT atmosphere is NOT defined here. The app shell (Unit 9)
+     emits the overlay layers as raw HTML inside the gr.Blocks body so
+     they live in the same DOM as the theater, e.g.:
+
+       <div class="crt-bg"></div>
+       <div class="crt-grid"></div>
+       <div class="crt-scan"></div>
+       <div class="crt-vignette"></div>
+
+     and wraps the live stage in <div class="crt-flicker">…</div>.
+     Styling for all of those lives in assets/styles.css. -->
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#05121a" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;500;600;700;800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap"
+  rel="stylesheet"
+/>

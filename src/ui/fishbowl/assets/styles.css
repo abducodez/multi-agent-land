@@ -1,0 +1,655 @@
+/* ============================================================
+   FISHBOWL — aquatic CRT lab readout
+   monospace, phosphor, glassy, scientific
+
+   Ported from ui/raw/styles.css + ui/raw/show.css for injection
+   into a gr.Blocks app via `css=`. Gradio wraps everything in
+   `.gradio-container`, so the theater markup is wrapped in a
+   `.fishbowl` root and the component rules are scoped under it to
+   survive Gradio's own cascade. The CSS custom properties live on
+   `:root` so they remain available everywhere (incl. shadow-free
+   gr.HTML islands), and the CRT overlay layers are fixed full-bleed
+   so they sit behind / above the app shell regardless of scope.
+   ============================================================ */
+
+:root {
+  /* aquatic darks */
+  --bg-0: #05121a;          /* deepest tank */
+  --bg-1: #07181f;
+  --bg-2: #0a222b;
+  --panel: rgba(13, 39, 47, 0.55);
+  --panel-solid: #0c2730;
+  --glass: rgba(120, 222, 214, 0.04);
+
+  /* phosphor inks */
+  --ink: #c4f6ee;
+  --ink-mid: #79c3bb;
+  --ink-dim: #4d8983;
+  --ink-faint: #2f6962;
+
+  /* lines + grid */
+  --line: rgba(120, 222, 214, 0.16);
+  --line-soft: rgba(120, 222, 214, 0.08);
+  --line-hot: rgba(120, 222, 214, 0.42);
+
+  /* accents — shared chroma/lightness, varied hue */
+  --cyan: #4fe6d2;
+  --teal: #2bc4b4;
+  --blue: #5bb6ff;
+  --violet: #9b8cff;
+
+  /* signal colors (alarms / states) */
+  --amber: #ffcf6b;   /* tension */
+  --coral: #ff8f7d;   /* lie / danger */
+  --lime:  #9be86b;   /* truth / win */
+
+  --glow: 0 0 12px rgba(79, 230, 210, 0.35);
+  --glow-hot: 0 0 18px rgba(79, 230, 210, 0.6);
+
+  --font-display: "Martian Mono", ui-monospace, monospace;
+  --font-body: "IBM Plex Mono", ui-monospace, monospace;
+
+  --r: 4px;
+  --r-lg: 8px;
+}
+
+/* ============================================================
+   Gradio container integration — paint the app phosphor-dark,
+   kill the default footer, and let the CRT layers show through.
+   ============================================================ */
+.gradio-container {
+  background: var(--bg-0) !important;
+  color: var(--ink) !important;
+  font-family: var(--font-body) !important;
+  max-width: 100% !important;
+}
+.gradio-container ::selection { background: rgba(79, 230, 210, 0.28); color: #fff; }
+
+/* hide the default Gradio footer ("Use via API", settings, etc.) */
+footer { display: none !important; }
+.gradio-container footer { display: none !important; }
+
+/* phosphor scrollbars (global — harmless outside the app) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(79, 230, 210, 0.18);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(79, 230, 210, 0.35); background-clip: padding-box; }
+
+/* ============================================================
+   CRT atmosphere — scanlines, vignette, flicker
+   applied as fixed overlays so they never interfere w/ layout.
+   The app shell (Unit 9) emits these overlay divs as raw HTML:
+
+     <div class="crt-bg"></div>
+     <div class="crt-grid"></div>
+     <div class="crt-scan"></div>
+     <div class="crt-vignette"></div>
+
+   and wraps the live theater in <div class="crt-flicker"> so the
+   subtle phosphor flicker animation plays over the whole stage.
+   These are intentionally NOT scoped under .fishbowl: they are
+   position:fixed full-bleed layers that frame the entire viewport.
+   ============================================================ */
+.crt-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(43, 196, 180, 0.10), transparent 60%),
+    radial-gradient(100% 80% at 50% 120%, rgba(91, 182, 255, 0.07), transparent 55%),
+    var(--bg-0);
+}
+.crt-grid {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--line-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(120% 100% at 50% 40%, #000 35%, transparent 92%);
+  opacity: 0.6;
+}
+.crt-scan {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.16) 3px,
+    rgba(0, 0, 0, 0.16) 3px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+.crt-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  pointer-events: none;
+  box-shadow: inset 0 0 220px rgba(0,0,0,0.7), inset 0 0 60px rgba(0,0,0,0.4);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .crt-flicker { animation: flicker 7s infinite steps(60); }
+}
+@keyframes flicker {
+  0%, 97%, 100% { opacity: 1; }
+  97.5% { opacity: 0.92; }
+  98%   { opacity: 0.98; }
+  98.5% { opacity: 0.9; }
+}
+
+/* ============================================================
+   .fishbowl — scoped theater root. Everything the renderers emit
+   lives inside this wrapper so the rules win over Gradio defaults.
+   ============================================================ */
+.fishbowl {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+.fishbowl * { box-sizing: border-box; }
+
+/* ============================================================
+   typography helpers
+   ============================================================ */
+.fishbowl .mono { font-family: var(--font-body); }
+.fishbowl .disp { font-family: var(--font-display); }
+.fishbowl .eyebrow {
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+.fishbowl .glow { text-shadow: var(--glow); }
+.fishbowl .tnum { font-variant-numeric: tabular-nums; }
+
+.fishbowl h1, .fishbowl h2, .fishbowl h3, .fishbowl h4 {
+  margin: 0; font-family: var(--font-display); font-weight: 700;
+}
+
+/* ============================================================
+   primitives
+   ============================================================ */
+.fishbowl .panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(8px);
+}
+
+.fishbowl .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-mid);
+  background: var(--glass);
+  white-space: nowrap;
+}
+.fishbowl .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.fishbowl .btn {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 9px 16px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.fishbowl .btn:hover { border-color: var(--line-hot); color: #fff; box-shadow: var(--glow); }
+.fishbowl .btn:active { transform: translateY(1px); }
+.fishbowl .btn.primary {
+  background: linear-gradient(180deg, rgba(79,230,210,0.22), rgba(43,196,180,0.12));
+  border-color: var(--cyan);
+  color: var(--cyan);
+  text-shadow: var(--glow);
+}
+.fishbowl .btn.primary:hover { background: linear-gradient(180deg, rgba(79,230,210,0.34), rgba(43,196,180,0.2)); box-shadow: var(--glow-hot); }
+.fishbowl .btn.ghost { background: transparent; }
+.fishbowl .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.fishbowl .icon-btn {
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  border: 1px solid var(--line);
+  background: var(--glass);
+  border-radius: var(--r);
+  color: var(--ink-mid);
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.fishbowl .icon-btn:hover { border-color: var(--line-hot); color: var(--cyan); box-shadow: var(--glow); }
+
+/* form controls — styled to look like crisp lab instruments */
+.fishbowl .field { display: flex; flex-direction: column; gap: 6px; }
+.fishbowl .field > label { font-family: var(--font-display); font-size: 9.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-dim); }
+.fishbowl input[type="text"], .fishbowl textarea, .fishbowl select {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--ink);
+  background: rgba(5, 18, 26, 0.6);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 9px 11px;
+  outline: none;
+  transition: all 0.16s ease;
+  width: 100%;
+}
+.fishbowl input:focus, .fishbowl textarea:focus, .fishbowl select:focus { border-color: var(--cyan); box-shadow: var(--glow); }
+.fishbowl textarea { resize: vertical; line-height: 1.55; }
+.fishbowl select { appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2379c3bb' stroke-width='1.4' fill='none'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; padding-right: 28px;
+}
+
+/* range slider */
+.fishbowl input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 3px; background: var(--line); border-radius: 3px; outline: none; cursor: pointer;
+}
+.fishbowl input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--cyan); box-shadow: var(--glow); border: 2px solid var(--bg-1); cursor: pointer;
+}
+.fishbowl input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--cyan); box-shadow: var(--glow); border: 2px solid var(--bg-1); cursor: pointer;
+}
+
+/* toggle switch */
+.fishbowl .switch { position: relative; width: 46px; height: 24px; flex: none; cursor: pointer; }
+.fishbowl .switch input { display: none; }
+.fishbowl .switch .track {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: rgba(5,18,26,0.8); border: 1px solid var(--line); transition: all 0.2s ease;
+}
+.fishbowl .switch .knob {
+  position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--ink-dim); transition: all 0.2s ease;
+}
+.fishbowl .switch input:checked + .track { border-color: var(--cyan); background: rgba(79,230,210,0.16); box-shadow: var(--glow); }
+.fishbowl .switch input:checked + .track + .knob { left: 25px; background: var(--cyan); box-shadow: var(--glow); }
+
+.fishbowl .divider { height: 1px; background: var(--line-soft); border: 0; margin: 0; }
+
+/* scrollable region */
+.fishbowl .scroll { overflow-y: auto; overflow-x: hidden; }
+
+/* animation utility keyframes used across components */
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 50% { opacity: 0; } }
+.fishbowl .caret::after { content: "▌"; color: var(--cyan); animation: blink 1s steps(1) infinite; }
+
+/* ============================================================
+   avatar life
+   ============================================================ */
+@media (prefers-reduced-motion: no-preference) {
+  .fishbowl .av-ring { animation: avRing 2.4s ease-out infinite; transform-origin: 50% 50%; }
+  .fishbowl .av-blink { animation: avBlink 3.2s infinite; }
+  .fishbowl .av-sweat { animation: avSweat 2.6s ease-in infinite; transform-origin: 74px 24px; }
+  .fishbowl .av-gasp { animation: avGasp 0.8s ease-in-out infinite; transform-origin: 50px 65px; }
+  .fishbowl .av-thinking { animation: avBob 2.8s ease-in-out infinite; }
+  .fishbowl .av-panic { animation: avShake 0.32s linear infinite; }
+  .fishbowl .av-smug, .fishbowl .av-gossip { animation: avTilt 4s ease-in-out infinite; }
+  .fishbowl .av-truth, .fishbowl .av-calm { animation: avFloat 5s ease-in-out infinite; }
+}
+@keyframes avRing { 0% { transform: scale(0.85); opacity: 0.6; } 100% { transform: scale(1.25); opacity: 0; } }
+@keyframes avBlink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(0.1); } }
+@keyframes avSweat { 0%, 55% { transform: translateY(0); opacity: 0; } 65% { opacity: 1; } 100% { transform: translateY(14px); opacity: 0; } }
+@keyframes avGasp { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+@keyframes avBob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes avShake { 0%,100% { transform: translateX(0) rotate(0); } 25% { transform: translateX(-1.5px) rotate(-1.5deg); } 75% { transform: translateX(1.5px) rotate(1.5deg); } }
+@keyframes avTilt { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
+@keyframes avFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+/* gradio mapping annotation */
+.fishbowl .gr-tag {
+  font-family: var(--font-body);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--blue);
+  background: rgba(91, 182, 255, 0.1);
+  border: 1px solid rgba(91, 182, 255, 0.3);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   app shell — gradio-style tab header
+   ============================================================ */
+.fishbowl .app { display: flex; flex-direction: column; min-height: 100vh; position: relative; z-index: 1; }
+.fishbowl .topbar {
+  display: flex; align-items: center; gap: 18px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(6, 20, 27, 0.7);
+  backdrop-filter: blur(10px);
+  flex: none;
+}
+.fishbowl .brand { display: flex; align-items: baseline; gap: 10px; }
+.fishbowl .brand .logo {
+  font-family: var(--font-display); font-weight: 800; font-size: 19px; letter-spacing: 0.12em;
+  color: var(--cyan); text-shadow: var(--glow-hot);
+}
+.fishbowl .brand .sub { font-size: 10px; letter-spacing: 0.06em; color: var(--ink-dim); }
+
+.fishbowl .tabs { display: flex; gap: 4px; background: rgba(5,18,26,0.6); border: 1px solid var(--line); border-radius: var(--r); padding: 3px; }
+.fishbowl .tab {
+  font-family: var(--font-display); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 600;
+  color: var(--ink-dim); padding: 7px 16px; border-radius: 3px; cursor: pointer; transition: all 0.16s ease;
+  display: flex; align-items: center; gap: 8px; border: 1px solid transparent;
+}
+.fishbowl .tab:hover { color: var(--ink-mid); }
+.fishbowl .tab.active { color: var(--cyan); background: var(--glass); border-color: var(--line); text-shadow: var(--glow); }
+
+.fishbowl .tab-badge {
+  font-size: 8.5px; padding: 1px 6px; border-radius: 999px; letter-spacing: 0.1em;
+  background: rgba(155,232,107,0.14); color: var(--lime); border: 1px solid rgba(155,232,107,0.3);
+}
+
+.fishbowl .app-body { flex: 1; min-height: 0; position: relative; }
+
+/* live status dot */
+.fishbowl .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); box-shadow: 0 0 8px var(--lime); }
+@media (prefers-reduced-motion: no-preference) { .fishbowl .live-dot { animation: livePulse 1.6s ease-in-out infinite; } }
+@keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ============================================================
+   THE LAB
+   ============================================================ */
+.fishbowl .lab { height: 100%; position: relative; }
+.fishbowl .lab-inner { max-width: 1080px; margin: 0 auto; padding: 26px 26px 120px; display: flex; flex-direction: column; gap: 16px; }
+
+.fishbowl .lab-hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding: 6px 2px 10px; }
+.fishbowl .lab-hero-t { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 8px 0 8px; color: var(--ink); text-shadow: var(--glow); max-width: 640px; line-height: 1.2; }
+.fishbowl .lab-hero-p { font-size: 13px; color: var(--ink-mid); max-width: 600px; margin: 0; line-height: 1.6; }
+.fishbowl .lab-hero-p b { color: var(--cyan); }
+.fishbowl .btn.surprise { border-color: var(--violet); color: var(--violet); flex: none; }
+.fishbowl .btn.surprise:hover { box-shadow: 0 0 16px rgba(155,140,255,0.4); }
+
+.fishbowl .lab-sec { padding: 0; overflow: hidden; }
+.fishbowl .lab-sec-h { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--line-soft); }
+.fishbowl .lab-sec-n { font-size: 12px; font-weight: 700; color: var(--cyan); letter-spacing: 0.1em; opacity: 0.8; }
+.fishbowl .lab-sec-t { font-size: 14px; letter-spacing: 0.06em; color: var(--ink); }
+.fishbowl .lab-sec-body { padding: 18px; }
+.fishbowl .lab-hint { font-size: 10.5px; color: var(--ink-faint); font-style: italic; max-width: 360px; text-align: right; }
+.fishbowl .lab-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* scenario cards */
+.fishbowl .scn-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.fishbowl .scn-card {
+  display: flex; flex-direction: column; gap: 7px; align-items: flex-start;
+  padding: 16px 14px; border: 1px solid var(--line); border-radius: var(--r-lg);
+  background: var(--glass); cursor: pointer; transition: all 0.18s ease; text-align: left;
+  position: relative; min-height: 150px;
+}
+.fishbowl .scn-card:hover { border-color: var(--line-hot); box-shadow: var(--glow); transform: translateY(-2px); }
+.fishbowl .scn-card.on { border-color: var(--cyan); background: rgba(79,230,210,0.08); box-shadow: var(--glow); }
+.fishbowl .scn-card.on::after { content: "ACTIVE"; position: absolute; top: 10px; right: 10px; font-family: var(--font-display); font-size: 7.5px; letter-spacing: 0.18em; color: var(--cyan); }
+.fishbowl .scn-card.custom { opacity: 0.45; cursor: default; border-style: dashed; }
+.fishbowl .scn-card.custom:hover { transform: none; box-shadow: none; border-color: var(--line); }
+.fishbowl .scn-glyph { font-size: 28px; color: var(--cyan); text-shadow: var(--glow); line-height: 1; }
+.fishbowl .scn-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink); }
+.fishbowl .scn-code { font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
+.fishbowl .scn-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: auto; }
+.fishbowl .scn-tag { font-size: 8.5px; letter-spacing: 0.06em; color: var(--ink-mid); border: 1px solid var(--line-soft); border-radius: 999px; padding: 2px 7px; }
+
+/* cast table */
+.fishbowl .cast-headcount { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.fishbowl .cast-table { display: flex; flex-direction: column; gap: 2px; }
+.fishbowl .cast-row { display: grid; grid-template-columns: 48px 1.1fr 1.3fr 1.8fr 1.2fr 1fr; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r); }
+.fishbowl .cast-row:not(.cast-head):hover { background: var(--glass); }
+.fishbowl .cast-head { font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-faint); padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); border-radius: 0; }
+.fishbowl .cast-av { display: grid; place-items: center; }
+.fishbowl .cast-name { font-family: var(--font-display); font-weight: 600; font-size: 13px; letter-spacing: 0.05em; padding: 6px 8px; }
+.fishbowl .cast-arch { font-size: 12px; color: var(--ink-mid); }
+.fishbowl .cast-model { display: flex; align-items: center; gap: 8px; }
+.fishbowl .cast-model select { font-size: 11.5px; padding: 6px 8px; }
+.fishbowl .tier-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
+.fishbowl .cast-temp { display: flex; align-items: center; gap: 9px; }
+.fishbowl .cast-temp .tnum { font-size: 12px; color: var(--cyan); min-width: 24px; }
+.fishbowl .cast-role { justify-self: start; font-size: 8px; }
+
+.fishbowl .range-ends { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); margin-top: 5px; }
+
+/* tools */
+.fishbowl .tool-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.fishbowl .tool-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--glass); cursor: pointer; transition: all 0.16s ease; text-align: left; position: relative; }
+.fishbowl .tool-chip:hover { border-color: var(--line-hot); }
+.fishbowl .tool-chip.on { border-color: var(--cyan); background: rgba(79,230,210,0.07); }
+.fishbowl .tool-box { position: absolute; top: 10px; right: 11px; width: 16px; height: 16px; border: 1px solid var(--line); border-radius: 3px; display: grid; place-items: center; font-size: 11px; color: var(--cyan); }
+.fishbowl .tool-chip.on .tool-box { border-color: var(--cyan); box-shadow: var(--glow); }
+.fishbowl .tool-name { font-size: 12px; color: var(--ink); }
+.fishbowl .tool-desc { font-size: 9.5px; color: var(--ink-dim); }
+
+/* budget */
+.fishbowl .budget-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.fishbowl .seed-note { font-size: 11px; color: var(--ink-faint); margin: 16px 0 0; line-height: 1.5; }
+
+/* launch bar */
+.fishbowl .launch-bar { position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 18px; padding: 14px 26px; background: rgba(6,20,27,0.92); backdrop-filter: blur(12px); border-top: 1px solid var(--line); }
+.fishbowl .launch-info { display: flex; align-items: center; gap: 14px; flex: 1; }
+.fishbowl .launch-meta { font-size: 11px; color: var(--ink-dim); letter-spacing: 0.04em; }
+.fishbowl .launch-voice { flex-direction: row; align-items: center; gap: 10px; }
+.fishbowl .launch-voice label { white-space: nowrap; }
+.fishbowl .launch-voice select { min-width: 230px; font-size: 11.5px; }
+.fishbowl .launch-go { padding: 12px 22px; font-size: 12px; }
+
+/* hints toggle + summon flash */
+.fishbowl .hints-toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.fishbowl .summon-flash { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(5,18,26,0.86); backdrop-filter: blur(10px); animation: sfIn 0.3s ease; }
+@keyframes sfIn { from { opacity: 0; } to { opacity: 1; } }
+.fishbowl .sf-glyph { font-size: 90px; color: var(--cyan); text-shadow: var(--glow-hot); animation: sfPulse 0.85s ease-in-out infinite; }
+@keyframes sfPulse { 0%,100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.12); opacity: 1; } }
+.fishbowl .sf-text { font-size: 18px; letter-spacing: 0.22em; color: var(--ink); text-shadow: var(--glow); }
+.fishbowl .sf-sub { font-size: 11px; letter-spacing: 0.08em; color: var(--ink-dim); }
+.fishbowl .app.surprising .lab-inner { animation: surpriseShimmer 0.6s ease; }
+@keyframes surpriseShimmer { 0% { filter: brightness(1.4) saturate(1.3); } 100% { filter: none; } }
+
+/* ============================================================
+   THE SHOW
+   ============================================================ */
+.fishbowl .show { display: flex; flex-direction: column; height: 100%; position: relative; }
+
+/* ---- show bar ---- */
+.fishbowl .showbar { display: flex; align-items: center; gap: 16px; padding: 11px 20px; border-bottom: 1px solid var(--line); background: rgba(6,20,27,0.6); backdrop-filter: blur(10px); flex: none; }
+.fishbowl .show-title { display: flex; align-items: center; gap: 11px; flex: 1; min-width: 0; }
+.fishbowl .show-title .disp { font-size: 15px; letter-spacing: 0.08em; color: var(--ink); text-shadow: var(--glow); }
+.fishbowl .show-code { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); }
+.fishbowl .show-controls { display: flex; align-items: center; gap: 14px; }
+
+/* the star — mind reader toggle */
+.fishbowl .mindreader { display: flex; align-items: center; gap: 10px; padding: 6px 12px 6px 14px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; transition: all 0.2s ease; background: var(--glass); }
+.fishbowl .mindreader.on { border-color: var(--cyan); box-shadow: var(--glow); background: rgba(79,230,210,0.08); }
+.fishbowl .mr-icon { color: var(--ink-dim); display: grid; place-items: center; }
+.fishbowl .mindreader.on .mr-icon { color: var(--cyan); }
+.fishbowl .mr-label { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-mid); }
+.fishbowl .mindreader.on .mr-label { color: var(--cyan); }
+
+/* segmented control */
+.fishbowl .seg { display: flex; gap: 2px; background: rgba(5,18,26,0.7); border: 1px solid var(--line); border-radius: var(--r); padding: 2px; }
+.fishbowl .seg-b { width: 34px; height: 30px; display: grid; place-items: center; border: 0; background: transparent; color: var(--ink-dim); border-radius: 3px; cursor: pointer; transition: all 0.15s ease; }
+.fishbowl .seg-b.sb { width: auto; padding: 0 11px; font-family: var(--font-display); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.fishbowl .seg-b:hover { color: var(--ink-mid); }
+.fishbowl .seg-b.on { background: var(--glass); color: var(--cyan); box-shadow: inset 0 0 0 1px var(--line-hot); }
+.fishbowl .voice-field select { min-width: 180px; font-size: 11px; padding: 7px 9px; }
+
+/* ---- body ---- */
+.fishbowl .show-body { flex: 1; min-height: 0; position: relative; }
+
+/* ============ CONSTELLATION ============ */
+.fishbowl .show-constellation .show-body { display: grid; grid-template-columns: 1fr 384px; }
+.fishbowl .constellation { position: relative; }
+.fishbowl .stage { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); padding: 22px; gap: 10px; overflow: auto; min-height: 0; place-items: center; }
+.fishbowl .core { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; pointer-events: none; z-index: 1; }
+.fishbowl .core-glyph { font-size: 64px; color: var(--cyan); text-shadow: var(--glow-hot); line-height: 1; opacity: 0.85; animation: coreFloat 6s ease-in-out infinite; }
+@keyframes coreFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.fishbowl .core-title { font-size: 16px; letter-spacing: 0.1em; color: var(--ink); }
+.fishbowl .core-round { font-size: 9px; color: var(--ink-dim); }
+.fishbowl .ring { display: contents; }
+.fishbowl .ring-slot { display: grid; place-items: center; z-index: 2; }
+.fishbowl .show-constellation .ring-slot:nth-child(1) { grid-area: 1 / 2; }
+.fishbowl .show-constellation .ring-slot:nth-child(2) { grid-area: 2 / 3; }
+.fishbowl .show-constellation .ring-slot:nth-child(3) { grid-area: 3 / 2; }
+.fishbowl .show-constellation .ring-slot:nth-child(4) { grid-area: 2 / 1; }
+.fishbowl .show-constellation .ring-slot:nth-child(5) { grid-area: 1 / 1; }
+.fishbowl .show-constellation .ring-slot:nth-child(6) { grid-area: 3 / 3; }
+
+/* ---- the mind card ---- */
+.fishbowl .mind { perspective: 1200px; width: 300px; }
+.fishbowl .mind-stage { width: 300px; }
+.fishbowl .mind-inner { position: relative; transition: transform 0.7s cubic-bezier(0.4,0.1,0.2,1); transform-style: preserve-3d; }
+.fishbowl .mind.flipped .mind-inner { transform: rotateY(180deg); }
+.fishbowl .mind-face { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); backdrop-filter: blur(8px); padding: 13px; backface-visibility: hidden; }
+.fishbowl .mind-back { position: absolute; inset: 0; transform: rotateY(180deg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border-color: var(--lime); background: rgba(155,232,107,0.08); box-shadow: 0 0 24px rgba(155,232,107,0.3); }
+.fishbowl .reveal-glyph { font-size: 40px; color: var(--lime); text-shadow: 0 0 16px var(--lime); }
+.fishbowl .reveal-secret { font-size: 14px; color: var(--lime); text-align: center; padding: 0 14px; line-height: 1.4; }
+
+.fishbowl .mind.speaking .mind-front { border-color: var(--ac); box-shadow: 0 0 22px color-mix(in oklab, var(--ac) 45%, transparent); }
+.fishbowl .mind.rattled .mind-front { border-color: var(--coral); animation: cardShake 0.4s ease-in-out infinite; }
+@keyframes cardShake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
+
+.fishbowl .mind-head { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding-bottom: 11px; border-bottom: 1px solid var(--line-soft); }
+.fishbowl .mind-id { min-width: 0; }
+.fishbowl .mind-name { font-size: 14px; font-weight: 700; letter-spacing: 0.06em; color: var(--ink); display: flex; align-items: center; gap: 7px; }
+.fishbowl .mic { color: var(--coral); font-size: 9px; animation: livePulse 0.9s ease-in-out infinite; }
+.fishbowl .mind-arch { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fishbowl .mind-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.fishbowl .mind-model { display: flex; align-items: center; gap: 5px; font-size: 9.5px; letter-spacing: 0.04em; color: var(--ink-mid); }
+.fishbowl .mind-mood { font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+
+.fishbowl .bubbles { display: flex; flex-direction: column; gap: 8px; padding-top: 11px; }
+.fishbowl .bubble { border-radius: var(--r); padding: 9px 11px 10px; position: relative; }
+.fishbowl .bub-tag { font-family: var(--font-display); font-size: 7.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: 5px; }
+.fishbowl .bubble p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+.fishbowl .bubble .muted { color: var(--ink-faint); font-style: italic; }
+.fishbowl .bubble.said { background: rgba(5,18,26,0.55); border: 1px solid var(--line); }
+.fishbowl .bubble.thought.open { background: color-mix(in oklab, var(--ac) 9%, rgba(5,18,26,0.4)); border: 1px dashed var(--ac); }
+.fishbowl .bubble.thought.open .bub-tag { color: var(--ac); }
+.fishbowl .think-text { font-style: italic; color: color-mix(in oklab, var(--ac) 70%, var(--ink)) !important; text-shadow: 0 0 8px color-mix(in oklab, var(--ac) 40%, transparent); }
+.fishbowl .bubble.thought.sealed { background: rgba(5,18,26,0.35); border: 1px dashed var(--line-soft); }
+.fishbowl .seal { font-size: 10.5px; color: var(--ink-faint); display: flex; align-items: center; gap: 7px; font-style: italic; }
+.fishbowl .bubble.thought.leak.open { border-color: var(--coral); background: color-mix(in oklab, var(--coral) 10%, rgba(5,18,26,0.4)); animation: leakPulse 0.7s ease-in-out infinite; }
+.fishbowl .bubble.thought.leak .bub-tag, .fishbowl .bubble.thought.leak .think-text { color: var(--coral) !important; text-shadow: 0 0 8px rgba(255,143,125,0.5); }
+@keyframes leakPulse { 0%,100% { box-shadow: 0 0 0 transparent; } 50% { box-shadow: 0 0 16px rgba(255,143,125,0.35); } }
+
+/* ---- rail (narrator feed + meters) ---- */
+.fishbowl .rail { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: rgba(6,20,27,0.4); min-height: 0; }
+.fishbowl .rail-h { display: flex; justify-content: space-between; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); flex: none; }
+.fishbowl .feed { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.fishbowl .feed.dense { gap: 9px; }
+.fishbowl .fe { animation: feIn 0.3s ease; }
+@keyframes feIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.fishbowl .fe.narr { border-left: 2px solid var(--violet); padding-left: 12px; }
+.fishbowl .narr-voice { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--violet); display: block; margin-bottom: 4px; }
+.fishbowl .fe.narr p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-mid); font-style: italic; }
+.fishbowl .fe.say { background: rgba(5,18,26,0.4); border-left: 2px solid var(--ac); border-radius: 0 var(--r) var(--r) 0; padding: 8px 11px; }
+.fishbowl .say-line { font-size: 12.5px; line-height: 1.45; }
+.fishbowl .say-line b { color: var(--ac); margin-right: 7px; letter-spacing: 0.04em; }
+.fishbowl .say-line span { color: var(--ink); }
+.fishbowl .say-think { margin-top: 5px; font-size: 11px; color: var(--ac); opacity: 0.85; }
+.fishbowl .say-think i { color: color-mix(in oklab, var(--ac) 75%, var(--ink)); }
+.fishbowl .fe.poke, .fishbowl .fe.verdict-fe { border: 1px solid var(--amber); border-radius: var(--r); padding: 9px 11px; background: rgba(255,207,107,0.07); }
+.fishbowl .poke-tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); border: 1px solid rgba(255,207,107,0.4); border-radius: 999px; padding: 2px 8px; margin-bottom: 6px; }
+.fishbowl .fe.poke p, .fishbowl .fe.verdict-fe p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink); }
+
+/* ---- meters ---- */
+.fishbowl .meters { margin: 0 14px 14px; padding: 13px 15px; flex: none; display: flex; flex-direction: column; gap: 12px; }
+.fishbowl .stat { font-size: 10px; letter-spacing: 0.08em; color: var(--ink-mid); }
+.fishbowl .meter-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+.fishbowl .meter-h .tnum { font-size: 11px; font-family: var(--font-display); }
+.fishbowl .bar { height: 5px; background: rgba(5,18,26,0.8); border-radius: 3px; overflow: hidden; }
+.fishbowl .bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; box-shadow: 0 0 8px currentColor; }
+.fishbowl .meter-stats { display: flex; justify-content: space-between; gap: 10px; }
+
+/* ============ FEED VIEW ============ */
+.fishbowl .feedview { display: grid; grid-template-columns: 220px 1fr 300px; height: 100%; min-height: 0; }
+.fishbowl .roster { border-right: 1px solid var(--line); padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; background: rgba(6,20,27,0.4); overflow: auto; }
+.fishbowl .roster-chip { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--r); transition: all 0.2s ease; }
+.fishbowl .roster-chip.on { border-color: var(--ac); box-shadow: 0 0 14px color-mix(in oklab, var(--ac) 35%, transparent); background: color-mix(in oklab, var(--ac) 6%, transparent); }
+.fishbowl .rc-name { font-size: 12.5px; letter-spacing: 0.05em; color: var(--ink); }
+.fishbowl .rc-mood { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; }
+.fishbowl .feedview-main { min-height: 0; display: flex; }
+.fishbowl .feedview-main .feed { max-width: 720px; margin: 0 auto; width: 100%; }
+.fishbowl .feedview-side { border-left: 1px solid var(--line); padding: 16px 0; background: rgba(6,20,27,0.4); }
+.fishbowl .feedview-side .meters { background: transparent; border: 0; }
+
+/* ============ SPLIT VIEW ============ */
+.fishbowl .splitview { height: 100%; padding: 20px 26px 26px; max-width: 1180px; margin: 0 auto; width: 100%; }
+.fishbowl .split-head { display: grid; grid-template-columns: 230px 1fr 1fr; gap: 16px; padding: 0 14px 10px; position: sticky; top: 0; }
+.fishbowl .split-row { display: grid; grid-template-columns: 230px 1fr 1fr; gap: 16px; align-items: stretch; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-lg); margin-bottom: 12px; background: var(--panel); transition: all 0.2s ease; }
+.fishbowl .split-row.on { border-color: var(--ac); box-shadow: 0 0 18px color-mix(in oklab, var(--ac) 30%, transparent); }
+.fishbowl .split-id { display: flex; gap: 12px; align-items: center; }
+.fishbowl .split-name { font-size: 14px; letter-spacing: 0.06em; color: var(--ink); }
+.fishbowl .split-arch { font-size: 10.5px; color: var(--ink-dim); }
+.fishbowl .split-model { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--ink-mid); margin-top: 3px; }
+.fishbowl .split-said, .fishbowl .split-think { border-radius: var(--r); padding: 12px 14px; display: flex; align-items: center; }
+.fishbowl .split-said { background: rgba(5,18,26,0.5); border: 1px solid var(--line); }
+.fishbowl .split-think { background: color-mix(in oklab, var(--ac) 8%, rgba(5,18,26,0.4)); border: 1px dashed var(--ac); }
+.fishbowl .split-said p, .fishbowl .split-think p { margin: 0; font-size: 13px; line-height: 1.5; }
+.fishbowl .split-think.leak { border-color: var(--coral); background: rgba(255,143,125,0.08); }
+.fishbowl .split-think.leak .think-text { color: var(--coral) !important; }
+
+/* ---- verdict banner ---- */
+.fishbowl .verdict-banner { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 14px; padding: 11px 22px; background: rgba(10,34,27,0.95); border: 1px solid var(--lime); border-radius: 999px; box-shadow: 0 0 30px rgba(155,232,107,0.4); backdrop-filter: blur(8px); animation: vbDrop 0.5s cubic-bezier(0.2,1.2,0.3,1); }
+@keyframes vbDrop { from { opacity: 0; transform: translateX(-50%) translateY(-20px); } to { opacity: 1; } }
+.fishbowl .verdict-banner .disp { color: var(--lime); font-size: 13px; letter-spacing: 0.14em; text-shadow: 0 0 10px var(--lime); }
+.fishbowl .vb-text { color: var(--ink); font-size: 12.5px; }
+
+/* ---- poke strip ---- */
+.fishbowl .poke-strip { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-top: 1px solid var(--line-soft); background: rgba(6,20,27,0.5); flex: none; }
+.fishbowl .poke-btns { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+.fishbowl .poke-b { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-display); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--amber); border: 1px solid rgba(255,207,107,0.35); background: rgba(255,207,107,0.06); border-radius: var(--r); padding: 7px 12px; cursor: pointer; transition: all 0.16s ease; }
+.fishbowl .poke-b:hover:not(:disabled) { box-shadow: 0 0 14px rgba(255,207,107,0.35); border-color: var(--amber); }
+.fishbowl .poke-b:disabled { opacity: 0.3; cursor: default; }
+.fishbowl .poke-b.next { animation: pokeBeck 1.8s ease-in-out infinite; border-color: var(--amber); }
+@keyframes pokeBeck { 0%,100% { box-shadow: 0 0 0 transparent; } 50% { box-shadow: 0 0 14px rgba(255,207,107,0.4); } }
+.fishbowl .export-btn { color: var(--lime); border-color: rgba(155,232,107,0.35); }
+.fishbowl .export-btn:hover:not(:disabled) { box-shadow: 0 0 14px rgba(155,232,107,0.3); }
+.fishbowl .mini-spin { width: 12px; height: 12px; border: 2px solid var(--lime); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; }
+
+/* ---- transport ---- */
+.fishbowl .transport { display: flex; align-items: center; gap: 16px; padding: 13px 22px; border-top: 1px solid var(--line); background: rgba(6,20,27,0.85); backdrop-filter: blur(10px); flex: none; }
+.fishbowl .tp-btns { display: flex; gap: 6px; }
+.fishbowl .icon-btn.play { border-color: var(--cyan); color: var(--cyan); box-shadow: var(--glow); }
+.fishbowl .scrub { flex: 1; }
+.fishbowl .tp-count { font-size: 12px; color: var(--ink-mid); white-space: nowrap; }
+.fishbowl .speed-seg .seg-b.on { color: var(--cyan); }
+
+/* ---- saga toast ---- */
+.fishbowl .saga-toast { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); z-index: 45; padding: 16px 22px; max-width: 520px; text-align: center; border-color: var(--lime); box-shadow: 0 0 30px rgba(155,232,107,0.25); animation: vbDrop 0.4s ease; }
+.fishbowl .saga-head { font-size: 15px; color: var(--lime); margin: 8px 0 0; line-height: 1.4; }
