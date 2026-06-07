@@ -14,6 +14,7 @@ their manifest.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +31,32 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Config location is itself configurable: MAL_CONFIG_DIR lets a container or an
 # alternate deployment point the registry at a different config tree.
 DEFAULT_CONFIG_DIR = Path(os.getenv("MAL_CONFIG_DIR") or _REPO_ROOT / "config")
+
+
+_ENV_REF = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+
+
+def _expand_env(value):
+    """Recursively expand ``$VAR`` / ``${VAR}`` in a loaded-config tree.
+
+    Lets ``config/models.yaml`` point profiles at a Modal endpoint without
+    hard-coding the workspace URL or key — e.g.
+    ``base_url: https://${MODAL_WORKSPACE}--<endpoint>.modal.run/v1``.
+
+    If *any* referenced var in a string is unset/empty, the whole string collapses
+    to ``""`` — a binding built from a missing workspace is simply *not configured*
+    rather than a half-templated, broken URL.  The validator then nulls it, and the
+    offline path ignores live bindings entirely."""
+    if isinstance(value, str):
+        refs = _ENV_REF.findall(value)
+        if refs and any(not os.getenv(g1 or g2, "") for g1, g2 in refs):
+            return ""
+        return _ENV_REF.sub(lambda m: os.getenv(m.group(1) or m.group(2), ""), value)
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 # ── handler registry (behaviour bindings) ────────────────────────────────────────
 
@@ -82,7 +109,8 @@ class Registry:
         models = ModelsConfig()
         models_file = root / "models.yaml"
         if models_file.is_file():
-            models = ModelsConfig.model_validate(yaml.safe_load(models_file.read_text()) or {})
+            raw_models = _expand_env(yaml.safe_load(models_file.read_text()) or {})
+            models = ModelsConfig.model_validate(raw_models)
 
         return cls(agents=agents, scenarios=scenarios, models=models)
 

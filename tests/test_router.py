@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.models.openai_compat import OpenAICompatProvider
+from src.models.litellm_provider import LiteLLMProvider
 from src.models.provider import DeterministicTinyModel, ModelProvider, estimate_tokens
 from src.models.router import ModelRouter, ProfileSpec
 
@@ -45,11 +45,21 @@ class TestModelRouterOnline:
     def test_explicit_spec_used(self):
         router = ModelRouter(
             offline=False,
-            specs={"tiny": ProfileSpec(model="qwen2.5-3b-instruct", temperature=0.5, max_tokens=128)},
+            specs={
+                "tiny": ProfileSpec(
+                    model="openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+                    base_url="https://ws--nemotron-3-nano-4b.modal.run/v1",
+                    api_key="EMPTY",
+                    temperature=0.5,
+                    max_tokens=128,
+                )
+            },
         )
         provider = router.for_profile("tiny")
-        assert isinstance(provider, OpenAICompatProvider)
-        assert provider.model == "qwen2.5-3b-instruct"
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.model == "openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+        assert provider.api_base == "https://ws--nemotron-3-nano-4b.modal.run/v1"
+        assert provider.api_key == "EMPTY"
         assert provider.temperature == 0.5
         assert provider.max_tokens == 128
 

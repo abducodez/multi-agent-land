@@ -30,8 +30,25 @@ class ModelProfileConfig(BaseModel):
 
     model: str
     base_url: str | None = None
+    """OpenAI-compatible endpoint URL (ends in /v1).  Env-templatable in YAML via
+    ``${MODAL_LLM_BASE_URL}`` so the Modal workspace is never hard-coded."""
+
+    api_key: str | None = None
+    """Key for the endpoint (env-templatable, e.g. ``${MODAL_LLM_KEY}``).  vLLM
+    accepts any token unless the server enforces one."""
+
     temperature: float = 0.8
     max_tokens: int = 256
+
+    @model_validator(mode="after")
+    def _blank_to_none(self) -> "ModelProfileConfig":
+        # An unset ``${VAR}`` template expands to "" (see registry._expand_env);
+        # normalise empty bindings back to None so the live transport omits them.
+        if not self.base_url:
+            self.base_url = None
+        if not self.api_key:
+            self.api_key = None
+        return self
 
 
 class ModelsConfig(BaseModel):

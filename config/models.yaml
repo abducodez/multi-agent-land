@@ -1,29 +1,53 @@
-# Logical model profiles → concrete small models.
+# Logical model profiles → concrete small models served on Modal.
 #
 # offline:
-#   null  = auto (deterministic stub unless OPENAI_API_KEY is set)
+#   null  = auto (deterministic stub unless a live binding is configured —
+#           OPENAI_API_KEY, or MODAL_WORKSPACE/MODAL_LLM_BASE_URL for Modal)
 #   true  = always the deterministic stub (reproducible demos / CI)
 #   false = always live inference
 #
-# Every model here is ≤32B (the hackathon cap); `tiny` is ≤4B (Tiny Titan).
-# Swap any `model` to point a tier at a different small model — that is the
-# whole "small models, easily configurable" story in one file.  Env vars
-# MODEL_TINY / MODEL_FAST / MODEL_BALANCED / MODEL_STRONG override at runtime.
+# Live transport is the LiteLLM gateway (ADR-0015).  Each profile binds to one of
+# the OpenAI-compatible vLLM endpoints served on Modal (see modal/registry.py):
+#   tiny     → nemotron-3-nano-4b   (≤4B, Tiny Titan)
+#   fast     → minicpm-4-1-8b
+#   balanced → gemma-4-12b
+#   strong   → gemma-4-26b
+#
+# The LiteLLM model string for a custom OpenAI-compatible endpoint is
+# `openai/<served_model_id>` (the HF repo id) with `base_url` pointing at the
+# endpoint's /v1 URL.  Modal serves each endpoint at
+#   https://<workspace>--<endpoint_name>.modal.run/v1
+# so only the workspace is deploy-specific: it is templated from $MODAL_WORKSPACE
+# and never hard-coded.  $MODAL_LLM_KEY is the endpoint key (vLLM accepts any
+# token, default "EMPTY").  Unset templates expand to "" → the offline stub is
+# used and these live bindings are ignored.
+#
+# Swap any `model` to point a tier at a different small model — that is the whole
+# "small models, easily configurable" story in one file.  Env vars MODEL_TINY /
+# MODEL_FAST / MODEL_BALANCED / MODEL_STRONG still override the model name.
 offline: null
 profiles:
   tiny:
-    model: qwen2.5-3b-instruct
+    model: openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
+    base_url: https://${MODAL_WORKSPACE}--nemotron-3-nano-4b.modal.run/v1
+    api_key: ${MODAL_LLM_KEY}
     temperature: 0.7
     max_tokens: 160
   fast:
-    model: qwen2.5-7b-instruct
+    model: openai/openbmb/MiniCPM4.1-8B
+    base_url: https://${MODAL_WORKSPACE}--minicpm-4-1-8b.modal.run/v1
+    api_key: ${MODAL_LLM_KEY}
     temperature: 0.9
     max_tokens: 220
   balanced:
-    model: qwen2.5-14b-instruct
+    model: openai/google/gemma-4-12B
+    base_url: https://${MODAL_WORKSPACE}--gemma-4-12b.modal.run/v1
+    api_key: ${MODAL_LLM_KEY}
     temperature: 0.8
     max_tokens: 320
   strong:
-    model: qwen2.5-32b-instruct
+    model: openai/google/gemma-4-26B-A4B-it
+    base_url: https://${MODAL_WORKSPACE}--gemma-4-26b.modal.run/v1
+    api_key: ${MODAL_LLM_KEY}
     temperature: 0.6
     max_tokens: 480

@@ -160,8 +160,10 @@ class Conductor:
             projection=projection,
             recent_events=self.ledger.events,
         )
-        tokens = int(getattr(agent, "last_usage", {}).get("total_tokens", 0) or 0)
-        self.governor.record_call(tokens=tokens)
+        usage = getattr(agent, "last_usage", {})
+        tokens = int(usage.get("total_tokens", 0) or 0)
+        cost_usd = float(usage.get("cost_usd", 0.0) or 0.0)
+        self.governor.record_call(tokens=tokens, cost_usd=cost_usd)
         self._append(event)
         projection.apply(event)
 

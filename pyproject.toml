@@ -23,6 +23,13 @@ store = [
   "sqlalchemy>=2.0",
   "psycopg[binary]>=3",
 ]
+# Model gateway (ADR-0015). Optional: routes live profiles through LiteLLM to the
+# OpenAI-compatible models served on Modal, with real per-call cost metering. The
+# system runs fully offline on the deterministic stub without this installed;
+# litellm is imported lazily so importing src.models.* never requires it.
+litellm = [
+  "litellm>=1.40",
+]
 
 [tool.ruff]
 line-length = 120

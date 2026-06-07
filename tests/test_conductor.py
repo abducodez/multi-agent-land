@@ -2,6 +2,10 @@ from __future__ import annotations
 
 
 from src.core.conductor import Conductor
+from src.core.events import Event
+from src.core.governor import Governor
+from src.core.manifest import AgentManifest, ScheduleConfig
+from src.scenarios.base import Scenario
 from src.scenarios.thousand_token_wood import build_scenario
 
 
@@ -90,3 +94,39 @@ class TestConductorProjection:
         c.reset("the wood wakes")
         proj = c.projection
         assert proj.seed == "the wood wakes" or "the wood wakes" in proj.current_scene
+
+
+class _CostingAgent:
+    """Minimal agent that reports a per-call cost — stands in for the live gateway."""
+
+    manifest = AgentManifest(
+        name="coster",
+        persona="p",
+        may_emit=["world.observed"],
+        schedule=ScheduleConfig(tick_every=1),
+    )
+
+    def __init__(self) -> None:
+        self.last_usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost_usd": 0.002}
+
+    def act(self, run_id, turn, projection, recent_events) -> Event:
+        return Event(run_id=run_id, turn=turn, kind="world.observed", actor="coster", payload={"text": "x"})
+
+
+class TestConductorCostMetering:
+    def test_live_cost_reaches_governor(self):
+        # On the live path the agent carries real cost on last_usage; the conductor
+        # must plumb it into the Governor so hourly_budget_usd is enforceable.
+        scenario = Scenario(name="s", default_seed="seed", agents=(_CostingAgent(),))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")
+        c.step()
+        assert c.governor.stats["spend_usd"] > 0
+        assert c.governor.stats["total_tokens"] >= 15
+
+    def test_offline_cost_stays_zero(self):
+        # The deterministic stub reports no cost; spend must remain 0.
+        c = _conductor()
+        c.reset("seed")
+        c.step()
+        assert c.governor.stats["spend_usd"] == 0.0

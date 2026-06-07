@@ -120,13 +120,23 @@ class OpenAICompatProvider(ModelProvider):
 
 
 def has_live_credentials() -> bool:
-    """True when a usable API key is configured for live inference.
+    """True when a usable model binding is configured for live inference.
 
     Single source of truth for the online/offline decision, shared by
-    ``build_from_env`` and the ModelRouter so they never disagree.
+    ``build_from_env`` and the ModelRouter so they never disagree.  Two ways to go
+    live, either is sufficient:
+
+      * ``OPENAI_API_KEY`` — a generic OpenAI-compatible key; or
+      * ``MODAL_WORKSPACE`` / ``MODAL_LLM_BASE_URL`` — the binding for the models
+        served on Modal (ADR-0015): the workspace templates each profile's
+        endpoint URL in ``config/models.yaml``.  The gateway reaches those with
+        ``MODAL_LLM_KEY`` (default ``"EMPTY"``), so the workspace/base-url is the
+        activating signal.
     """
     api_key = os.getenv("OPENAI_API_KEY", "")
-    return bool(api_key) and api_key not in ("sk-stub", "your-key-here")
+    if bool(api_key) and api_key not in ("sk-stub", "your-key-here"):
+        return True
+    return bool(os.getenv("MODAL_WORKSPACE", "") or os.getenv("MODAL_LLM_BASE_URL", ""))
 
 
 def build_from_env() -> ModelProvider:

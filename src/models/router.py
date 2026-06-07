@@ -12,13 +12,18 @@ This is the single place per-agent model selection happens, so:
 Offline (no API key) the router serves a :class:`DeterministicTinyModel` for
 every profile, so demos and tests run with zero inference and full
 reproducibility.  See ADR-0010.
+
+On the live path the concrete transport is the :class:`LiteLLMProvider` gateway
+(ADR-0015): profiles point at the OpenAI-compatible Modal/vLLM endpoints in
+``modal/`` and the gateway reports real per-call cost into the Governor.  The
+routing abstraction here is unchanged — only how a model is *called* moved.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from src.core.manifest import ModelProfile, resolve_model
-from src.models.openai_compat import OpenAICompatProvider, has_live_credentials
+from src.models.openai_compat import has_live_credentials
 from src.models.provider import DeterministicTinyModel, ModelProvider
 
 # Decoding defaults per profile.  Smaller models stay cooler and shorter; the
@@ -37,6 +42,7 @@ class ProfileSpec:
 
     model: str
     base_url: str | None = None
+    api_key: str | None = None
     temperature: float = 0.8
     max_tokens: int = 256
 
@@ -77,10 +83,15 @@ class ModelRouter:
     def _build(self, profile: str) -> ModelProvider:
         if self.offline:
             return DeterministicTinyModel(variant=f"stub:{profile}")
+        # Live transport is the LiteLLM gateway (ADR-0015).  Lazy-import keeps the
+        # offline path free of the dependency.
+        from src.models.litellm_provider import LiteLLMProvider
+
         spec = self._spec_for(profile)
-        return OpenAICompatProvider(
+        return LiteLLMProvider(
             model=spec.model,
-            base_url=spec.base_url,
+            api_base=spec.base_url,
+            api_key=spec.api_key,
             temperature=spec.temperature,
             max_tokens=spec.max_tokens,
         )
