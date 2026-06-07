@@ -1,0 +1,258 @@
+openapi: 3.1.0
+info:
+  title: Multi-Agent Land — Model Serving API
+  version: "1.0.0"
+  description: >
+    OpenAI-compatible inference API served by the Modal apps in this repo
+    (`nvidia-llms`, `openbmb-llms`, `google-llms`). Each model is exposed as its
+    own endpoint and speaks the OpenAI REST protocol, so any OpenAI-compatible
+    client works by pointing `base_url` at the endpoint URL.
+
+    Every running endpoint also serves a live, model-specific spec at
+    `/openapi.json` and an interactive Swagger UI at `/docs`. This checked-in
+    spec documents the shared, stable surface across all endpoints.
+servers:
+  - url: https://{workspace}--{endpoint}.modal.run/v1
+    description: Per-model Modal endpoint (one server per model).
+    variables:
+      workspace:
+        default: your-workspace
+        description: Your Modal workspace slug.
+      endpoint:
+        default: gemma-4-12b
+        description: A model's endpoint_name from registry.py.
+        enum:
+          - nemotron-3-nano-30b
+          - nemotron-3-nano-4b
+          - minicpm-o-4-5
+          - minicpm-4-1-8b
+          - gemma-4-26b
+          - gemma-4-12b
+security:
+  - bearerAuth: []
+paths:
+  /models:
+    get:
+      operationId: listModels
+      summary: List the model(s) served by this endpoint.
+      responses:
+        "200":
+          description: Available models.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+  /chat/completions:
+    post:
+      operationId: createChatCompletion
+      summary: Create a chat completion (OpenAI-compatible).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Chat completion. A stream of SSE chunks when `stream` is true.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /completions:
+    post:
+      operationId: createCompletion
+      summary: Create a text completion (OpenAI-compatible).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompletionRequest"
+      responses:
+        "200":
+          description: Text completion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompletionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Required only when the apps are deployed with MODAL_LLM_REQUIRE_AUTH=1.
+        The token is the value of the `llm-api-key` Modal Secret (VLLM_API_KEY).
+        Without auth the endpoints are public and any token is accepted.
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token (auth-enabled deploys only).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Served model id (the Hugging Face repo id), e.g. "google/gemma-4-12B".
+        object:
+          type: string
+          const: model
+        created:
+          type: integer
+        owned_by:
+          type: string
+    ModelList:
+      type: object
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+        content:
+          description: >
+            Plain text, or an array of content parts for multimodal models
+            (e.g. MiniCPM-o) with `type` of text / image_url / input_audio.
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+    ChatCompletionRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: Served model id (must match the endpoint's model).
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        max_tokens:
+          type: integer
+        temperature:
+          type: number
+          default: 1.0
+        top_p:
+          type: number
+          default: 1.0
+        stream:
+          type: boolean
+          default: false
+        tools:
+          type: array
+          description: Tool/function definitions (models with a tool_call_parser).
+          items:
+            type: object
+        tool_choice:
+          description: "auto | none | required | a specific tool."
+          oneOf:
+            - type: string
+            - type: object
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: chat.completion
+        created:
+          type: integer
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: "#/components/schemas/ChatMessage"
+              finish_reason:
+                type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+    CompletionRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+        prompt:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        max_tokens:
+          type: integer
+        temperature:
+          type: number
+        stream:
+          type: boolean
+          default: false
+    CompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: text_completion
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              text:
+                type: string
+              finish_reason:
+                type: string
+        usage:
+          $ref: "#/components/schemas/Usage"
+    Usage:
+      type: object
+      properties:
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              type: string

@@ -26,8 +26,9 @@ def main() -> None:
 
     from openai import OpenAI
 
-    # vLLM accepts any token unless an API key was configured on the server.
-    client = OpenAI(base_url=args.base_url, api_key=os.environ.get("MODAL_LLM_KEY", "EMPTY"))
+    # Bearer token from the env var (set LLM_API_KEY to the value of the
+    # `llm-api-key` Modal Secret). Any value works when the server has no auth.
+    client = OpenAI(base_url=args.base_url, api_key=os.environ.get("LLM_API_KEY", "EMPTY"))
 
     response = client.chat.completions.create(
         model=args.model,

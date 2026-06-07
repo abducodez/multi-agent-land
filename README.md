@@ -111,6 +111,7 @@ Visitor seed or disturbance
 | 0011 | Declarative, validatable config — UI/LLM-generatable (`WorldConfig`) |
 | 0012 | Capability-based tool contract (`ToolRegistry`); MCP-ready |
 | 0013 | Token-aware governor + long-running foundations (restore/snapshot/two-clock) |
+| 0014 | Small models served on Modal, one OpenAI-compatible app per provider |
 
 ---
 
@@ -191,11 +192,13 @@ scripts/
   resume_run.py             Resume a long-running scenario from a SQLite ledger
   new_journal_entry.py      Creates dated build log entries
   snapshot_progress.py      Updates docs/blog/building-in-public.md from journal
-modal/
-  service.py                Reusable vLLM serving layer (OpenAI-compatible)
+modal/                      OpenAI-compatible small-model serving on Modal
+  service.py                Reusable vLLM serving layer (ModelConfig, register_model)
   registry.py               Declarative model catalogue, grouped by provider
   app_*.py                  One Modal app per provider (nvidia/openbmb/google)
-  snapshot_progress.py      Updates the living blog from journal
+  openapi.yaml              Checked-in OpenAPI 3.1 spec for the served API
+  client.py                 OpenAI-SDK smoke-test client
+  docs/                     Deploy guide, OpenAPI reference, Modal docs mirror
 modal_app.py                Optional: serverless scheduled run (Modal)
 ```
 

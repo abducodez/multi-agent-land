@@ -86,12 +86,25 @@ Append one `ModelConfig` to the appropriate provider list in `registry.py`.
 
 ## Auth
 
-Modal web endpoints are public by default. To require a bearer token, either:
+Modal web endpoints are public by default. Secrets are supplied as environment
+variables (never hard-coded). To require a bearer token:
 
-- Set `VLLM_API_KEY` on the container (via a `modal.Secret`) so vLLM enforces
-  `Authorization: Bearer <key>`; or
-- Front the endpoint with Modal Proxy Auth Tokens
-  (see `docs/modal-llms.txt` → Proxy Auth Tokens).
+```bash
+# Key MUST be VLLM_API_KEY (vLLM reads it); value is the token clients send.
+modal secret create llm-api-key VLLM_API_KEY=sk-your-token
+
+# Turn auth on at deploy time — no code edits:
+MODAL_LLM_REQUIRE_AUTH=1 modal deploy modal/app_google.py
+```
+
+When `MODAL_LLM_REQUIRE_AUTH` is set, every endpoint mounts the `llm-api-key`
+secret as the `VLLM_API_KEY` env var and vLLM enforces `Authorization: Bearer
+<token>` (401 otherwise). Clients pass the same token (the bundled `client.py`
+reads it from `LLM_API_KEY`). Alternatively front endpoints with Modal Proxy
+Auth Tokens (see `docs/modal-llms.txt` → Proxy Auth Tokens).
+
+See [`openapi.md`](openapi.md) for the full API reference and the checked-in
+OpenAPI spec (`../openapi.yaml`).
 
 ## GPU sizing cheatsheet
 

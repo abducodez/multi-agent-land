@@ -1,4 +1,4 @@
-# ADR-0005: Serve Small Models on Modal, One App Per Provider
+# ADR-0014: Serve Small Models on Modal, One App Per Provider
 
 ## Status
 
@@ -27,7 +27,7 @@ OpenAI-compatible endpoints (vLLM behind an autoscaling web server).
   shared by every app, so the vLLM/Modal best practices are written once.
 - **Configuration is data** in `registry.py`: a model is one `ModelConfig`; a
   provider is one app file. This mirrors the project's "config, not code"
-  invariant (see ADR for declarative worlds).
+  invariant (ADR-0011).
 - Weights and the vLLM compile cache live in **shared Volumes**, so a model
   pulled once is warm across every provider app.
 
@@ -40,6 +40,12 @@ OpenAI-compatible endpoints (vLLM behind an autoscaling web server).
   touching the others or the engine.
 - Gated repos (Gemma, the Nemotron repos used here) require a Hugging Face token
   in the `huggingface-secret` Modal Secret; ungated models deploy without it.
+- Endpoints are public by default; bearer-token auth is opt-in at deploy time
+  (`MODAL_LLM_REQUIRE_AUTH=1`) and supplied via the `llm-api-key` Secret as the
+  `VLLM_API_KEY` env var — secrets are never hard-coded.
+- The API is OpenAI-compatible: each endpoint self-documents at `/docs` and
+  `/openapi.json`, and a checked-in `modal/openapi.yaml` (3.1) plus
+  `modal/docs/openapi.md` document the shared surface.
 - vLLM tool/reasoning parser names are version-specific and left conservative;
   enable per model once verified against the deployed vLLM version.
 - Modal's docs index is mirrored at `modal/docs/modal-llms.txt` and refreshed

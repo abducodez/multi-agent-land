@@ -16,11 +16,16 @@ modal/
   app_openbmb.py    App "openbmb-llms" — MiniCPM-o 4.5 + MiniCPM4.1-8B.
   app_google.py     App "google-llms"  — Gemma 4 26B + 12B.
   client.py         OpenAI-SDK smoke-test client for any endpoint.
+  openapi.yaml      Checked-in OpenAPI 3.1 spec for the served API surface.
   requirements.txt  Deploy/client tooling (vLLM lives in the container image).
   docs/
     deploying.md    Deploy, configure, auth, GPU sizing, engine integration.
+    openapi.md      API reference: endpoints, auth, examples, client generation.
     modal-llms.txt  In-repo mirror of Modal's docs index, kept updated.
 ```
+
+Each running endpoint also self-documents at `/docs` (Swagger UI) and
+`/openapi.json` (live spec). See [`docs/openapi.md`](docs/openapi.md).
 
 ## Models
 
