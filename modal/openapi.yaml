@@ -19,15 +19,18 @@ servers:
         default: your-workspace
         description: Your Modal workspace slug.
       endpoint:
-        default: gemma-4-12b
-        description: A model's endpoint_name from registry.py.
+        default: google-llms-gemma-4-12b
+        description: >
+          The Modal function label: <app-name>-<endpoint_name>, where app-name is
+          the modal.App (nvidia-llms / openbmb-llms / google-llms) and endpoint_name
+          is the per-model slug from registry.py.
         enum:
-          - nemotron-3-nano-30b
-          - nemotron-3-nano-4b
-          - minicpm-o-4-5
-          - minicpm-4-1-8b
-          - gemma-4-26b
-          - gemma-4-12b
+          - nvidia-llms-nemotron-3-nano-30b
+          - nvidia-llms-nemotron-3-nano-4b
+          - openbmb-llms-minicpm-o-4-5
+          - openbmb-llms-minicpm-4-1-8b
+          - google-llms-gemma-4-26b
+          - google-llms-gemma-4-12b
 security:
   - bearerAuth: []
 paths:

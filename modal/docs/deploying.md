@@ -38,19 +38,29 @@ shadow it).
 
 ## Endpoints
 
-Each model becomes its own OpenAI-compatible endpoint, named after its
-`endpoint_name`:
+Each model becomes its own OpenAI-compatible endpoint. Modal builds the URL from
+the `modal.App` name **and** the function's `endpoint_name`:
 
 ```
-https://<workspace>--<endpoint-name>.modal.run/v1
+https://<workspace>--<app-name>-<endpoint-name>.modal.run/v1
 ```
+
+`<app-name>` is `nvidia-llms`, `openbmb-llms`, or `google-llms` (one per provider
+app); `<endpoint-name>` is the per-model slug. e.g. the Nemotron 4B endpoint is
+`https://<workspace>--nvidia-llms-nemotron-3-nano-4b.modal.run/v1`.
+
+> **Model id vs URL slug.** The `--model` value (and the `"model"` field in a raw
+> request) is the *served model id* — the HF repo id, e.g.
+> `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` — because `served_model_name` defaults to
+> the repo `name`. It is **not** the URL slug (`nemotron-3-nano-4b`). Call
+> `/v1/models` on any endpoint to see the exact id it serves.
 
 Standard routes: `/v1/chat/completions`, `/v1/completions`, `/v1/models`, plus
 `/docs` for the Swagger UI. Smoke-test one:
 
 ```bash
 python modal/client.py \
-  --base-url https://<workspace>--gemma-4-12b.modal.run/v1 \
+  --base-url https://<workspace>--google-llms-gemma-4-12b.modal.run/v1 \
   --model google/gemma-4-12B \
   --prompt "Describe a mossy ticket booth in the wood."
 ```
@@ -130,7 +140,7 @@ Endpoints are OpenAI-compatible, so the engine talks to them through the OpenAI
 SDK. Point a model role at a deployed endpoint:
 
 ```bash
-export OPENAI_BASE_URL="https://<workspace>--nemotron-3-nano-4b.modal.run/v1"
+export OPENAI_BASE_URL="https://<workspace>--nvidia-llms-nemotron-3-nano-4b.modal.run/v1"
 export OPENAI_API_KEY="EMPTY"   # or the configured VLLM_API_KEY
 export MODEL_TINY="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
 ```

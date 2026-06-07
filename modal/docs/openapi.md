@@ -8,8 +8,8 @@ the familiar OpenAI one. There are two sources of truth:
   `/docs`:
 
   ```
-  https://<workspace>--<endpoint-name>.modal.run/openapi.json
-  https://<workspace>--<endpoint-name>.modal.run/docs
+  https://<workspace>--<app-name>-<endpoint-name>.modal.run/openapi.json
+  https://<workspace>--<app-name>-<endpoint-name>.modal.run/docs
   ```
 
 - **Checked-in spec** — [`../openapi.yaml`](../openapi.yaml) documents the
@@ -19,11 +19,14 @@ the familiar OpenAI one. There are two sources of truth:
 ## Base URL
 
 ```
-https://<workspace>--<endpoint-name>.modal.run/v1
+https://<workspace>--<app-name>-<endpoint-name>.modal.run/v1
 ```
 
-One server per model; `<endpoint-name>` is the model's `endpoint_name` from
-`registry.py` (e.g. `gemma-4-12b`, `nemotron-3-nano-4b`).
+One server per model; the URL label is `<app-name>-<endpoint-name>` — the
+`modal.App` (`nvidia-llms` / `openbmb-llms` / `google-llms`) plus the model's
+`endpoint_name` from `registry.py` (e.g. `google-llms-gemma-4-12b`,
+`nvidia-llms-nemotron-3-nano-4b`). The `model` you send is the *served id* (the
+HF repo id), not this slug.
 
 ## Endpoints
 
@@ -60,7 +63,7 @@ otherwise. Clients pass the same token as their API key.
 ### curl
 
 ```bash
-curl https://<workspace>--gemma-4-12b.modal.run/v1/chat/completions \
+curl https://<workspace>--google-llms-gemma-4-12b.modal.run/v1/chat/completions \
   -H "Authorization: Bearer $LLM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -76,7 +79,7 @@ curl https://<workspace>--gemma-4-12b.modal.run/v1/chat/completions \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://<workspace>--gemma-4-12b.modal.run/v1",
+    base_url="https://<workspace>--google-llms-gemma-4-12b.modal.run/v1",
     api_key=os.environ["LLM_API_KEY"],  # any value when auth is off
 )
 resp = client.chat.completions.create(
@@ -96,5 +99,5 @@ the `LLM_API_KEY` environment variable.
 openapi-generator-cli generate -i modal/openapi.yaml -g python -o ./gen
 
 # ...or from a live endpoint's exact spec:
-curl -s https://<workspace>--gemma-4-12b.modal.run/openapi.json -o openapi.json
+curl -s https://<workspace>--google-llms-gemma-4-12b.modal.run/openapi.json -o openapi.json
 ```

@@ -2,9 +2,14 @@
 
 Usage:
     python modal/client.py \\
-        --base-url https://<workspace>--gemma-4-12b.modal.run/v1 \\
+        --base-url https://<workspace>--google-llms-gemma-4-12b.modal.run/v1 \\
         --model google/gemma-4-12B \\
         --prompt "Describe a mossy ticket booth in the wood."
+
+The endpoint URL is https://<workspace>--<app-name>-<endpoint-name>.modal.run/v1,
+where <app-name> is the modal.App (nvidia-llms / openbmb-llms / google-llms) and
+<endpoint-name> is the per-model slug.  --model is the served model id (the HF
+repo id), NOT the URL slug.
 
 The endpoints speak the OpenAI REST API, so the official ``openai`` SDK works
 unchanged — the engine can point ``OPENAI_BASE_URL`` at any of these URLs.

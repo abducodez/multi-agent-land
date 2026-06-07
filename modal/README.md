@@ -50,7 +50,7 @@ modal secret create huggingface-secret HF_TOKEN=hf_xxx   # for gated repos
 
 modal deploy modal/app_nvidia.py
 python modal/client.py \
-  --base-url https://<workspace>--nemotron-3-nano-4b.modal.run/v1 \
+  --base-url https://<workspace>--nvidia-llms-nemotron-3-nano-4b.modal.run/v1 \
   --model nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16 \
   --prompt "Hello from the wood."
 ```

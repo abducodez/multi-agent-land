@@ -4,7 +4,7 @@ Deploy:    modal deploy modal/app_nvidia.py
 Serve dev: modal serve modal/app_nvidia.py
 
 Each model gets its own OpenAI-compatible endpoint at
-``https://<workspace>--<endpoint-name>.modal.run/v1`` (one per model in
+``https://<workspace>--nvidia-llms-<endpoint-name>.modal.run/v1`` (one per model in
 ``NVIDIA_MODELS``). Add or retune models in ``registry.py``.
 """
 
