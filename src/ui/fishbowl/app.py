@@ -156,8 +156,14 @@ except Exception:  # pragma: no cover - fallback session keeps the shell live
         ``step()`` (generate at the head), ``inject(text, label=...)``, and
         ``snapshot(k)`` (a pure prefix view via ``view_model_at``)."""
 
-        def __init__(self, conductor: Conductor, *, scenario_name: str = "") -> None:
-            self.conductor = conductor
+        def __init__(self, scenario_name: str, *, registry=None, tools=None) -> None:
+            reg = registry or default_registry()
+            tool_reg = tools if tools is not None else default_tool_registry()
+            self.conductor = Conductor(
+                reg.build_scenario(scenario_name, tools=tool_reg),
+                governor=reg.governor_for(scenario_name),
+                ledger=make_ledger(),
+            )
             self.scenario_name = scenario_name
 
         @property
@@ -234,12 +240,8 @@ SPEEDS: dict[str, float] = {"live": 3.0, "1×": 1.9, "fast": 1.0}
 
 
 def _new_session(scenario_name: str) -> FishbowlSession:
-    conductor = Conductor(
-        _registry.build_scenario(scenario_name, tools=_tools),
-        governor=_registry.governor_for(scenario_name),
-        ledger=make_ledger(),
-    )
-    return FishbowlSession(conductor, scenario_name=scenario_name)
+    # The session unit builds its own Conductor from the scenario name.
+    return FishbowlSession(scenario_name, registry=_registry, tools=_tools)
 
 
 def _empty_vm() -> dict:

@@ -73,6 +73,11 @@ class FishbowlSession:
         return self.conductor.ledger.events
 
     @property
+    def head(self) -> int:
+        """The generation-head: number of events in the ledger so far."""
+        return len(self.conductor.ledger.events)
+
+    @property
     def cast(self) -> list[AgentManifest]:
         return [agent.manifest for agent in self.scenario.agents]
 
