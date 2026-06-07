@@ -1,55 +1,40 @@
-# Logical model profiles → concrete small models served on Modal.
+# Logical model profiles → small models served on Modal.
 #
 # offline:
 #   null  = auto (deterministic stub unless a live binding is configured —
-#           OPENAI_API_KEY, or MODAL_WORKSPACE/MODAL_LLM_BASE_URL for Modal)
+#           MODAL_WORKSPACE or MODAL_LLM_BASE_URL)
 #   true  = always the deterministic stub (reproducible demos / CI)
 #   false = always live inference
 #
-# Live transport is the LiteLLM gateway (ADR-0015).  Each profile binds to one of
-# the OpenAI-compatible vLLM endpoints served on Modal (see modal/registry.py):
-#   tiny     → nemotron-3-nano-4b   (≤4B, Tiny Titan)
-#   fast     → minicpm-4-1-8b
-#   balanced → gemma-4-12b
-#   strong   → gemma-4-26b
+# Each profile binds to a model by its **catalogue key** (`endpoint:`) — the model
+# slug in `modal/catalogue.py`, the single source of truth for what is deployed.
+# The loader (`Registry.from_dir`) expands that key into the concrete binding:
+#   model    = openai/<served_model_id>
+#   base_url = https://${MODAL_WORKSPACE}--<app>-<endpoint>.modal.run/v1
+#              (or $MODAL_LLM_BASE_URL if set; "" when neither → offline stub)
+#   api_key  = $MODAL_LLM_KEY   (a self-served vLLM endpoint accepts any token)
 #
-# The LiteLLM model string for a custom OpenAI-compatible endpoint is
-# `openai/<served_model_id>` (the HF repo id) with `base_url` pointing at the
-# endpoint's /v1 URL.  Modal serves each endpoint at
-#   https://<workspace>--<app_name>-<endpoint_name>.modal.run/v1
-# where <app_name> is the modal.App name (nvidia-llms / openbmb-llms / google-llms)
-# and <endpoint_name> is the per-model function slug.  So only the workspace is
-# deploy-specific: it is templated from $MODAL_WORKSPACE
-# and never hard-coded.  $MODAL_LLM_KEY is the endpoint key (vLLM accepts any
-# token, default "EMPTY").  Unset templates expand to "" → the offline stub is
-# used and these live bindings are ignored.
-#
-# Swap any `model` to point a tier at a different small model — that is the whole
-# "small models, easily configurable" story in one file.  Env vars MODEL_TINY /
-# MODEL_FAST / MODEL_BALANCED / MODEL_STRONG still override the model name.
+# So adding/retuning a model is a one-line edit in `modal/catalogue.py`, and
+# pointing a tier at a different model is a one-line `endpoint:` change here —
+# nothing duplicates the served-id or URL. Env vars MODEL_TINY / MODEL_FAST /
+# MODEL_BALANCED / MODEL_STRONG still override the model string per profile
+# (highest priority). You may also bind a profile explicitly with `model:` +
+# `base_url:` instead of `endpoint:` (an escape hatch for non-catalogue endpoints).
 offline: null
 profiles:
   tiny:
-    model: openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
-    base_url: https://${MODAL_WORKSPACE}--nvidia-llms-nemotron-3-nano-4b.modal.run/v1
-    api_key: ${MODAL_LLM_KEY}
+    endpoint: nemotron-3-nano-4b     # NVIDIA Nemotron 3 Nano 4B (≤4B, Tiny Titan)
     temperature: 0.7
     max_tokens: 160
   fast:
-    model: openai/openbmb/MiniCPM4.1-8B
-    base_url: https://${MODAL_WORKSPACE}--openbmb-llms-minicpm-4-1-8b.modal.run/v1
-    api_key: ${MODAL_LLM_KEY}
+    endpoint: minicpm-4-1-8b         # OpenBMB MiniCPM4.1-8B
     temperature: 0.9
     max_tokens: 220
   balanced:
-    model: openai/google/gemma-4-12B
-    base_url: https://${MODAL_WORKSPACE}--google-llms-gemma-4-12b.modal.run/v1
-    api_key: ${MODAL_LLM_KEY}
+    endpoint: gemma-4-12b            # Google Gemma 4 12B
     temperature: 0.8
     max_tokens: 320
   strong:
-    model: openai/google/gemma-4-26B-A4B-it
-    base_url: https://${MODAL_WORKSPACE}--google-llms-gemma-4-26b.modal.run/v1
-    api_key: ${MODAL_LLM_KEY}
+    endpoint: gemma-4-26b            # Google Gemma 4 26B-A4B-it (MoE, ~4B active)
     temperature: 0.6
     max_tokens: 480

@@ -24,6 +24,7 @@ Because the index is derived, ``index()`` upserts each event under its
 ``event.id`` so re-indexing the same events is a no-op (no duplicates) — this is
 what makes the index rebuildable rather than authoritative.
 """
+
 from __future__ import annotations
 
 import os
@@ -41,8 +42,24 @@ INDEX_ENV = "MEMORY_INDEX"
 #: Truthy spellings accepted for the gate and boolean sub-options.
 _TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on", "mem0"})
 
+#: Default mem0 config when ``MEMORY_INDEX_CONFIG`` is unset: embed LOCALLY with
+#: sentence-transformers (no API key; fully offline once the model is cached), so
+#: the active index stays off the grid like the rest of the engine. The index
+#: stores ledger events verbatim (``infer=False``) and search embeds the query
+#: locally, so mem0's generative LLM is never invoked — the placeholder key just
+#: keeps its construction from demanding a cloud credential. Any of this can be
+#: overridden with a ``MEMORY_INDEX_CONFIG`` JSON blob (passed verbatim to mem0).
+_LOCAL_INDEX_CONFIG: dict = {
+    "embedder": {
+        "provider": "huggingface",
+        "config": {"model": "sentence-transformers/all-MiniLM-L6-v2"},
+    },
+    "llm": {"provider": "openai", "config": {"api_key": "EMPTY"}},
+}
+
 
 # ── protocol ──────────────────────────────────────────────────────────────────
+
 
 @runtime_checkable
 class MemoryIndex(Protocol):
@@ -64,6 +81,7 @@ class MemoryIndex(Protocol):
 
 # ── mem0 backend ────────────────────────────────────────────────────────────
 
+
 def _event_text(event: Event) -> str:
     """The natural-language surface of an event used for embedding/recall."""
     return str(event.payload.get("text") or event.payload.get("summary") or event.payload)
@@ -83,16 +101,15 @@ class Mem0MemoryIndex:
     Configuration (env, read by :func:`memory_index_from_env`):
 
       * ``MEMORY_INDEX`` — gate; truthy activates the index, unset disables it.
-      * Embedder credentials — an embedding model is required to vectorise event
-        text. By default ``mem0`` routes embeddings via ``OPENAI_API_KEY`` (the
-        same key the live model path already uses); point it elsewhere with a
-        ``MEMORY_INDEX_CONFIG`` JSON blob (passed verbatim to ``mem0`` as its
-        config — see its docs for ``embedder`` / ``vector_store`` keys).
-      * ``MEMORY_INDEX_CONFIG`` — optional JSON config forwarded to
-        ``mem0.Memory.from_config``. Use it to pin a local embedder or to persist
-        vectors in the project's own Postgres/pgvector (the durable store from
-        ADR-0014) instead of the default in-process vector store, so the index
-        lives beside the ledger it derives from.
+      * Embeddings — run LOCALLY by default via sentence-transformers (no API
+        key, fully offline once the model is cached); see :data:`_LOCAL_INDEX_CONFIG`.
+        Install the backend with ``uv sync --extra memory``.
+      * ``MEMORY_INDEX_CONFIG`` — optional JSON config forwarded verbatim to
+        ``mem0.Memory.from_config``, replacing the local default. Use it to pick a
+        different embedder or to persist vectors in the project's own
+        Postgres/pgvector (the durable store from ADR-0014) instead of the default
+        in-process vector store, so the index lives beside the ledger it derives
+        from.
 
     ``mem0`` is imported lazily inside :meth:`_memory` so ``import src.*`` and
     ``import app`` work with the package not installed.
@@ -110,13 +127,16 @@ class Mem0MemoryIndex:
     # ── lazy construction ─────────────────────────────────────────────────────
 
     def _memory(self) -> "Memory":
-        """Construct (once) and return the underlying ``mem0`` memory."""
+        """Construct (once) and return the underlying ``mem0`` memory.
+
+        With no explicit config, the local sentence-transformers default
+        (:data:`_LOCAL_INDEX_CONFIG`) is used — never mem0's cloud-keyed default —
+        so an activated index stays fully offline.
+        """
         if self._mem is None:
             from mem0 import Memory  # lazy: offline import must not require mem0
 
-            self._mem = (
-                Memory.from_config(self._config) if self._config else Memory()
-            )
+            self._mem = Memory.from_config(self._config or _LOCAL_INDEX_CONFIG)
         return self._mem
 
     # ── MemoryIndex protocol ──────────────────────────────────────────────────
@@ -155,6 +175,7 @@ class Mem0MemoryIndex:
 
 
 # ── metadata round-trip (event ⇄ vector entry) ────────────────────────────────
+
 
 def _event_metadata(event: Event) -> dict:
     """Flatten an event into JSON-safe metadata for the vector entry."""
@@ -202,6 +223,7 @@ def _result_items(hits: object) -> list[dict]:
 
 
 # ── env gate ───────────────────────────────────────────────────────────────────
+
 
 def _is_truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in _TRUTHY

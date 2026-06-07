@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted. **Amended by [ADR-0019](0019-single-model-catalogue-no-cloud-path.md):**
+the model catalogue moved to the stdlib-only `modal/catalogue.py` (single source of
+truth, shared with the engine); `registry.py` is now a back-compat re-export, and
+the engine binds endpoints from the catalogue + `MODAL_WORKSPACE` rather than
+`OPENAI_BASE_URL`.
 
 ## Context
 

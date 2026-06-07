@@ -22,9 +22,14 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from collections.abc import Iterable
 
 import modal
+
+# ModelConfig (and the whole model catalogue) lives in the stdlib-only
+# ``catalogue`` module so the engine can read it without importing Modal. The
+# serving layer here just consumes it.
+from catalogue import ModelConfig
 
 # --- Shared serving constants --------------------------------------------------
 
@@ -73,60 +78,6 @@ _BASE_ENV = {
     "HF_XET_HIGH_PERFORMANCE": "1",  # faster weight downloads
     "VLLM_LOG_STATS_INTERVAL": "1",
 }
-
-
-# --- Model configuration -------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class ModelConfig:
-    """Everything needed to serve one model as an OpenAI-compatible endpoint.
-
-    Add a new model by constructing one of these in ``registry.py``. Nothing
-    else needs to change.
-    """
-
-    # Identity
-    name: str  # Hugging Face repo id, e.g. "google/gemma-4-12B"
-    endpoint_name: str  # Modal function + URL slug, e.g. "gemma-4-12b"
-    served_model_name: str | None = None  # model id clients pass; defaults to `name`
-    revision: str | None = None  # pin a commit for reproducibility
-
-    # Hardware
-    gpu: str = "L40S:1"  # Modal GPU spec, e.g. "H200:1", "H100:2", "L4:1"
-    tensor_parallel_size: int = 1  # set to GPU count for multi-GPU sharding
-
-    # Inference shape
-    max_model_len: int | None = None  # cap context to fit memory / task
-    trust_remote_code: bool = False  # required by MiniCPM / Nemotron custom code
-
-    # OpenAI feature parsers (vLLM names; leave None if unsupported on the model)
-    reasoning_parser: str | None = None
-    tool_call_parser: str | None = None
-    enable_auto_tool_choice: bool = False
-
-    # Multimodal
-    multimodal: bool = False
-    mm_limits: dict[str, int] | None = None  # e.g. {"image": 4, "audio": 2}
-
-    # Scaling / lifecycle
-    max_concurrent_inputs: int = 64  # requests multiplexed onto one container
-    scaledown_window: int = 15 * 60  # idle seconds before a container stops
-    min_containers: int = 0  # keep N warm to remove cold starts (costs $)
-    startup_timeout: int = 30 * 60  # weight download + load can be slow
-    request_timeout: int = 30 * 60  # max seconds a single request may run
-
-    # Access
-    gated: bool = False  # repo needs a Hugging Face token
-
-    # Escape hatches
-    extra_vllm_args: tuple[str, ...] = ()  # raw flags appended verbatim
-    env: dict[str, str] = field(default_factory=dict)  # extra container env
-    extra_pip: tuple[str, ...] = ()  # extra deps (audio/vision backends, etc.)
-
-    @property
-    def served_name(self) -> str:
-        return self.served_model_name or self.name
 
 
 # --- Image + command construction ----------------------------------------------
@@ -225,7 +176,7 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
     return serve
 
 
-def register_all(app: modal.App, configs: list[ModelConfig]) -> None:
+def register_all(app: modal.App, configs: Iterable[ModelConfig]) -> None:
     """Register every model in ``configs`` onto ``app``."""
     for cfg in configs:
         register_model(app, cfg)

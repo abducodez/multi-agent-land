@@ -11,6 +11,7 @@ enough.  Only agents with custom behaviour (tool calls, special prompts) registe
 a handler class via :func:`register_handler` and reference it by ``handler:`` in
 their manifest.
 """
+
 from __future__ import annotations
 
 import os
@@ -57,6 +58,46 @@ def _expand_env(value):
     if isinstance(value, list):
         return [_expand_env(v) for v in value]
     return value
+
+
+def _resolve_model_endpoints(raw_models: dict, env: dict[str, str] | None = None) -> dict:
+    """Expand each profile's ``endpoint:`` catalogue key into a concrete binding.
+
+    A profile may bind to a model by its **catalogue key** (the single source of
+    truth in ``modal/catalogue.py``) instead of spelling out the model string and
+    URL::
+
+        profiles:
+          tiny: {endpoint: nemotron-3-nano-4b, temperature: 0.7, max_tokens: 160}
+
+    For each such profile this fills ``model`` (``openai/<served_id>``),
+    ``base_url`` (built from ``$MODAL_WORKSPACE`` / ``$MODAL_LLM_BASE_URL``), and
+    ``api_key`` (``$MODAL_LLM_KEY``) from the catalogue, then drops the ``endpoint``
+    key so the result validates against :class:`ModelProfileConfig` (which forbids
+    unknown fields). Precedence: a ``MODEL_<PROFILE>`` env var wins for the model
+    string; otherwise explicit ``model`` / ``base_url`` / ``api_key`` in the YAML
+    win over the derived values. A profile with an explicit ``model`` and no
+    ``endpoint`` passes through untouched.
+    """
+    from src.models import modal_catalogue
+
+    source = os.environ if env is None else env
+    profiles = raw_models.get("profiles")
+    if not isinstance(profiles, dict):
+        return raw_models
+    for profile, cfg in profiles.items():
+        if not isinstance(cfg, dict) or "endpoint" not in cfg:
+            continue
+        binding = modal_catalogue.binding_for(cfg.pop("endpoint"), env=source)
+        override = source.get(f"MODEL_{str(profile).upper()}", "").strip()
+        if override:
+            cfg["model"] = override  # MODEL_<PROFILE> is the highest-priority override
+        else:
+            cfg.setdefault("model", binding["model"])
+        cfg.setdefault("base_url", binding["base_url"])
+        cfg.setdefault("api_key", binding["api_key"])
+    return raw_models
+
 
 # ── handler registry (behaviour bindings) ────────────────────────────────────────
 
@@ -110,6 +151,7 @@ class Registry:
         models_file = root / "models.yaml"
         if models_file.is_file():
             raw_models = _expand_env(yaml.safe_load(models_file.read_text()) or {})
+            raw_models = _resolve_model_endpoints(raw_models)
             models = ModelsConfig.model_validate(raw_models)
 
         return cls(agents=agents, scenarios=scenarios, models=models)
@@ -118,10 +160,7 @@ class Registry:
 
     def build_router(self) -> ModelRouter:
         """Construct a ModelRouter honouring the models config (offline/specs)."""
-        specs = {
-            profile: ProfileSpec(**cfg.model_dump())
-            for profile, cfg in self.models.profiles.items()
-        }
+        specs = {profile: ProfileSpec(**cfg.model_dump()) for profile, cfg in self.models.profiles.items()}
         if self.models.offline is True:
             return ModelRouter(offline=True, specs=specs)
         if self.models.offline is False:
@@ -152,9 +191,7 @@ class Registry:
         from src.core.memory_index import memory_index_from_env
 
         memory_index = memory_index_from_env()
-        agents = tuple(
-            self.build_agent(agent_name, router, tools, memory_index) for agent_name in cfg.cast
-        )
+        agents = tuple(self.build_agent(agent_name, router, tools, memory_index) for agent_name in cfg.cast)
         return Scenario(
             name=cfg.name,
             default_seed=cfg.default_seed,

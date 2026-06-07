@@ -12,7 +12,8 @@ where <app-name> is the modal.App (nvidia-llms / openbmb-llms / google-llms) and
 repo id), NOT the URL slug.
 
 The endpoints speak the OpenAI REST API, so the official ``openai`` SDK works
-unchanged — the engine can point ``OPENAI_BASE_URL`` at any of these URLs.
+unchanged — the engine reaches them via the LiteLLM gateway, binding each profile
+from ``modal/catalogue.py`` + ``MODAL_WORKSPACE`` (or a single ``MODAL_LLM_BASE_URL``).
 """
 
 from __future__ import annotations

@@ -1,0 +1,24 @@
+# Modal model-serving apps — a uv *workspace member* so the deploy/client tooling
+# (the Modal SDK + an OpenAI-compatible client) is pinned by the same lockfile as
+# the engine. vLLM and CUDA live inside the Modal container image (built in
+# service.py), never in this local environment — so they are deliberately absent
+# here.
+#
+# This is a NON-PACKAGE project (`tool.uv.package = false`): the folder holds
+# deploy scripts run with `modal deploy modal/app_<provider>.py`, not an
+# importable library. It is intentionally NOT named "modal" — that name belongs
+# to the PyPI SDK, and shadowing it would break `import modal` in the serving
+# code. The engine reaches this folder's catalogue by file path, not by import
+# (see src/models/modal_catalogue.py), for the same reason.
+[project]
+name = "mal-modal-serving"
+version = "0.1.0"
+description = "Serverless OpenAI-compatible small-model endpoints for Multi-Agent Land."
+requires-python = ">=3.11"
+dependencies = [
+  "modal>=1.4.3",
+  "openai>=1.40.0",
+]
+
+[tool.uv]
+package = false

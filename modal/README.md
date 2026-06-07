@@ -9,14 +9,18 @@ adding a model is a one-line config change.
 
 ```text
 modal/
-  service.py        Reusable serving layer: ModelConfig, image + vllm command,
-                    register_model() (provider-agnostic).
-  registry.py       Declarative catalogue of every model, grouped by provider.
-  app_nvidia.py     App "nvidia-llms"  — Nemotron 3 Nano 30B + 4B.
-  app_openbmb.py    App "openbmb-llms" — MiniCPM-o 4.5 + MiniCPM4.1-8B.
-  app_google.py     App "google-llms"  — Gemma 4 26B + 12B.
+  catalogue.py      SINGLE SOURCE OF TRUTH (stdlib-only): ModelConfig + the
+                    per-provider model lists + PROVIDERS (app names) + URL helpers.
+                    Shared with the engine, which reads it by path.
+  service.py        Reusable serving layer: image + vllm command, register_model()
+                    (provider-agnostic). Imports ModelConfig from catalogue.
+  registry.py       Back-compat re-export of the catalogue's model lists.
+  app_nvidia.py     App "nvidia-llms"  — Nemotron 3 Nano 4B + 30B.
+  app_openbmb.py    App "openbmb-llms" — MiniCPM4.1-8B + MiniCPM-o 4.5.
+  app_google.py     App "google-llms"  — Gemma 4 12B + 26B.
   client.py         OpenAI-SDK smoke-test client for any endpoint.
   openapi.yaml      Checked-in OpenAPI 3.1 spec for the served API surface.
+  pyproject.toml    uv workspace member (deploy/client tooling; non-package).
   requirements.txt  Deploy/client tooling (vLLM lives in the container image).
   docs/
     deploying.md    Deploy, configure, auth, GPU sizing, engine integration.
@@ -64,7 +68,12 @@ sizing, and how to add models/providers or wire endpoints into the engine.
   radius; one provider's outage or redeploy never touches another.
 - **Scalable** — serverless autoscaling, input concurrency, a shared weight
   cache (pull once, warm everywhere), and per-model `min_containers` warm pools.
-- **Extensible** — add a model = one `ModelConfig`; add a provider = one app
-  file. The serving path is written once in `service.py`.
+- **Extensible** — add a model = one `ModelConfig` in `catalogue.py`; add a
+  provider = one `Provider` entry + one app file. The serving path is written once
+  in `service.py`, and the engine picks up the new model with no edits (it reads
+  the same `catalogue.py`).
 - **Configurable per task** — GPU, context length, concurrency, tool/reasoning
-  parsers, and multimodal limits are all data in `registry.py`.
+  parsers, and multimodal limits are all data in `catalogue.py`.
+- **One source of truth** — `catalogue.py` describes every model once; both the
+  serving apps and the engine read it, so the served id and endpoint URL never
+  drift between deploy and call sites (ADR-0019).

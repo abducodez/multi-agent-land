@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted. **Amended by [ADR-0019](0019-single-model-catalogue-no-cloud-path.md):**
+the default embedder is now local sentence-transformers (no `OPENAI_API_KEY`), so
+an activated index is fully off the grid; `MEMORY_INDEX_CONFIG` still overrides it.
 
 ## Context
 

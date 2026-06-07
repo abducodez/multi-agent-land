@@ -67,7 +67,7 @@ python modal/client.py \
 
 ## Configuring models (per task)
 
-All knobs live in `registry.py` as `ModelConfig` fields — no serving code
+All knobs live in `catalogue.py` as `ModelConfig` fields — no serving code
 changes needed:
 
 | Field                   | Purpose                                                        |
@@ -86,13 +86,17 @@ changes needed:
 
 ### Add a model
 
-Append one `ModelConfig` to the appropriate provider list in `registry.py`.
+Append one `ModelConfig` to the appropriate provider list in `catalogue.py` (tag
+its `profile` tier to make it a tier default). The engine picks it up with no
+edits — it reads the same `catalogue.py`.
 
 ### Add a provider
 
-1. Add a `<PROVIDER>_MODELS` list in `registry.py`.
-2. Create `app_<provider>.py` that builds `modal.App("<provider>-llms")` and
-   calls `register_all(app, <PROVIDER>_MODELS)`.
+1. Add a `<PROVIDER>_MODELS` list and a `PROVIDERS["<provider>"]` entry (carrying
+   its `app` name) in `catalogue.py`.
+2. Create `app_<provider>.py` that reads that entry:
+   `app = modal.App(PROVIDERS["<provider>"].app)` then
+   `register_all(app, PROVIDERS["<provider>"].models)`.
 
 ## Auth
 
@@ -136,14 +140,19 @@ GPU tier, or bump `tensor_parallel_size` (and the GPU count) for sharding.
 
 ## Engine integration
 
-Endpoints are OpenAI-compatible, so the engine talks to them through the OpenAI
-SDK. Point a model role at a deployed endpoint:
+The engine reads this same `catalogue.py` (by path, via
+`src/models/modal_catalogue.py`) and routes every profile through the LiteLLM
+gateway (ADR-0015 / ADR-0019). You don't wire endpoints by hand — set the
+workspace and the four tiers bind automatically from `config/models.yaml`:
 
 ```bash
-export OPENAI_BASE_URL="https://<workspace>--nvidia-llms-nemotron-3-nano-4b.modal.run/v1"
-export OPENAI_API_KEY="EMPTY"   # or the configured VLLM_API_KEY
-export MODEL_TINY="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+export MODAL_WORKSPACE="<your-workspace>"   # activates the live path
+export MODAL_LLM_KEY="EMPTY"                # or the configured VLLM_API_KEY
 ```
 
-Map the engine's `MODEL_TINY/FAST/BALANCED/STRONG` tiers to the endpoints whose
-size fits each role.
+Each profile's endpoint URL is derived as
+`https://${MODAL_WORKSPACE}--<app>-<endpoint>.modal.run/v1`. To point a profile at
+a different catalogue model, change its `endpoint:` in `config/models.yaml`; to
+override the model string outright, set `MODEL_TINY/FAST/BALANCED/STRONG`. For a
+one-off single endpoint (e.g. a local dev box), set `MODAL_LLM_BASE_URL` instead
+of `MODAL_WORKSPACE`.

@@ -30,8 +30,10 @@ class TestDefaultRegistry:
         assert profiles["pocket-actor"] == "tiny"
         assert profiles["mischief-critic"] == "balanced"
 
-    def test_build_router_offline_without_key(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    def test_build_router_offline_without_binding(self, monkeypatch):
+        # No Modal binding configured → the deterministic offline stub.
+        for var in ("MODAL_WORKSPACE", "MODAL_LLM_BASE_URL", "OPENAI_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
         reg = default_registry()
         router = reg.build_router()
         assert isinstance(router, ModelRouter)

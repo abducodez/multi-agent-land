@@ -10,6 +10,7 @@ Three tiers, mirroring the optional-dependency tests elsewhere:
   * A guarded real-``mem0`` round-trip (skipped without the package or an
     embedder configured) asserts an event survives index → search.
 """
+
 from __future__ import annotations
 
 import os
@@ -55,15 +56,13 @@ class _FakeIndex:
 
     def search(self, query: str, k: int) -> list[Event]:
         q = set(query.lower().split())
-        scored = [
-            (len(q & set(str(e.payload.get("text", "")).lower().split())), e)
-            for e in self.store.values()
-        ]
+        scored = [(len(q & set(str(e.payload.get("text", "")).lower().split())), e) for e in self.store.values()]
         scored.sort(key=lambda t: t[0], reverse=True)
         return [e for _, e in scored[:k]]
 
 
 # ── the fake satisfies the protocol (structural typing) ─────────────────────────
+
 
 class TestProtocol:
     def test_fake_is_memory_index(self):
@@ -75,6 +74,7 @@ class TestProtocol:
 
 
 # ── layering: index drives the relevance term, recency/importance intact ────────
+
 
 class TestSalienceUsesIndex:
     def test_semantic_hit_outranks_keyword_irrelevant(self):
@@ -134,11 +134,14 @@ class TestSalienceUsesIndex:
 
 # ── idempotent indexing (derived, rebuildable) ──────────────────────────────────
 
+
 class TestIdempotentIndexing:
     def test_reindex_does_not_duplicate(self):
         idx = _FakeIndex()
-        events = (_event("world.observed", turn=1, text="a", eid="e1"),
-                  _event("world.observed", turn=2, text="b", eid="e2"))
+        events = (
+            _event("world.observed", turn=1, text="a", eid="e1"),
+            _event("world.observed", turn=2, text="b", eid="e2"),
+        )
         idx.index(events)
         idx.index(events)  # re-index same slice
         assert len(idx.store) == 2  # keyed by id → no duplicates
@@ -155,6 +158,7 @@ class TestIdempotentIndexing:
 
 # ── env gate (no mem0 required) ──────────────────────────────────────────────────
 
+
 class TestEnvGate:
     def test_none_when_unset(self):
         assert memory_index_from_env({}) is None
@@ -167,14 +171,13 @@ class TestEnvGate:
         assert isinstance(idx, Mem0MemoryIndex)
 
     def test_config_blob_is_parsed(self):
-        idx = memory_index_from_env(
-            {"MEMORY_INDEX": "true", "MEMORY_INDEX_CONFIG": '{"version": "v1.1"}'}
-        )
+        idx = memory_index_from_env({"MEMORY_INDEX": "true", "MEMORY_INDEX_CONFIG": '{"version": "v1.1"}'})
         assert isinstance(idx, Mem0MemoryIndex)
         assert idx._config == {"version": "v1.1"}
 
 
 # ── agent wiring: _recall threads the index into salience ────────────────────────
+
 
 class _SalienceAgent(ManifestAgent):
     manifest = AgentManifest(
@@ -211,13 +214,17 @@ class TestRecallWiring:
 
 # ── guarded real-mem0 round-trip (requires mem0 + an embedder) ───────────────────
 
+
 class TestMem0RoundTrip:
     def test_index_then_search_recovers_event(self):
         pytest.importorskip("mem0")
-        if not os.getenv("OPENAI_API_KEY") and not os.getenv("MEMORY_INDEX_CONFIG"):
-            pytest.skip("mem0 needs an embedder (OPENAI_API_KEY or MEMORY_INDEX_CONFIG)")
+        pytest.importorskip("sentence_transformers")
+        # Opt-in: the default local embedder downloads a model on first use, so we
+        # never reach the network in CI unless explicitly asked.
+        if not os.getenv("MEMORY_INDEX_E2E"):
+            pytest.skip("set MEMORY_INDEX_E2E=1 to run the local-embedder round-trip (downloads a model)")
 
-        backend = Mem0MemoryIndex()
+        backend = Mem0MemoryIndex()  # default local sentence-transformers embedder
         ev = _event("world.observed", turn=1, text="golden spores drift over the glass forest", eid="rt1")
         try:
             backend.index((ev,))

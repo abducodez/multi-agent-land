@@ -5,16 +5,17 @@ Serve dev: modal serve modal/app_google.py
 
 Gemma repos are gated: create the ``huggingface-secret`` (HF_TOKEN=...) and
 accept the model license on Hugging Face before deploying. Each model gets its
-own OpenAI-compatible endpoint (one per model in ``GOOGLE_MODELS``).
+own OpenAI-compatible endpoint (one per model in the provider's catalogue entry).
 """
 
 from __future__ import annotations
 
 import modal
 
-from registry import GOOGLE_MODELS
+from catalogue import PROVIDERS
 from service import register_all
 
-app = modal.App("google-llms")
+_provider = PROVIDERS["google"]
+app = modal.App(_provider.app)
 
-register_all(app, GOOGLE_MODELS)
+register_all(app, _provider.models)

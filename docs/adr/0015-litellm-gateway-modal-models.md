@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted. **Amended by [ADR-0019](0019-single-model-catalogue-no-cloud-path.md):**
+`OPENAI_API_KEY` is no longer a live-path activation signal (only
+`MODAL_WORKSPACE` / `MODAL_LLM_BASE_URL`), and profiles now bind by *catalogue
+key* — the served id and endpoint URL are derived from `modal/catalogue.py`
+rather than hand-written into `config/models.yaml`.
 
 ## Context
 

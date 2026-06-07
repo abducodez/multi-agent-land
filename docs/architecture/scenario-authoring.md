@@ -343,8 +343,9 @@ uv run pytest tests/ -q          # your new test + the 260 that must stay green
 uv run app.py                    # 📰 The Rumour Mill now appears in the dropdown
 ```
 
-No API key needed — the deterministic stub serves every profile. Add
-`OPENAI_API_KEY` (or the Modal bindings in `config/models.yaml`) to go live.
+No API key needed — the deterministic stub serves every profile. Set
+`MODAL_WORKSPACE` (the Modal binding behind `config/models.yaml`) to go live on
+the small models you deploy.
 
 ---
 

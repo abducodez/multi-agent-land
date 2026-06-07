@@ -148,10 +148,12 @@ extraction), carrying the full event in metadata so a hit reconstructs the
 installed.
 
 **Gate**: `memory_index_from_env()` returns `None` unless `MEMORY_INDEX` is
-truthy. When active, an embedding model is required — routed via `OPENAI_API_KEY`
-by default, or pinned to a local embedder / the project's Postgres+pgvector
-(ADR-0014) via `MEMORY_INDEX_CONFIG` (a JSON blob forwarded to the backend's
-`from_config`). Install the `memory` extra (`mem0ai`).
+truthy. When active, embeddings run **locally** via sentence-transformers
+(`all-MiniLM-L6-v2`) by default — no API key, fully offline once the model is
+cached — or are repointed (e.g. to a different embedder, or the project's
+Postgres+pgvector, ADR-0014) via `MEMORY_INDEX_CONFIG` (a JSON blob forwarded
+verbatim to the backend's `from_config`). Install the `memory` extra (`mem0ai` +
+`sentence-transformers`). See ADR-0019.
 
 **Alternative backends**: the two-method protocol can wrap any retrieval store —
 a stateful agent-memory service (e.g. a Letta-style memory server) could be a

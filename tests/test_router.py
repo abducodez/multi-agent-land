@@ -72,13 +72,23 @@ class TestModelRouterOnline:
 
 
 class TestFromEnv:
-    def test_offline_without_key(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    def test_offline_without_binding(self, monkeypatch):
+        # No Modal binding (and no stray cloud key) → deterministic offline stub.
+        for var in ("MODAL_WORKSPACE", "MODAL_LLM_BASE_URL", "OPENAI_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
         router = ModelRouter.from_env()
         assert router.offline is True
         assert isinstance(router.for_profile("fast"), DeterministicTinyModel)
 
-    def test_online_with_key(self, monkeypatch):
-        monkeypatch.setenv("OPENAI_API_KEY", "sk-real-looking-key")
+    def test_online_with_modal_workspace(self, monkeypatch):
+        # A Modal workspace is the activating signal for the live path.
+        monkeypatch.setenv("MODAL_WORKSPACE", "my-workspace")
+        router = ModelRouter.from_env()
+        assert router.offline is False
+
+    def test_online_with_modal_base_url(self, monkeypatch):
+        # A single explicit OpenAI-compatible endpoint also activates live.
+        monkeypatch.delenv("MODAL_WORKSPACE", raising=False)
+        monkeypatch.setenv("MODAL_LLM_BASE_URL", "https://box.modal.run/v1")
         router = ModelRouter.from_env()
         assert router.offline is False

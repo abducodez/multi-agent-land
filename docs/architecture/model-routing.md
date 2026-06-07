@@ -40,7 +40,7 @@ ModelRouter._build(profile)
 ```
 
 Profiles map to the OpenAI-compatible vLLM endpoints served on Modal
-(`modal/registry.py`):
+(`modal/catalogue.py`):
 
 | Profile | Modal endpoint | Served model id |
 |---|---|---|
@@ -63,37 +63,45 @@ spend cap on the live path. Offline cost is always `0.0`.
 
 ## Configuration
 
-`config/models.yaml` binds each profile to a concrete model + endpoint + decoding.
-Only the Modal workspace is deploy-specific, so it is templated from
-`$MODAL_WORKSPACE` and never hard-coded; `$MODAL_LLM_KEY` is the endpoint key:
+`config/models.yaml` binds each profile to a model by its **catalogue key** — the
+slug in `modal/catalogue.py`, the single source of truth for what is deployed. The
+loader expands that key into the concrete binding, so the served id and endpoint
+URL live in exactly one place (no parallel YAML to keep in sync):
 
 ```yaml
 offline: null            # null=auto, true=stub everywhere, false=always live
 profiles:
   tiny:
-    model: openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
-    base_url: https://${MODAL_WORKSPACE}--nvidia-llms-nemotron-3-nano-4b.modal.run/v1
-    api_key: ${MODAL_LLM_KEY}
+    endpoint: nemotron-3-nano-4b   # catalogue key (modal/catalogue.py)
     temperature: 0.7
     max_tokens: 160
   # fast / balanced / strong follow the same shape (see the file)
 ```
 
-`Registry.from_dir()` expands `${VAR}` references when it loads the file. If any
-referenced var is unset, that string collapses to `""` (a binding built from a
-missing workspace is *not configured*, not a half-templated URL) and the validator
-nulls it. Runtime env overrides for the model name (highest priority): `MODEL_TINY`,
-`MODEL_FAST`, `MODEL_BALANCED`, `MODEL_STRONG`, then `MODEL_NAME` (these feed the
-`from_env` default path; explicit `models.yaml` specs win on the registry path).
+`Registry.from_dir()` resolves each `endpoint:` against the catalogue (via
+`src/models/modal_catalogue.py`) and fills:
+
+- `model`    = `openai/<served_model_id>`
+- `base_url` = `https://${MODAL_WORKSPACE}--<app>-<endpoint>.modal.run/v1`
+  (or `$MODAL_LLM_BASE_URL` if set; `""` when neither → offline stub)
+- `api_key`  = `$MODAL_LLM_KEY` (a self-served vLLM endpoint accepts any token)
+
+Only the workspace is deploy-specific, and it is never hard-coded. Adding/retuning
+a model is a one-line edit in `modal/catalogue.py`; re-casting a tier is a one-line
+`endpoint:` change here. Per-profile env overrides for the model string (highest
+priority): `MODEL_TINY`, `MODEL_FAST`, `MODEL_BALANCED`, `MODEL_STRONG`. You can
+also bind a profile explicitly with `model:` + `base_url:` instead of `endpoint:`
+(an escape hatch for non-catalogue endpoints).
 
 ## Offline determinism
 
-With no live binding configured — neither `OPENAI_API_KEY` nor
-`MODAL_WORKSPACE`/`MODAL_LLM_BASE_URL` — the router serves a
-`DeterministicTinyModel` for every profile (variant tagged per profile). Demos and
-the entire test suite run with zero inference and full reproducibility — the
-offline/online decision is made once in `has_live_credentials()`, and `litellm` is
-imported lazily so it need not be installed at all offline.
+With no live binding configured — no `MODAL_WORKSPACE` and no `MODAL_LLM_BASE_URL`
+— the router serves a `DeterministicTinyModel` for every profile (variant tagged
+per profile). Demos and the entire test suite run with zero inference and full
+reproducibility — the offline/online decision is made once in
+`has_live_credentials()`, and `litellm` is imported lazily so it need not be
+installed at all offline. There is no generic cloud key: live inference is always
+against the small models you deploy on Modal.
 
 ## Mixing tiers in one cast
 
@@ -112,8 +120,9 @@ everything on the big model.
 
 - `src/models/router.py` — `ModelRouter`, `ProfileSpec`, `_PROFILE_DECODING`
 - `src/models/litellm_provider.py` — `LiteLLMProvider` (live transport, real cost)
-- `src/core/manifest.py` — `resolve_model()` (env → default name resolution)
-- `src/core/registry.py` — `build_router()`, `_expand_env()` (YAML env templating)
+- `src/models/modal_catalogue.py` — engine view of the catalogue (key → binding)
+- `src/core/manifest.py` — `resolve_model()` (env → catalogue default)
+- `src/core/registry.py` — `build_router()`, `_resolve_model_endpoints()`, `_expand_env()`
 - `src/models/provider.py` — `ModelProvider.last_usage`, `estimate_tokens()`
 - `src/models/openai_compat.py` — `has_live_credentials()`, role→system personas
-- `modal/registry.py` — the served endpoints each profile points at
+- `modal/catalogue.py` — the single source of truth: every served model + provider app

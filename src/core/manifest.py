@@ -10,6 +10,7 @@ Four stable contracts hold the whole system together:
   3. AgentManifest — this file
   4. ToolContract — declared in tools/  (future MCP servers)
 """
+
 from __future__ import annotations
 
 from typing import Literal
@@ -23,6 +24,7 @@ ModelProfile = Literal["tiny", "fast", "balanced", "strong"]
 
 
 # ── sub-schemas ───────────────────────────────────────────────────────────────
+
 
 class MemoryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -52,6 +54,7 @@ class ScheduleConfig(BaseModel):
 
 
 # ── manifest ─────────────────────────────────────────────────────────────────
+
 
 class AgentManifest(BaseModel):
     """Declarative description of a single specialist agent.
@@ -125,22 +128,45 @@ _PROFILE_ENV_KEYS: dict[ModelProfile, str] = {
     "strong": "MODEL_STRONG",
 }
 
+# Static fallback model per profile — the small models served on Modal (mirrors
+# the profile tags in modal/catalogue.py). resolve_model() prefers the live
+# catalogue; these are used only if it cannot be read. Values are LiteLLM model
+# strings (``openai/<served_id>``) for the OpenAI-compatible custom-endpoint path.
 _PROFILE_DEFAULTS: dict[ModelProfile, str] = {
-    "tiny": "gpt-4o-mini",        # placeholder; swap to Qwen2.5-3B via env
-    "fast": "gpt-4o-mini",
-    "balanced": "gpt-4o-mini",
-    "strong": "gpt-4o",
+    "tiny": "openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+    "fast": "openai/openbmb/MiniCPM4.1-8B",
+    "balanced": "openai/google/gemma-4-12B",
+    "strong": "openai/google/gemma-4-26B-A4B-it",
 }
 
 
-def resolve_model(profile: ModelProfile) -> str:
-    """Return the concrete model name for a logical profile.
+def _catalogue_default(profile: ModelProfile) -> str | None:
+    """The catalogue's default model for *profile* as a LiteLLM string, or None."""
+    try:
+        from src.models import modal_catalogue
 
-    Reads MODEL_TINY / MODEL_FAST / MODEL_BALANCED / MODEL_STRONG from the
-    environment, then falls back to the default.  This is the only place
-    model names are resolved — agent code never hard-codes a model.
+        key = modal_catalogue.default_key_for_profile(profile)
+        if key:
+            entry = modal_catalogue.entry_by_key(key)
+            if entry:
+                return f"openai/{entry['served_model_id']}"
+    except Exception:  # pragma: no cover - defensive: catalogue unavailable
+        return None
+    return None
+
+
+def resolve_model(profile: ModelProfile) -> str:
+    """Return the concrete model string for a logical profile.
+
+    Precedence: the ``MODEL_TINY`` / ``MODEL_FAST`` / ``MODEL_BALANCED`` /
+    ``MODEL_STRONG`` env override, then the catalogue's default for that tier
+    (``modal/catalogue.py``), then the static fallback above.  This is the only
+    place model names are resolved on the specless path — agent code never
+    hard-codes a model.
     """
     import os
 
-    env_key = _PROFILE_ENV_KEYS[profile]
-    return os.getenv(env_key, "") or os.getenv("MODEL_NAME", "") or _PROFILE_DEFAULTS[profile]
+    override = os.getenv(_PROFILE_ENV_KEYS[profile], "")
+    if override:
+        return override
+    return _catalogue_default(profile) or _PROFILE_DEFAULTS[profile]

@@ -5,16 +5,17 @@ Serve dev: modal serve modal/app_nvidia.py
 
 Each model gets its own OpenAI-compatible endpoint at
 ``https://<workspace>--nvidia-llms-<endpoint-name>.modal.run/v1`` (one per model in
-``NVIDIA_MODELS``). Add or retune models in ``registry.py``.
+the provider's catalogue entry). Add or retune models in ``catalogue.py``.
 """
 
 from __future__ import annotations
 
 import modal
 
-from registry import NVIDIA_MODELS
+from catalogue import PROVIDERS
 from service import register_all
 
-app = modal.App("nvidia-llms")
+_provider = PROVIDERS["nvidia"]
+app = modal.App(_provider.app)
 
-register_all(app, NVIDIA_MODELS)
+register_all(app, _provider.models)

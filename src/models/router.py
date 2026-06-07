@@ -18,6 +18,7 @@ On the live path the concrete transport is the :class:`LiteLLMProvider` gateway
 ``modal/`` and the gateway reports real per-call cost into the Governor.  The
 routing abstraction here is unchanged — only how a model is *called* moved.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -53,7 +54,8 @@ class ModelRouter:
 
     Construct with explicit ``specs`` (e.g. from a validated config) or call
     :meth:`from_env` to derive them from ``MODEL_TINY`` / ``MODEL_FAST`` /
-    ``MODEL_BALANCED`` / ``MODEL_STRONG`` (falling back to ``MODEL_NAME``).
+    ``MODEL_BALANCED`` / ``MODEL_STRONG`` (falling back to the catalogue default
+    for each tier — see :func:`~src.core.manifest.resolve_model`).
     """
 
     specs: dict[str, ProfileSpec] = field(default_factory=dict)

@@ -154,7 +154,7 @@ The engine is just plumbing.  The scenario is pure config.
 |---|---|---|
 | UI | Gradio | Required by hackathon; good enough for a toy |
 | Event schema | Pydantic v2 | Strict validation, zero extra fields |
-| Model | Any OpenAI-compatible API | `OPENAI_BASE_URL` lets you point at Ollama, Together, Groq, NVIDIA NIM |
+| Model | Small models you deploy on Modal (OpenAI-compatible vLLM) | One stdlib `catalogue.py` is the single source of truth; `MODAL_WORKSPACE` activates the live path |
 | Memory | Ledger view (no separate store) | Consistency, simplicity, crash recovery |
 | Orchestration | In-process, synchronous | Right size for a demo; async and durable execution available when needed |
 

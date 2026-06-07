@@ -16,8 +16,8 @@ interactive story engine where the AI is load-bearing for the experience.
 ```bash
 uv sync                           # create .venv and install everything from the lockfile
 
-# Optional: add your API key for live inference
-cp .env.example .env              # then fill in OPENAI_API_KEY
+# Optional: configure live inference (else the app runs fully offline)
+cp .env.example .env              # then set MODAL_WORKSPACE
 
 uv run app.py
 ```
@@ -25,9 +25,10 @@ uv run app.py
 > Don't have [uv](https://docs.astral.sh/uv/)? `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 The app runs on a **deterministic local stub** with no API key — great for testing
-and demos that need to be fully reproducible.  Add an `OPENAI_API_KEY` to switch to
-live inference.  Any OpenAI-compatible endpoint works (Together AI, Groq, Ollama,
-NVIDIA NIM) — set `OPENAI_BASE_URL` in `.env`.
+and demos that need to be fully reproducible.  To go live, deploy the small models
+in [`modal/`](modal/README.md) and set `MODAL_WORKSPACE` in `.env`; every agent then
+binds to its model by *catalogue key* (`modal/catalogue.py`). There is no generic
+cloud key — live inference is always against models you deploy yourself.
 
 ### Run tests
 
@@ -147,7 +148,7 @@ enforced by a test (`tests/test_modularity.py`). See
 ```
 app.py                      Gradio composition root (loads scenarios from config/)
 config/                     THE configurable surface (declarative, validatable)
-  models.yaml               Logical profile → concrete small model
+  models.yaml               Logical profile → catalogue key (model lives in modal/catalogue.py)
   agents/*.yaml             One AgentManifest per agent
   scenarios/*.yaml          One ScenarioConfig per scenario (cast = agent names)
 src/

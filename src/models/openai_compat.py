@@ -6,23 +6,47 @@ from dataclasses import dataclass, field
 from src.models.provider import ModelProvider
 
 
+def _default_compat_model() -> str:
+    """The served model id this thin client sends by default.
+
+    Pulls the ``balanced`` tier's model from the catalogue (the single source of
+    truth) so there is no hard-coded model name to drift; falls back to a constant
+    if the catalogue cannot be read. Note this is the *served id* (what a raw
+    OpenAI-compatible call expects), not the ``openai/<id>`` LiteLLM string.
+    """
+    try:
+        from src.models import modal_catalogue
+
+        key = modal_catalogue.default_key_for_profile("balanced")
+        if key:
+            entry = modal_catalogue.entry_by_key(key)
+            if entry:
+                return entry["served_model_id"]
+    except Exception:  # pragma: no cover - defensive: catalogue unavailable
+        pass
+    return "google/gemma-4-12B"
+
+
 @dataclass
 class OpenAICompatProvider(ModelProvider):
-    """Provider for any OpenAI-compatible chat completion API.
+    """Thin client for any OpenAI-compatible chat-completions endpoint.
 
-    Works with: OpenAI, Together AI, Groq, Ollama (v0.1.14+), HuggingFace TGI,
-    NVIDIA NIM, and any endpoint that speaks the /v1/chat/completions protocol.
+    The engine's live path routes through the LiteLLM gateway
+    (:class:`~src.models.litellm_provider.LiteLLMProvider`); this client remains
+    for the legacy single-provider :func:`build_from_env` path and as the home of
+    the role→system personas. It targets the small models served on Modal — there
+    is no OpenAI / generic-cloud default. Driven by env so no scenario hard-codes a
+    provider:
 
-    Model selection and endpoint are driven by env vars so the scenario config
-    never hard-codes a provider:
-      OPENAI_API_KEY    — required for real calls
-      OPENAI_BASE_URL   — optional, defaults to api.openai.com
-      MODEL_NAME        — optional, defaults to gpt-4o-mini
-      TINY_TITAN_MODE   — set to "1" to use a <=4B model profile
+      MODAL_LLM_BASE_URL — endpoint URL ending in /v1 (offline when unset)
+      MODAL_LLM_KEY      — endpoint bearer token (a self-served vLLM accepts any;
+                           defaults to "EMPTY")
+      MODEL_BALANCED     — model id to send (falls back to the catalogue default)
     """
 
-    model: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "gpt-4o-mini"))
-    base_url: str | None = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL"))
+    model: str = field(default_factory=lambda: os.getenv("MODEL_BALANCED") or _default_compat_model())
+    base_url: str | None = field(default_factory=lambda: os.getenv("MODAL_LLM_BASE_URL") or None)
+    api_key: str | None = field(default_factory=lambda: os.getenv("MODAL_LLM_KEY") or None)
     max_tokens: int = 256
     temperature: float = 0.9
     _client: object = field(default=None, init=False, repr=False)
@@ -33,13 +57,13 @@ class OpenAICompatProvider(ModelProvider):
             try:
                 import openai
             except ImportError as exc:
-                raise ImportError(
-                    "openai package is required for OpenAICompatProvider. "
-                    "Run: uv add openai"
-                ) from exc
+                raise ImportError("openai package is required for OpenAICompatProvider. Run: uv add openai") from exc
             kwargs: dict = {}
             if self.base_url:
                 kwargs["base_url"] = self.base_url
+            # A self-served vLLM endpoint accepts any token; the SDK still requires
+            # one, so default to the conventional placeholder rather than erroring.
+            kwargs["api_key"] = self.api_key or "EMPTY"
             self._client = openai.OpenAI(**kwargs)
         return self._client
 
@@ -120,23 +144,18 @@ class OpenAICompatProvider(ModelProvider):
 
 
 def has_live_credentials() -> bool:
-    """True when a usable model binding is configured for live inference.
+    """True when a live model binding is configured (else the offline stub runs).
 
     Single source of truth for the online/offline decision, shared by
-    ``build_from_env`` and the ModelRouter so they never disagree.  Two ways to go
-    live, either is sufficient:
-
-      * ``OPENAI_API_KEY`` — a generic OpenAI-compatible key; or
-      * ``MODAL_WORKSPACE`` / ``MODAL_LLM_BASE_URL`` — the binding for the models
-        served on Modal (ADR-0015): the workspace templates each profile's
-        endpoint URL in ``config/models.yaml``.  The gateway reaches those with
-        ``MODAL_LLM_KEY`` (default ``"EMPTY"``), so the workspace/base-url is the
-        activating signal.
+    :func:`build_from_env` and the :class:`~src.models.router.ModelRouter` so they
+    never disagree. The live path is the small models served on Modal (ADR-0015):
+    either ``MODAL_WORKSPACE`` (the engine templates each profile's endpoint URL
+    from it — see ``config/models.yaml`` + ``modal/catalogue.py``) or
+    ``MODAL_LLM_BASE_URL`` (a single explicit OpenAI-compatible endpoint) is
+    sufficient. There is no generic cloud key — everything routes to models you
+    deploy yourself.
     """
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if bool(api_key) and api_key not in ("sk-stub", "your-key-here"):
-        return True
-    return bool(os.getenv("MODAL_WORKSPACE", "") or os.getenv("MODAL_LLM_BASE_URL", ""))
+    return bool(os.getenv("MODAL_WORKSPACE", "").strip() or os.getenv("MODAL_LLM_BASE_URL", "").strip())
 
 
 def build_from_env() -> ModelProvider:
