@@ -1,0 +1,28 @@
+# Project-scoped Codex configuration.
+#
+# Codex loads this file only after the repository is trusted. Keep shared config
+# portable: no user-specific auth, providers, telemetry, notifications, or broad
+# auto-approval rules belong here.
+
+project_doc_max_bytes = 65536
+project_doc_fallback_filenames = ["CLAUDE.md"]
+
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+allow_login_shell = false
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+hooks = true
+
+[[hooks.Stop]]
+matcher = "*"
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = '/usr/bin/python3 "$(git rev-parse --show-toplevel)/.codex/hooks/stop_check.py"'
+timeout = 15
+statusMessage = "Checking project wrap-up reminders"
+
