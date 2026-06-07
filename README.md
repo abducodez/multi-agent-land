@@ -95,6 +95,10 @@ Visitor seed or disturbance
     Projections update → Observer (read-only) → Gradio UI (stage + ledger + stats + live config)
 ```
 
+The live theater — the two-tab **Fishbowl** UI (Lab + Show) built on this read surface —
+is documented as-built in
+[docs/architecture/fishbowl-ui.md](docs/architecture/fishbowl-ui.md).
+
 ### Key decisions (see `docs/adr/` for full reasoning)
 
 | # | Decision |
@@ -185,7 +189,7 @@ src/
 tests/                      185 passing tests, zero mocks
 docs/
   vision.md                 One-page product and technical vision
-  architecture/             Overview, model-routing, config-system, tool-contract, long-running, …
+  architecture/             Overview, model-routing, config-system, tool-contract, fishbowl-ui, …
   adr/                      Architecture Decision Records (0001–0013)
   schema/                   events / agent-manifest / scenario-config / world-config
   runbooks/ strategy/ blog/ journal/
