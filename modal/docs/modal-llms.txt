@@ -1,0 +1,100 @@
+# Modal llms.txt
+
+> Modal is a platform for running Python code in the cloud with minimal
+> configuration, especially for serving AI models and high-performance batch
+> processing. It supports fast prototyping, serverless APIs, scheduled jobs,
+> GPU inference, distributed volumes, and sandboxes.
+
+> Local mirror of Modal's llms.txt, kept in-repo so the serving layer stays
+> grounded in current Modal guidance. Refresh from https://modal.com/docs and
+> re-sync when bumping the vLLM/Modal versions in ../service.py.
+
+Important notes:
+
+- Modal's primitives are embedded in Python and tailored for AI/GPU use cases,
+  but they can be used for general-purpose cloud compute.
+- Modal is a serverless platform, meaning you are only billed for resources used
+  and can spin up containers on demand in seconds.
+
+You can sign up for free at [https://modal.com] and get $30/month of credits.
+
+## Patterns this repo relies on
+
+- OpenAI-compatible vLLM serving via `@modal.web_server(port=8000)` launching
+  `vllm serve` as a subprocess (see ../service.py).
+- `@modal.concurrent(max_inputs=...)` to multiplex requests onto one container.
+- Shared `modal.Volume`s for the Hugging Face weight cache and vLLM compile
+  cache, so weights are pulled once and warm across every provider app.
+- `modal.Secret` (`huggingface-secret`, key `HF_TOKEN`) for gated repos.
+- `scaledown_window` / `min_containers` for cold-start vs. cost trade-offs.
+
+## Guide
+
+- [Introduction](https://modal.com/docs/guide)
+- Custom container images
+  - [Defining Images](https://modal.com/docs/guide/images.md)
+  - [Using existing container images](https://modal.com/docs/guide/existing-images.md)
+  - [Fast pull from registry](https://modal.com/docs/guide/fast-pull-from-registry.md)
+- GPUs and other resources
+  - [GPU acceleration](https://modal.com/docs/guide/gpu.md)
+  - [Using CUDA on Modal](https://modal.com/docs/guide/cuda.md)
+  - [Configuring CPU, memory, and disk](https://modal.com/docs/guide/resources.md)
+- Scaling out
+  - [Scaling out](https://modal.com/docs/guide/scale.md)
+  - [Input concurrency](https://modal.com/docs/guide/concurrent-inputs.md)
+  - [Batch processing](https://modal.com/docs/guide/batch-processing.md)
+  - [Job queues](https://modal.com/docs/guide/job-queue.md)
+  - [Dynamic batching](https://modal.com/docs/guide/dynamic-batching.md)
+- Deployment
+  - [Apps, Functions, and entrypoints](https://modal.com/docs/guide/apps.md)
+  - [Managing deployments](https://modal.com/docs/guide/managing-deployments.md)
+  - [Invoking deployed functions](https://modal.com/docs/guide/trigger-deployed-functions.md)
+  - [Continuous deployment](https://modal.com/docs/guide/continuous-deployment.md)
+- Secrets and environment variables
+  - [Secrets](https://modal.com/docs/guide/secrets.md)
+  - [Environment variables](https://modal.com/docs/guide/environment_variables.md)
+- Web Functions
+  - [Web Functions](https://modal.com/docs/guide/webhooks.md)
+  - [Streaming endpoints](https://modal.com/docs/guide/streaming-endpoints.md)
+  - [Web Function URLs](https://modal.com/docs/guide/webhook-urls.md)
+  - [Request timeouts](https://modal.com/docs/guide/webhook-timeouts.md)
+  - [Proxy Auth Tokens](https://modal.com/docs/guide/webhook-proxy-auth.md)
+- Data sharing and storage
+  - [Volumes](https://modal.com/docs/guide/volumes.md)
+  - [Storing model weights](https://modal.com/docs/guide/model-weights.md)
+- Performance
+  - [Cold start performance](https://modal.com/docs/guide/cold-start.md)
+  - [Memory Snapshots](https://modal.com/docs/guide/memory-snapshots.md)
+  - [High-performance LLM inference](https://modal.com/docs/guide/high-performance-llm-inference.md)
+- Reliability and robustness
+  - [Failures and retries](https://modal.com/docs/guide/retries.md)
+  - [Timeouts](https://modal.com/docs/guide/timeouts.md)
+  - [GPU health](https://modal.com/docs/guide/gpu-health.md)
+
+## Examples
+
+- Large language models (LLMs)
+  - [Deploy an OpenAI-compatible LLM service with vLLM](https://modal.com/docs/examples/llm_inference.md)
+  - [Maximize tokens per second in batch processing with vLLM](https://modal.com/docs/examples/vllm_throughput.md)
+  - [Serve an ultra-low-latency chatbot with SGLang](https://modal.com/docs/examples/sglang_low_latency.md)
+  - [Deploy Nemotron 3](https://modal.com/docs/examples/nemotron_inference.md)
+  - [Run a multimodal RAG chatbot to answer questions about PDFs](https://modal.com/docs/examples/chat_with_pdf_vision.md)
+
+## API Reference
+
+- Application construction
+  - [`App`](https://modal.com/docs/reference/modal.App.md)
+  - [`App.function`](https://modal.com/docs/reference/modal.App.md)
+  - [`App.cls`](https://modal.com/docs/reference/modal.App.md)
+- Web integrations
+  - [`web_server`](https://modal.com/docs/reference/modal.web_server.md)
+  - [`fastapi_endpoint`](https://modal.com/docs/reference/modal.fastapi_endpoint.md)
+  - [`asgi_app`](https://modal.com/docs/reference/modal.asgi_app.md)
+- Function semantics
+  - [`concurrent`](https://modal.com/docs/reference/modal.concurrent.md)
+  - [`batched`](https://modal.com/docs/reference/modal.batched.md)
+- Container configuration
+  - [`Image`](https://modal.com/docs/reference/modal.Image.md)
+  - [`Secret`](https://modal.com/docs/reference/modal.Secret.md)
+- Data primitives
+  - [`Volume`](https://modal.com/docs/reference/modal.Volume.md)

@@ -1,0 +1,4 @@
+# Tooling for deploying and calling the Modal serving apps.
+# vLLM and CUDA live inside the container image (see service.py), not here.
+modal>=1.0
+openai>=1.40  # only needed for client.py / engine integration
