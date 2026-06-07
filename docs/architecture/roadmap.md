@@ -1,5 +1,11 @@
 # Roadmap
 
+> **Reprioritization:** a senior-architect review of the current tree —
+> [next-steps/architecture-review-and-next-steps.md](next-steps/architecture-review-and-next-steps.md) —
+> argues for a short correctness + observability sprint (real cross-agent
+> visibility, tool/causality events) *before* resuming the reach-oriented phases
+> below. To add a world, see [scenario-authoring.md](scenario-authoring.md).
+
 Legend: ✅ done · ◐ foundations built, depth remaining · ○ planned
 
 ## Phase 0: Foundation ✅

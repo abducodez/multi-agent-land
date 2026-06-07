@@ -35,7 +35,7 @@ Keep these stable and everything else is hot-swappable (config over code):
 
 | Concern | Mechanism | Doc |
 |---|---|---|
-| What agents/scenarios exist, who participates | declarative `config/` + `Registry` | [config-system.md](config-system.md) |
+| What agents/scenarios exist, who participates | declarative `config/` + `Registry` | [config-system.md](config-system.md) · [scenario-authoring.md](scenario-authoring.md) |
 | Which (small) model each agent uses | `ModelRouter`, per-agent profile | [model-routing.md](model-routing.md) |
 | How agents talk | append-only ledger + subscription/tick routing | [subscription-routing.md](subscription-routing.md) |
 | What agents remember | episodic / salience / reflection (ledger views) | [memory-stack.md](memory-stack.md) |
