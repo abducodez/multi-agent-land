@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 
@@ -27,6 +26,7 @@ class OpenAICompatProvider(ModelProvider):
     max_tokens: int = 256
     temperature: float = 0.9
     _client: object = field(default=None, init=False, repr=False)
+    _last_usage: dict = field(default_factory=dict, init=False, repr=False)
 
     def _get_client(self):
         if self._client is None:
@@ -44,6 +44,8 @@ class OpenAICompatProvider(ModelProvider):
         return self._client
 
     def complete(self, role: str, prompt: str) -> str:
+        from src.models.provider import estimate_tokens
+
         client = self._get_client()
         system = self._system_for_role(role)
         try:
@@ -56,8 +58,20 @@ class OpenAICompatProvider(ModelProvider):
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
             )
-            return resp.choices[0].message.content.strip()
+            text = resp.choices[0].message.content.strip()
+            usage = getattr(resp, "usage", None)
+            if usage is not None:
+                self._last_usage = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                }
+            else:
+                p, c = estimate_tokens(prompt), estimate_tokens(text)
+                self._last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}
+            return text
         except Exception as exc:
+            self._last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
             return f"[model error: {exc}]"
 
     @staticmethod
@@ -105,11 +119,24 @@ class OpenAICompatProvider(ModelProvider):
         return personas.get(role, f"You are a {role}. Respond in one or two sentences.")
 
 
+def has_live_credentials() -> bool:
+    """True when a usable API key is configured for live inference.
+
+    Single source of truth for the online/offline decision, shared by
+    ``build_from_env`` and the ModelRouter so they never disagree.
+    """
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    return bool(api_key) and api_key not in ("sk-stub", "your-key-here")
+
+
 def build_from_env() -> ModelProvider:
-    """Return the best available provider based on environment configuration."""
+    """Return the best available single provider based on environment configuration.
+
+    Kept for backward compatibility with Phase-1 agents that take one provider.
+    Manifest-driven agents use the per-profile :class:`ModelRouter` instead.
+    """
     from src.models.provider import DeterministicTinyModel
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if api_key and api_key not in ("", "sk-stub", "your-key-here"):
+    if has_live_credentials():
         return OpenAICompatProvider()
     return DeterministicTinyModel()

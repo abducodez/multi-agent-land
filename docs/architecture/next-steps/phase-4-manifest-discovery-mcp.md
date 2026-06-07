@@ -1,5 +1,10 @@
 # Phase 4: Manifest Discovery + MCP Tool Integration
 
+> **Status: ✅ Realized (live MCP servers still planned).** Declarative YAML
+> config + registry + capability-checked tool contract shipped — see ADR-0011,
+> ADR-0012, `docs/architecture/config-system.md`, and `tool-contract.md`. The
+> in-code loader sketch below was superseded by `src/core/registry.py`.
+
 ## Goal
 
 True plugin architecture: drop in a new agent YAML + handler file and it appears

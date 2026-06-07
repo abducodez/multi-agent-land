@@ -1,5 +1,11 @@
 # Phase 5: Long-Running Scenarios + Durable Execution
 
+> **Status: ◐ Partially realized.** Token/spend-aware governor, two-clock
+> `step(n_ticks=N)`, ledger-as-checkpoint `restore()`, snapshots, and an optional
+> Modal deployment (`modal_app.py`) shipped — see ADR-0013 and
+> `docs/architecture/long-running.md`. Cron episode export, Temporal/Inngest
+> wrappers, OpenTelemetry, and cost telemetry remain planned.
+
 ## Goal
 
 Run a scenario for hours or days without manual intervention.  The system should:

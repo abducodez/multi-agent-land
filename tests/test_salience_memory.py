@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import math
 
 from src.core.events import Event
 from src.core.memory import (
-    EpisodicMemory,
     ReflectionTracker,
     SalienceMemory,
     _KIND_IMPORTANCE,

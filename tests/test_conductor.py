@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import pytest
 
 from src.core.conductor import Conductor
-from src.core.events import Event
-from src.models.provider import DeterministicTinyModel
 from src.scenarios.thousand_token_wood import build_scenario
 
 

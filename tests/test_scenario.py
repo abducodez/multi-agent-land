@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+from src.agents.base import Agent
 from src.core.events import Event
+from src.core.projections import StageProjection
 from src.scenarios.base import Scenario
 from src.scenarios.thousand_token_wood import build_scenario
-from src.models.provider import DeterministicTinyModel
+
+
+class _StubAgent(Agent):
+    name = "stub"
+
+    def act(self, run_id, turn, projection: StageProjection, recent_events) -> Event:
+        return Event(run_id=run_id, turn=turn, kind="agent.spoke", actor=self.name, payload={"text": "."})
 
 
 def _bare_scenario() -> Scenario:
-    from src.agents.tiny_wood import SceneWhisperer
-    return Scenario(
-        name="test-scenario",
-        default_seed="bare seed",
-        agents=(SceneWhisperer(DeterministicTinyModel()),),
-    )
+    return Scenario(name="test-scenario", default_seed="bare seed", agents=(_StubAgent(),))
 
 
 class TestScenarioGenesis:

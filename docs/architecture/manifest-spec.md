@@ -14,6 +14,7 @@ class AgentManifest(BaseModel):
     name: str                        # unique slug, matches Agent.name
     role: AgentRole                  # worker | judge | observer | reflector
     persona: str                     # injected as IDENTITY in every prompt
+    handler: str | None              # optional behaviour binding (registry handler key)
 
     # Communication contract
     subscribes_to: list[str]         # event kinds that trigger this agent
@@ -29,7 +30,10 @@ class AgentManifest(BaseModel):
     memory: MemoryConfig             # window, use_salience, salience_top_k, reflection_threshold
 
     # Capability grants
-    tools: list[str]                 # MCP server names this agent may access
+    tools: list[str]                 # tool names this agent may call (ToolRegistry)
+
+    # Output shaping
+    output_extra_fields: list[str]   # extra payload fields the model is asked for
 ```
 
 ---
@@ -105,9 +109,22 @@ Emit an `agent.reflected` event every N visible events.
 Good first value: 20 (agents reflect roughly once per sim-day).
 
 ### `tools`
-MCP server names this agent may access.
-The runtime wires only the listed servers — capability-based least privilege.
-An agent that doesn't need image-gen should not have it in `tools`.
+Tool names this agent may call.  The `ToolRegistry` allows only the listed tools
+— capability-based least privilege (ADR-0012).  An agent that doesn't need
+image-gen should not have it in `tools`.  The same contract fronts in-process
+tools today and MCP servers later.
+
+### `handler`
+Optional behaviour binding.  `None` (the common case) → the generic
+`ManifestAgent`.  When set, the registry instantiates the `ManifestAgent`
+subclass registered under this key via `@register_handler` (for agents that call
+tools or need custom prompt logic).  The YAML still supplies every declarative
+field; the handler only adds behaviour.
+
+### `output_extra_fields`
+Additional payload fields the model is asked to emit beyond `{kind, text}`, e.g.
+`["emotion"]` → `{"kind": "...", "text": "...", "emotion": "..."}`.  Lets a
+scenario shape agent output without engine edits.
 
 ---
 
@@ -148,9 +165,15 @@ JUDGE = AgentManifest(
 
 ## Discovery and registration
 
-The conductor does not hardcode which agents exist.
-Scenarios declare their cast; each agent carries its manifest.
-The conductor inspects `agent.manifest` to determine routing.
+This is now real (ADR-0011), not aspirational.  Manifests are YAML files under
+`config/agents/<name>.yaml`.  `Registry.from_dir()` loads them, `ScenarioConfig.cast`
+references them by name, and `Registry.build_scenario()` resolves the cast into
+live agents bound to the `ModelRouter` and `ToolRegistry`.  The conductor inspects
+`agent.manifest` to route subscriptions + ticks.
 
-In Phase 4, agents will self-register via a manifest YAML file in `agents/<name>/manifest.yaml`.
-The conductor scans the directory, loads manifests, and wires subscriptions — no scenario edits.
+Adding an agent:
+1. Drop `config/agents/<name>.yaml`.
+2. Add `<name>` to a scenario's `cast`.
+3. (Only if it needs custom behaviour) register a handler and set `handler:`.
+
+No engine edit — proven by `tests/test_modularity.py`.

@@ -1,0 +1,16 @@
+name: fortune-teller
+role: worker
+handler: fortune-teller        # custom behaviour: calls the oracle tool
+persona: >
+  You are the Fortune-Teller of the grove. Read the omen the oracle gives you and
+  speak a single cryptic prophecy that ties it to the current scene.
+subscribes_to: []
+may_emit:
+  - oracle.spoke               # a custom namespaced kind, minted by config alone
+schedule:
+  tick_every: 1
+model_profile: fast
+memory:
+  window: 6
+tools:
+  - oracle                     # capability grant — scene-whisperer has none

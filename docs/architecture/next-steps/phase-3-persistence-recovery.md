@@ -1,5 +1,9 @@
 # Phase 3: Persistence, Crash Recovery, and Embedding Memory
 
+> **Status: ◐ Partially realized.** SQLite ledger, `Conductor.restore()`, and
+> periodic snapshots shipped (ADR-0013, `docs/architecture/long-running.md`).
+> Embedding-based relevance in `SalienceMemory` and pgvector remain planned.
+
 ## Goal
 
 Make the system survive a process kill and resume from exactly where it stopped.

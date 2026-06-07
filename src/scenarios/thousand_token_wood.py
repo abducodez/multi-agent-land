@@ -1,28 +1,18 @@
+"""Thousand Token Wood — divergent world-growth scenario.
+
+The cast, personas, model tiers, memory, and goal now live entirely in
+``config/`` (``scenarios/thousand-token-wood.yaml`` + the referenced agents).
+This module is just the stable ``build_scenario()`` entrypoint that asks the
+registry to assemble the declarative config into a live Scenario — proof that a
+scenario is data, not code.
+"""
 from __future__ import annotations
 
-from src.agents.tiny_wood import EchoAgent, MischiefCritic, PocketActor, SceneWhisperer
-from src.models.openai_compat import build_from_env
+from src.core.registry import default_registry
 from src.scenarios.base import Scenario
 
-_SEEDS = [
-    "A village of stage props wakes up and argues about which fairy tale they belong to.",
-    "The last remaining compass has decided to point at feelings instead of north.",
-    "A library where every book is the memoir of a different moon.",
-    "The mushrooms have started charging admission to their bioluminescent shows.",
-    "Time in this clearing runs clockwise for small things and counterclockwise for large ones.",
-]
+SCENARIO_NAME = "thousand-token-wood"
 
 
 def build_scenario() -> Scenario:
-    model = build_from_env()
-    return Scenario(
-        name="thousand-token-wood",
-        default_seed=_SEEDS[0],
-        agents=(
-            SceneWhisperer(model),
-            MischiefCritic(model),
-            PocketActor(model),
-            EchoAgent(model),
-        ),
-        example_seeds=_SEEDS,
-    )
+    return default_registry().build_scenario(SCENARIO_NAME)

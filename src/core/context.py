@@ -3,11 +3,12 @@
 Layering order (innermost → outermost, smallest → largest prompt budget):
 
   1. IDENTITY        — pinned persona (permanent cost, never drops)
-  2. CURRENT SCENE   — world state from the stage projection
-  3. YOUR MEMORY     — episodic recall from the ledger (windowed or salience-ranked)
-  4. VISITOR         — recent user injections (always salient)
-  [5. EXTRA]         — injected by ManifestAgent subclass for scenario-specific context
-  [6. OUTPUT FORMAT] — JSON constraint block (appended by structured.py)
+  2. SHARED GOAL     — the scenario objective (only when set; from the projection)
+  3. CURRENT SCENE   — world state from the stage projection
+  4. YOUR MEMORY     — episodic recall from the ledger (windowed or salience-ranked)
+  5. VISITOR         — recent user injections (always salient)
+  [6. EXTRA]         — injected by ManifestAgent subclass for scenario-specific context
+  [7. OUTPUT FORMAT] — JSON constraint block (appended by structured.py)
 
 The builder owns the structure.  Agents own only the persona and the action.
 Changing the prompt strategy for all agents is a one-file edit here.
@@ -52,8 +53,11 @@ class ContextBuilder:
             "\n".join(f"- {a}" for a in projection.user_artifacts[-3:]) or "(quiet)"
         )
 
+        goal_block = f"SHARED GOAL\n{projection.goal}\n\n" if projection.goal else ""
+
         return (
             f"IDENTITY\n{persona}\n\n"
+            f"{goal_block}"
             f"CURRENT SCENE\n{projection.current_scene}\n\n"
             f"YOUR MEMORY (recent events you witnessed)\n{memory_text}\n\n"
             f"VISITOR DISTURBANCES\n{visitor_lines}"

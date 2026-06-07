@@ -77,6 +77,12 @@ class AgentManifest(BaseModel):
     """Fixed identity text injected as IDENTITY in every prompt.
     Keep it tight — it occupies permanent prompt budget."""
 
+    handler: str | None = None
+    """Optional behaviour binding.  When set, the registry instantiates the
+    ManifestAgent subclass registered under this key (for agents that call tools
+    or need custom prompt logic).  When None, the generic ManifestAgent is used —
+    so most agents are pure declarative config with no Python at all."""
+
     # Communication contract
     subscribes_to: list[str] = Field(default_factory=list)
     """Event kinds that trigger this agent.
@@ -100,8 +106,14 @@ class AgentManifest(BaseModel):
 
     # Capability grants
     tools: list[str] = Field(default_factory=list)
-    """MCP server names this agent may access.  Capability-based least privilege:
-    the runtime only wires the tools named here."""
+    """MCP server / tool names this agent may access.  Capability-based least
+    privilege: the runtime only wires the tools named here."""
+
+    # Output shaping
+    output_extra_fields: list[str] = Field(default_factory=list)
+    """Additional payload fields the model is asked to emit beyond {kind, text}.
+    Example: ["emotion"] -> {"kind": "...", "text": "...", "emotion": "..."}.
+    Lets a scenario shape agent output without engine edits."""
 
 
 # ── model profile resolution ─────────────────────────────────────────────────

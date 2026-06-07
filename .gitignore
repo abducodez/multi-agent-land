@@ -6,3 +6,6 @@ __pycache__/
 .gradio/
 .claude
 scripts/
+runs/
+*.db
+CLAUDE.md

@@ -1,0 +1,29 @@
+# Logical model profiles → concrete small models.
+#
+# offline:
+#   null  = auto (deterministic stub unless OPENAI_API_KEY is set)
+#   true  = always the deterministic stub (reproducible demos / CI)
+#   false = always live inference
+#
+# Every model here is ≤32B (the hackathon cap); `tiny` is ≤4B (Tiny Titan).
+# Swap any `model` to point a tier at a different small model — that is the
+# whole "small models, easily configurable" story in one file.  Env vars
+# MODEL_TINY / MODEL_FAST / MODEL_BALANCED / MODEL_STRONG override at runtime.
+offline: null
+profiles:
+  tiny:
+    model: qwen2.5-3b-instruct
+    temperature: 0.7
+    max_tokens: 160
+  fast:
+    model: qwen2.5-7b-instruct
+    temperature: 0.9
+    max_tokens: 220
+  balanced:
+    model: qwen2.5-14b-instruct
+    temperature: 0.8
+    max_tokens: 320
+  strong:
+    model: qwen2.5-32b-instruct
+    temperature: 0.6
+    max_tokens: 480

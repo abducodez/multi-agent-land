@@ -1,0 +1,22 @@
+name: thousand-token-wood
+title: "🍄 Thousand Token Wood"
+goal: >
+  Grow a strange, living forest scene that stays specific, playable, and delightful,
+  and transform whatever the visitor drops into the wood.
+default_seed: A village of stage props wakes up and argues about which fairy tale they belong to.
+example_seeds:
+  - A village of stage props wakes up and argues about which fairy tale they belong to.
+  - The last remaining compass has decided to point at feelings instead of north.
+  - A library where every book is the memoir of a different moon.
+  - The mushrooms have started charging admission to their bioluminescent shows.
+  - Time in this clearing runs clockwise for small things and counterclockwise for large ones.
+genesis_text: "The wood stirs awake around '{seed}'."
+cast:
+  - scene-whisperer
+  - mischief-critic
+  - pocket-actor
+  - echo
+governor:
+  max_turns: 2000
+  max_calls_per_turn: 16
+  max_total_calls: 20000

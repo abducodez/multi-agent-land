@@ -6,17 +6,32 @@ import socket
 import gradio as gr
 
 from src.core.conductor import Conductor
-from src.scenarios import mystery_roots, thousand_token_wood
-from src.ui.render import render_event_log, render_stage, render_stats
+from src.core.registry import default_registry
+from src.tools.builtins import default_tool_registry
+from src.ui.render import render_config, render_event_log, render_stage, render_stats
 
-# ── scenario registry ─────────────────────────────────────────────────────────
+# ── scenario registry (assembled from config/, not hardcoded) ───────────────────
 
-SCENARIOS = {
-    "🍄 Thousand Token Wood": thousand_token_wood.build_scenario(),
-    "🔍 Mystery Roots": mystery_roots.build_scenario(),
+_registry = default_registry()
+_tools = default_tool_registry()
+_PROFILE_MODELS = _registry.build_router().describe()
+
+# Preferred display order, then any other scenarios dropped into config/.
+_PREFERRED = ["thousand-token-wood", "mystery-roots", "oracle-grove"]
+_names = [n for n in _PREFERRED if n in _registry.scenarios] + [
+    n for n in sorted(_registry.scenarios) if n not in _PREFERRED
+]
+
+# display title -> internal scenario name
+SCENARIOS: dict[str, str] = {(_registry.scenarios[n].title or n): n for n in _names}
+
+_conductors: dict[str, Conductor] = {
+    title: Conductor(
+        _registry.build_scenario(name, tools=_tools),
+        governor=_registry.governor_for(name),
+    )
+    for title, name in SCENARIOS.items()
 }
-
-_conductors: dict[str, Conductor] = {name: Conductor(s) for name, s in SCENARIOS.items()}
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 
@@ -105,6 +120,7 @@ def _outputs(c: Conductor):
         render_stage(c.projection),
         render_event_log(c.ledger.events),
         render_stats(c.ledger.events, c.governor),
+        render_config(c.scenario, _PROFILE_MODELS),
     )
 
 
@@ -133,12 +149,15 @@ def change_scenario(scenario_name: str):
     seeds = c.scenario.example_seeds
     choices = [(s, s) for s in seeds]
     default = seeds[0] if seeds else c.scenario.default_seed
-    return gr.update(choices=choices, value=default)
+    return (
+        gr.update(choices=choices, value=default),
+        render_config(c.scenario, _PROFILE_MODELS),
+    )
 
 
 # ── layout ────────────────────────────────────────────────────────────────────
 
-with gr.Blocks(title="Multi-Agent Land · Thousand Token Wood", css=APP_CSS) as demo:
+with gr.Blocks(title="Multi-Agent Land · Thousand Token Wood") as demo:  # css passed to launch() (Gradio 6)
     gr.Markdown(
         """
         # Multi-Agent Land
@@ -157,7 +176,8 @@ with gr.Blocks(title="Multi-Agent Land · Thousand Token Wood", css=APP_CSS) as 
         )
 
     with gr.Row():
-        seed_examples = SCENARIOS[list(SCENARIOS.keys())[0]].example_seeds
+        _first_title = list(SCENARIOS.keys())[0]
+        seed_examples = _conductors[_first_title].scenario.example_seeds
         seed = gr.Dropdown(
             choices=[(s, s) for s in seed_examples],
             value=seed_examples[0],
@@ -189,12 +209,19 @@ with gr.Blocks(title="Multi-Agent Land · Thousand Token Wood", css=APP_CSS) as 
         events_box = gr.Textbox(label="Event ledger (append-only)", lines=18, elem_id="events")
         stats_box = gr.Textbox(label="Run stats", lines=18, elem_id="stats")
 
-    # ── wiring ────────────────────────────────────────────────────────────────
-    scenario_select.change(change_scenario, inputs=[scenario_select], outputs=[seed])
+    with gr.Accordion("⚙ Configuration — live, from config/ (YAML, not code)", open=False):
+        config_box = gr.Markdown(
+            value=render_config(_conductors[_first_title].scenario, _PROFILE_MODELS),
+            elem_id="config",
+        )
 
-    start_btn.click(start, inputs=[scenario_select, seed], outputs=[stage, events_box, stats_box])
-    step_btn.click(step, inputs=[scenario_select], outputs=[stage, events_box, stats_box])
-    inject_btn.click(inject, inputs=[scenario_select, user_event], outputs=[stage, events_box, stats_box])
+    # ── wiring ────────────────────────────────────────────────────────────────
+    _outs = [stage, events_box, stats_box, config_box]
+    scenario_select.change(change_scenario, inputs=[scenario_select], outputs=[seed, config_box])
+
+    start_btn.click(start, inputs=[scenario_select, seed], outputs=_outs)
+    step_btn.click(step, inputs=[scenario_select], outputs=_outs)
+    inject_btn.click(inject, inputs=[scenario_select, user_event], outputs=_outs)
 
 
 def dev_server_port() -> int:

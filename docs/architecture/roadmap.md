@@ -1,96 +1,78 @@
 # Roadmap
 
+Legend: ✅ done · ◐ foundations built, depth remaining · ○ planned
+
 ## Phase 0: Foundation ✅
 
-- Gradio app shell
-- In-memory append-only event ledger
-- Three deterministic tiny agents (SceneWhisperer, MischiefCritic, PocketActor)
-- Documentation spine: vision, ADR-0001–0004, schema docs, runbooks
-- Build journal automation
+Gradio shell, in-memory append-only ledger, deterministic tiny agents, docs spine
+(vision, ADR-0001–0004, schema, runbooks), build-journal automation.
 
 ## Phase 1: Memory + Second Scenario ✅
 
-- EpisodicMemory: per-agent filtered view over the ledger
-- ContextBuilder: single-point prompt assembly
-- Governor: budget guard (turns, per-turn calls, total calls)
-- OpenAI-compatible model provider (any OpenAI-compatible endpoint)
-- EchoAgent: transforms visitor injections
-- Mystery Roots scenario: blackboard swarm, zero engine edits
-- Enhanced Gradio UI: two-scenario dropdown, seed gallery, governor stats
-- ADR-0005–0008; engine architecture blog post
-- Tests: 14 → 70 passing
+EpisodicMemory, ContextBuilder, Governor (call caps), OpenAI-compatible provider,
+Mystery Roots scenario, two-scenario Gradio UI, ADR-0005–0008.
 
-## Phase 2: Reflection + Structured Output
+## Phase 2: Reflection + Structured Output ✅
 
-- Wire `ReflectionTracker` into `ManifestAgent.act()` — emit `agent.reflected`
-- Add `agent.reflected` to EventKind; render beliefs in stage projection
-- JSON constraint block in every agent prompt; track `_raw_fallback` rate
-- Convert Tiny Wood agents from `Agent` to `ManifestAgent`
-- Add `output_extra_fields` to manifest for per-scenario payload shaping
-- Agent eval harness: measure character consistency and raw-fallback rate
-- Full details: `docs/architecture/next-steps/phase-2-reflection-structured.md`
+- `ReflectionTracker` wired into `ManifestAgent.act()` — emits `agent.reflected`.
+- `agent.reflected` is a first-class kind; rendered as a belief in the projection.
+- JSON constraint block in every agent prompt; `_raw_fallback` rate shown in stats.
+- All shipped agents converted from `Agent` to manifest-driven config.
+- `output_extra_fields` shapes per-scenario payloads.
 
-## Phase 3: Persistence + Embedding Memory
+## Phase 3: Persistence + Memory ◐
 
-- Wire `SQLiteLedger` into the Gradio app (env var: `DB_PATH`)
-- `Conductor.restore()` for crash recovery demo
-- Periodic snapshots (`snapshot_every` param)
-- Embedding-based relevance in `SalienceMemory` (sentence-transformers or API)
-- `scripts/resume_run.py` crash-recovery entry point
-- Optional: `[embed]` dependency group; pgvector upgrade path documented
-- Full details: `docs/architecture/next-steps/phase-3-persistence-recovery.md`
+- ✅ `SQLiteLedger` (WAL, idempotent, `snapshot_to`, `from_file`, `tail`).
+- ✅ `Conductor.restore()` + `snapshot_every`; `scripts/resume_run.py`.
+- ○ Embedding-based relevance in `SalienceMemory` (still keyword overlap).
+- ○ pgvector upgrade path for episodic retrieval at scale.
 
-## Phase 4: Manifest Discovery + MCP Tool Integration
+## Phase 4: Declarative Config + Tools ✅ (live MCP ○)
 
-- YAML manifest files in `agents/<name>/manifest.yaml`
-- `src/core/registry.py`: manifest loader + handler discovery
-- Scenario config YAML replaces hardcoded agent lists
-- MCP client in `src/tools/mcp_client.py`
-- First MCP tool: image-gen server in `tools/image-gen/server.py`
-- Capability-based access control in tool registry
-- `tests/test_modularity.py`: invariant proof test
-- Full details: `docs/architecture/next-steps/phase-4-manifest-discovery-mcp.md`
+- ✅ YAML manifests + scenario configs + `models.yaml` under `config/`.
+- ✅ `src/core/registry.py`: loader, cast resolution, handler binding.
+- ✅ `WorldConfig` + `validate_world/agent/scenario` (UI/LLM-generatable, ADR-0011).
+- ✅ Capability-checked `ToolRegistry` + `oracle` tool + `oracle-grove` scenario (ADR-0012).
+- ✅ `tests/test_modularity.py`: new agent + scenario, zero engine edits.
+- ○ Live MCP servers (image-gen, web-fetch) behind the same tool contract.
 
-## Phase 5: Long-Running + Durable Execution
+## Phase 5: Long-Running + Durable Execution ◐
 
-- Two-clock model: wall-clock cadence + sim-time ticks
-- `scripts/cron_episode.py`: hourly episode trigger
-- `scripts/export_episode.py`: episode artifact export (Markdown/JSON)
-- Governor: hourly budget + cost tracking via LLM observability
-- Optional: Modal deployment (`modal_app.py`) for serverless long runs
-- Optional: Temporal workflow for maximum crash-reliability
-- OpenTelemetry tracing: end-to-end turn visibility
-- Full details: `docs/architecture/next-steps/phase-5-long-running-durable.md`
+- ✅ Token-aware Governor (`max_total_tokens`, `hourly_budget_usd`); per-agent
+  token metering (ADR-0013).
+- ✅ Two-clock `step(n_ticks=N)`; ledger-as-checkpoint resume.
+- ◐ Serverless deploy: `modal_app.py` (scheduled run on a persistent volume).
+- ○ Wall-clock cron + episode export (`scripts/export_episode.py`).
+- ○ Temporal / Inngest durable wrapper; OpenTelemetry tracing; cost telemetry hook.
 
-## Phase 6: Illustrated Serial (Third Scenario)
+## Phase 6: Illustrated Serial (Third Scenario) ○
 
-- New scenario: draft→critique→revise creative loop, wall-clock cadence
-- Agent cast: Beat Proposer, Dialogue Writer, Scene Describer, Artist (image-gen),
-  Continuity Keeper, Serial Judge, Episode Publisher
-- New event kinds: `beat.proposed`, `image.generated`, `episode.started`, `episode.published`
-- Gradio: episode gallery, current draft panel, arc status
-- Proves modularity holds across 3 structurally different scenarios
-- Full details: `docs/architecture/next-steps/phase-6-illustrated-serial.md`
+Draft→critique→revise creative loop on a wall-clock cadence; Artist agent backed by
+an image-gen MCP tool; episode gallery.  Proves modularity across a third
+structurally different scenario.  (`oracle-grove` already proves a tool-using cast.)
 
-## Phase 7: Submission Package
+## Phase 7: Submission Package ○
 
-- Polish Gradio UI: animations, custom font, stage transitions
-- Freeze demo seed: record a canonical 15-turn run that shows all mechanics
-- Record demo video: 90-second screencap with narration
-- Write social post: hackathon hook, one striking generated moment, repo link
-- Run the Codex judge rubric from `docs/strategy/codex-judge-rubric.md`
-- Final `_raw_fallback` rate check: must be <10% with the live model
-- Submit
+UI polish, frozen demo seed + recorded run, social post, Codex judge rubric pass,
+`_raw_fallback` < 10% with a live model, submit.
 
 ---
 
+## What is built right now
+
+The four stable contracts are realized **and exercised**: open event schema,
+ledger API (memory + SQLite), declarative agent manifest, capability tool
+contract.  Per-agent small-model routing, declarative validatable config, the
+modularity-invariant test, and long-running foundations (resume, snapshot, token
+budget, two-clock) are all in and green.
+
 ## Architecture stability guarantee
 
-The four stable contracts are frozen after Phase 2:
-1. **Event schema** (`src/core/events.py`) — new kinds additive only
-2. **Ledger API** (`src/core/ledger.py`) — interface, not implementation
-3. **Agent manifest** (`src/core/manifest.py`) — backward-compatible additions only
-4. **Tool/MCP contract** (`src/tools/`) — capability contract, not implementation
+The four contracts are frozen; additions only:
+1. **Event schema** (`src/core/events.py`) — new kinds are additive by construction.
+2. **Ledger API** (`src/core/ledger.py`) — interface, not implementation.
+3. **Agent manifest** (`src/core/manifest.py`) — backward-compatible additions only.
+4. **Tool contract** (`src/tools/registry.py`) — capability contract, not implementation.
 
-Everything else is hot-swappable.  Scenarios, agents, models, UI, and the
-persistence backend can all change without breaking the contracts.
+Everything else — scenarios, agents, models, UI, persistence backend, tools — is
+hot-swappable via `config/`.

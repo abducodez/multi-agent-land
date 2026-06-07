@@ -3,7 +3,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from src.core.events import Event
 from src.core.sqlite_ledger import SQLiteLedger

@@ -3,10 +3,11 @@
 Hackathon project for the **Thousand Token Wood** trail: a small-model, multi-agent
 interactive story engine where the AI is load-bearing for the experience.
 
-> One tiny event-sourced engine can power many delightful worlds.  The first world is
-> a whimsical forest theater where small specialist agents write, judge, remember, and
-> render strange interactive scenes.  The second is a mystery-solving blackboard swarm.
-> Both run on the same four abstractions.
+> One tiny event-sourced engine can power many delightful worlds.  A whimsical forest
+> theater, a mystery-solving blackboard swarm, and a tool-using oracle grove are not
+> three apps — they are three YAML configs of the *same* engine.  Small specialist
+> agents write, judge, remember, and render strange interactive scenes, each on the
+> small model that fits its job.
 
 ---
 
@@ -42,46 +43,55 @@ A **tiny theater engine** powered by specialist small-model agents.  Agents neve
 call each other directly — they post typed events to a shared append-only ledger,
 and every view (the stage, the memory, the UI) is a projection derived from that log.
 
-The user can:
-- **Start** a run from a seed — any weird premise works.
-- **Advance** one turn and watch the agents react.
-- **Drop** a disturbance into the world — the agents absorb and transform it.
-- **Switch** between scenarios without reloading.
+What makes it *super modular*:
+- **Config, not code.** Agents, scenarios, casts, model tiers, tool grants, and
+  budgets are declarative YAML under `config/`, validated by a schema. Add a world
+  by adding files — proven by `tests/test_modularity.py` (zero engine edits).
+- **A model per agent.** Each agent declares a logical profile (`tiny`/`fast`/
+  `balanced`/`strong`); a `ModelRouter` binds it to a concrete small model. Mix a
+  ≤4B worker with a ≤32B judge in one cast.
+- **Capability-checked tools.** Agents call tools only if their manifest grants
+  them — the contract that fronts in-process tools today and MCP servers later.
+- **Built to run for hours.** The ledger is the checkpoint: `restore()` resumes a
+  killed run; a token-aware governor bounds spend; `step(n_ticks=N)` maps one
+  wall-clock episode onto N sim-ticks.
 
-### Scenarios
+The user can **Start** from any seed, **Advance** a turn, **Drop** a disturbance,
+and **Switch** scenarios — all live.
 
-| Name | Cognitive task | Agents |
+### Scenarios (each is a YAML config)
+
+| Name | Cognitive task | Cast (model tiers) |
 |---|---|---|
-| 🍄 Thousand Token Wood | Divergent world-growth | Seedkeeper, Critic, Pocket Actor, Echo |
-| 🔍 Mystery Roots | Convergent mystery-solving | Clue Gatherer, Hypothesis Former, Devil's Advocate, Judge |
+| 🍄 Thousand Token Wood | Divergent world-growth | Seedkeeper `fast`, Critic `balanced`, Pocket Actor `tiny`, Echo `fast` |
+| 🔍 Mystery Roots | Convergent mystery-solving | Clue Gatherer `fast`, Hypothesis Former `balanced`, Devil's Advocate `fast`, Judge `strong` |
+| 🔮 Oracle Grove | Tool-using prophecy | Seedkeeper `fast`, Fortune-Teller `fast` + `oracle` tool |
 
-Adding a third scenario requires one new file and one two-line registry entry.
-**Zero engine edits.**
+Adding a fourth scenario is a new YAML file in `config/scenarios/`. **Zero engine edits.**
 
 ---
 
 ## Architecture in 90 seconds
 
 ```
+config/ (YAML) → Registry → Scenario(cast) + ModelRouter + ToolRegistry
+         │
 Visitor seed or disturbance
          │
-    Conductor ← Governor (budget guard)
+    Conductor ← Governor (calls + tokens + spend)
          │
-    schedule(turn) → [Agent₁, Agent₂, ...]
+    subscription queue + tick schedule → [Agent₁, Agent₂, ...]
          │
-    ContextBuilder
-         ├── Pinned persona
-         ├── Current scene  (projection)
-         ├── Episodic memory (ledger view)
-         └── Visitor disturbances
+    ContextBuilder        ModelRouter.for_profile(tiny|fast|balanced|strong)
+         ├ persona             │  → the right small model per agent
+         ├ shared goal         ▼
+         ├ scene (projection)  inference → structured JSON event
+         ├ memory (ledger view, windowed or salience-ranked)
+         └ visitor + granted tools
          │
-    ModelProvider.complete(role, prompt)
+    Typed Event → Ledger.append()  (idempotent; SQLite-backed for long runs)
          │
-    Typed Event → Ledger.append()
-         │
-    Projections update
-         │
-    Gradio UI renders stage + ledger + stats
+    Projections update → Observer (read-only) → Gradio UI (stage + ledger + stats + live config)
 ```
 
 ### Key decisions (see `docs/adr/` for full reasoning)
@@ -96,47 +106,92 @@ Visitor seed or disturbance
 | 0006 | `ContextBuilder` owns prompt assembly; agents own only persona + action |
 | 0007 | `Governor` is injected into the conductor to enforce call budgets |
 | 0008 | Zero engine edits required to add a second scenario |
+| 0009 | Event kinds are open + format-validated; authority lives in `may_emit` |
+| 0010 | Per-agent model routing via logical profiles (`ModelRouter`) |
+| 0011 | Declarative, validatable config — UI/LLM-generatable (`WorldConfig`) |
+| 0012 | Capability-based tool contract (`ToolRegistry`); MCP-ready |
+| 0013 | Token-aware governor + long-running foundations (restore/snapshot/two-clock) |
 
 ---
+
+## Add a world without code
+
+Drop two YAML files into `config/` and it appears in the app — no engine edit.
+
+```yaml
+# config/agents/town-crier.yaml
+name: town-crier
+persona: You are the Town Crier. Announce one bit of news in a sentence.
+may_emit: [crier.announced]        # a brand-new namespaced kind, minted by config
+schedule: { tick_every: 1 }
+model_profile: tiny                # routed to a ≤4B model
+```
+
+```yaml
+# config/scenarios/town-square.yaml
+name: town-square
+title: "📣 Town Square"
+goal: Keep the square informed.
+default_seed: Market day in a town that forgets its own name nightly.
+cast: [town-crier]                 # who participates
+```
+
+A UI form or an LLM can emit the same structure and validate it before running:
+`validate_world({...})` raises if a cast names an undefined agent. The invariant is
+enforced by a test (`tests/test_modularity.py`). See
+[docs/architecture/config-system.md](docs/architecture/config-system.md).
 
 ## Repository map
 
 ```
-app.py                      Gradio composition root
+app.py                      Gradio composition root (loads scenarios from config/)
+config/                     THE configurable surface (declarative, validatable)
+  models.yaml               Logical profile → concrete small model
+  agents/*.yaml             One AgentManifest per agent
+  scenarios/*.yaml          One ScenarioConfig per scenario (cast = agent names)
 src/
   core/
-    events.py               Event schema (Pydantic, strict)
+    events.py               Event schema — open, namespaced, validated kinds
     ledger.py               Append-only in-memory ledger
-    projections.py          Pure-function stage projection
-    conductor.py            Turn scheduler + reset + inject
-    memory.py               EpisodicMemory — per-agent ledger view
-    context.py              ContextBuilder — prompt assembly
-    governor.py             Budget guard (turns, calls per turn, total calls)
+    sqlite_ledger.py        Persistent ledger (WAL, snapshot, restore, tail)
+    projections.py          Pure-function stage projection (+ generic kind fallback)
+    conductor.py            Two-clock loop, subscription+tick routing, restore/snapshot
+    memory.py               Episodic / salience / reflection — all ledger views
+    context.py              ContextBuilder — layered prompt assembly
+    governor.py             Budget guard (calls + tokens + spend)
+    manifest.py             AgentManifest — the agent contract + resolve_model
+    config.py               ScenarioConfig / ModelsConfig / WorldConfig + validators
+    registry.py             Loads config/, resolves casts, binds handlers
+    structured.py           JSON output instruction + tolerant parser
+    observer.py             Read-only renderer with view diffs
   agents/
-    base.py                 Abstract Agent protocol
-    tiny_wood.py            Thousand Token Wood cast
+    base.py                 Agent ABC + ManifestAgent (the workhorse)
+    handlers.py             Behaviour handlers (e.g. FortuneTeller — calls a tool)
   scenarios/
-    base.py                 Scenario dataclass + default schedule
-    thousand_token_wood.py  First scenario config
-    mystery_roots.py        Second scenario config — modularity proof
+    base.py                 Scenario dataclass (goal, genesis, legacy schedule)
+    thousand_token_wood.py  Thin build_scenario() → registry
+    mystery_roots.py        Thin build_scenario() → registry
   models/
-    provider.py             ModelProvider ABC + DeterministicTinyModel stub
-    openai_compat.py        OpenAI-compatible provider + env-aware factory
+    provider.py             ModelProvider ABC + DeterministicTinyModel + usage
+    openai_compat.py        OpenAI-compatible provider + credentials check
+    router.py               ModelRouter — per-agent profile → small model
+  tools/
+    registry.py             ToolRegistry — capability-checked broker
+    builtins.py             oracle tool + default_tool_registry()
   ui/
-    render.py               Gradio rendering helpers
-tests/                      70 passing tests, zero mocks
+    render.py               Gradio rendering helpers + live config panel
+tests/                      185 passing tests, zero mocks
 docs/
   vision.md                 One-page product and technical vision
-  architecture/             System design and turn lifecycle
-  adr/                      Append-only Architecture Decision Records (0001–0008)
-  schema/                   Event and manifest contracts
-  runbooks/                 Local dev, demo, recovery
-  strategy/                 Hackathon prize strategy
-  blog/                     Technical blog posts built along the way
-  journal/                  Daily build log entries
+  architecture/             Overview, model-routing, config-system, tool-contract, long-running, …
+  adr/                      Architecture Decision Records (0001–0013)
+  schema/                   events / agent-manifest / scenario-config / world-config
+  runbooks/ strategy/ blog/ journal/
 scripts/
+  resume_run.py             Resume a long-running scenario from a SQLite ledger
   new_journal_entry.py      Creates dated build log entries
   snapshot_progress.py      Updates the living blog from journal
+modal_app.py                Optional: serverless scheduled run (Modal)
 ```
 
 ---

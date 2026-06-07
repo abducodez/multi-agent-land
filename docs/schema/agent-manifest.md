@@ -1,24 +1,62 @@
 # Agent Manifest Contract
 
-The first code slice uses Python classes directly. The target plugin contract is:
+The manifest is the third stable contract — the declarative description of one
+agent.  Defined by `AgentManifest` (`src/core/manifest.py`), loaded from
+`config/agents/<name>.yaml`, validated by `validate_agent()`.  Adding an agent is
+dropping in a manifest; no engine edit.
+
+## Schema
 
 ```yaml
-id: pocket-actor
-display_name: Pocket Actor
-subscribes:
-  - world.observed
+name: scene-whisperer          # unique slug == actor on emitted events (required)
+role: worker                   # worker | judge | observer | reflector
+persona: >                     # IDENTITY block, injected verbatim every prompt (required)
+  You are the Seedkeeper ... describe how the wood changed in one sentence.
+handler: null                  # optional behaviour binding (see below)
+
+# Communication contract
+subscribes_to:                 # event kinds that trigger this agent (reactive)
   - user.injected
-emits:
-  - agent.spoke
-model_capability: tiny_creative
+may_emit:                      # event kinds this agent is allowed to emit (authority)
+  - world.observed
+  - agent.reflected
+
+# Scheduling
+schedule:
+  tick_every: 1                # also fire every N turns (null = event-driven only; 0 = every turn)
+  max_consecutive: 3           # documented cap (enforcement deferred)
+
+# Model (resolved to a concrete small model by the ModelRouter)
+model_profile: fast            # tiny ≤4B | fast ≤7B | balanced ≤13B | strong ≤32B
+
+# Memory (a view over the ledger, not separate state)
 memory:
-  working_events: 10
-  reflections: false
-tools: []
-budget:
-  max_turns_per_run: 100
-  max_tokens_per_turn: 400
+  window: 6                    # recent visible events in the prompt
+  use_salience: false          # rank by relevance×recency×importance instead of pure recency
+  salience_top_k: 8
+  reflection_threshold: null   # emit agent.reflected every N visible events (null = off)
+
+# Capability grants
+tools: []                      # tool names the ToolRegistry will allow this agent to call
+
+# Output shaping
+output_extra_fields: []        # extra payload fields the model is asked for, e.g. ["emotion"]
 ```
 
-Manifests should become the boundary that lets new agents drop in without engine edits.
+## Field notes
 
+- **`may_emit`** is the safety boundary.  An agent's structured output is coerced
+  to one of these kinds; `agent.reflected` is permitted implicitly when reflection
+  is enabled.
+- **`subscribes_to` vs `schedule.tick_every`** are orthogonal — an agent may be
+  reactive, periodic, or both.  Cadence is per-agent; scenarios don't schedule.
+- **`model_profile`** never names a model; the router (config/env) does.  Mix
+  tiers freely across a cast.
+- **`handler`** stays `null` for the common case (the generic `ManifestAgent`).
+  Set it to a key registered via `@register_handler` for agents that call tools or
+  need custom prompt logic; the YAML still supplies all declarative fields.
+- **`memory.*`** layers are pure views over the ledger — see
+  [memory-stack.md](../architecture/memory-stack.md).
+
+See also: [manifest-spec.md](../architecture/manifest-spec.md) (detailed guide),
+[scenario-config.md](scenario-config.md), [world-config.md](world-config.md).

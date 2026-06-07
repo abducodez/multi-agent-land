@@ -1,5 +1,9 @@
 # Phase 2: Reflection Events + Structured Output
 
+> **Status: ✅ Realized.** Reflection, structured output, and manifest-driven
+> agents shipped. This page is kept as the original plan of record; see ADR-0009
+> and the architecture docs for the as-built design.
+
 ## Goal
 
 Make agents coherent over long runs.  After 30+ turns without reflection, small

@@ -49,3 +49,44 @@ class TestGovernor:
         assert g.stats["total_calls"] == 2
         assert g.stats["calls_this_turn"] == 2
         assert g.stats["current_turn"] == 3
+
+
+class TestGovernorTokensAndCost:
+    def test_record_call_no_args_still_works(self):
+        g = Governor()
+        g.begin_turn(1)
+        g.record_call()  # backward-compatible: no tokens/cost
+        assert g.stats["total_calls"] == 1
+        assert g.stats["total_tokens"] == 0
+
+    def test_tokens_accumulate(self):
+        g = Governor()
+        g.begin_turn(1)
+        g.record_call(tokens=120)
+        g.record_call(tokens=80)
+        assert g.stats["total_tokens"] == 200
+
+    def test_raises_on_token_cap(self):
+        g = Governor(max_total_tokens=100)
+        g.begin_turn(1)
+        g.record_call(tokens=150)
+        with pytest.raises(BudgetExceeded):
+            g.check(1)
+
+    def test_raises_on_spend_cap(self):
+        g = Governor(hourly_budget_usd=0.01)
+        g.begin_turn(1)
+        g.record_call(cost_usd=0.05)
+        with pytest.raises(BudgetExceeded):
+            g.check(1)
+
+    def test_reset_clears_counters_keeps_limits(self):
+        g = Governor(max_turns=7, max_total_tokens=999)
+        g.begin_turn(1)
+        g.record_call(tokens=50, cost_usd=0.2)
+        g.reset()
+        assert g.stats["total_calls"] == 0
+        assert g.stats["total_tokens"] == 0
+        assert g.stats["spend_usd"] == 0.0
+        assert g.max_turns == 7  # limits survive reset
+        assert g.max_total_tokens == 999

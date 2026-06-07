@@ -1,0 +1,18 @@
+name: oracle-grove
+title: "🔮 Oracle Grove"
+goal: >
+  Let the grove speak prophecies that fit the omens it is given — a small showcase
+  of a tool-using agent beside one that has no tools.
+default_seed: A grove where every shadow is a future that hasn't decided to happen yet.
+example_seeds:
+  - A grove where every shadow is a future that hasn't decided to happen yet.
+  - The well at the center answers questions, but only the ones you didn't ask.
+  - A grove that rearranges its paths to match the dreams of whoever sleeps in it.
+genesis_text: "The grove quiets around '{seed}'."
+cast:
+  - scene-whisperer            # no tool grant
+  - fortune-teller             # granted the oracle tool
+governor:
+  max_turns: 2000
+  max_calls_per_turn: 16
+  max_total_calls: 20000
