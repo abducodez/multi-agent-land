@@ -38,6 +38,15 @@ litellm = [
 instructor = [
   "instructor>=1.5",
 ]
+# MCP tool transport (ADR-0017). Optional: exposes the built-in tools over a
+# stdio Model Context Protocol server and resolves granted tools over it when the
+# MCP_SERVERS / MCP_ORACLE gate is set. The capability check still runs first, so
+# MCP is transport, not the security boundary. The system runs fully offline on
+# the in-process registry without this; mcp is imported lazily so importing src.*
+# and app never requires it.
+mcp = [
+  "mcp>=1.0",
+]
 
 [tool.ruff]
 line-length = 120
@@ -45,3 +54,8 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.uv.workspace]
+members = [
+    "modal",
+]
