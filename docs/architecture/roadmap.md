@@ -62,6 +62,11 @@ structurally different scenario.  (`oracle-grove` already proves a tool-using ca
 UI polish, frozen demo seed + recorded run, social post, Codex judge rubric pass,
 `_raw_fallback` < 10% with a live model, submit.
 
+The UI-polish track is the **Fishbowl** redesign — a two-tab `gr.HTML` theater over the
+ledger (Lab + Show, with the say-vs-think MindCard): see
+[ADR-0021](../adr/0021-fishbowl-ui-gradio-presenter.md) and
+[next-steps/fishbowl-ui.md](next-steps/fishbowl-ui.md).
+
 ---
 
 ## What is built right now

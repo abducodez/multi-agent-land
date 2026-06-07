@@ -105,6 +105,12 @@ def stream_step():
         yield gr.update(value=render_stage(obs.view))
 ```
 
+This upgrade is realized by the **Fishbowl UI** — see
+[ADR-0021](../adr/0021-fishbowl-ui-gradio-presenter.md) and the plan in
+[next-steps/fishbowl-ui.md](next-steps/fishbowl-ui.md) — where the Show is a `gr.HTML`
+stage re-rendered by a `gr.Timer` over a presenter that derives per-agent state from
+the ledger (a new, pure projection alongside `rebuild_stage`).
+
 ---
 
 ## Callback safety
