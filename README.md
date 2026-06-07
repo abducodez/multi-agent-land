@@ -190,6 +190,11 @@ docs/
 scripts/
   resume_run.py             Resume a long-running scenario from a SQLite ledger
   new_journal_entry.py      Creates dated build log entries
+  snapshot_progress.py      Updates docs/blog/building-in-public.md from journal
+modal/
+  service.py                Reusable vLLM serving layer (OpenAI-compatible)
+  registry.py               Declarative model catalogue, grouped by provider
+  app_*.py                  One Modal app per provider (nvidia/openbmb/google)
   snapshot_progress.py      Updates the living blog from journal
 modal_app.py                Optional: serverless scheduled run (Modal)
 ```
