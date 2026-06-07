@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.agents.base import Agent
 from src.core.events import Event
@@ -12,6 +12,7 @@ class Scenario:
     name: str
     default_seed: str
     agents: tuple[Agent, ...]
+    example_seeds: list[str] = field(default_factory=list)
 
     def genesis(self, run_id: str, turn: int, seed: str) -> Iterable[Event]:
         yield Event(
@@ -23,9 +24,11 @@ class Scenario:
         )
 
     def schedule(self, turn: int) -> tuple[Agent, ...]:
+        n = len(self.agents)
+        if n == 0:
+            return ()
         if turn % 3 == 0:
             return self.agents
         if turn % 2 == 0:
             return self.agents[:2]
-        return self.agents[:1] + self.agents[2:]
-
+        return self.agents[:1] + (self.agents[2:3] if n > 2 else ())
