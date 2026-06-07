@@ -31,7 +31,7 @@ import modal
 # Pin the inference stack so deploys are reproducible. Bump deliberately.
 VLLM_VERSION = "0.21.0"
 CUDA_IMAGE = "nvidia/cuda:12.9.0-devel-ubuntu22.04"
-PYTHON_VERSION = "3.12"
+PYTHON_VERSION = "3.13"
 
 # The in-container port vLLM listens on; Modal maps it to a public HTTPS URL.
 VLLM_PORT = 8000
