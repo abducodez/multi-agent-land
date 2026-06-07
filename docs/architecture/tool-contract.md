@@ -41,22 +41,49 @@ weaves the omen into its prompt, and records the omen on the event payload — s
 the tool output is first-class ledger data.  `scene-whisperer` has no grant, so a
 call would raise `CapabilityViolation`.  `tests/test_tools.py` proves both.
 
-## Why in-process now, MCP later
+## Transports: in-process and MCP (ADR-0017, realized)
 
-The `(name, description, run)` interface fronts an in-process callable today and
-an MCP-server-backed tool tomorrow.  The MCP wiring (a stdio JSON-RPC client, a
-tool broker advertising server capabilities, an image-gen server) is the next
-step and is invisible to agents — they depend on the capability contract, not the
-implementation.
+The `(name, description, run)` interface fronts an in-process callable **and** a
+tool running out-of-process over the Model Context Protocol (MCP) — same contract,
+swappable transport, invisible to agents.  The capability check is the security
+boundary; MCP is only transport.
 
 ```
-Agent ──call_tool──► ToolRegistry ──► in-process fn        (today)
-                                  └──► MCP client ─► server (next: image-gen, web-fetch)
+Agent ──call_tool──► ToolRegistry ──(grant check FIRST)──► in-process fn   (default)
+                                                       └──► MCP client ─► stdio server
 ```
+
+`ToolRegistry.call(...)` enforces `tool in manifest.tools` and raises
+`CapabilityViolation` on a denied call **before any transport is touched** — then
+dispatches in-process if the tool is registered locally, otherwise to an attached
+`ToolResolver` (the MCP client).  `describe()` prefers in-process descriptions and
+falls back to the resolver's, so prompt assembly is identical across transports.
+
+### Config gate
+
+`default_tool_registry()` is in-process by default.  Set one of these to resolve
+granted tools over MCP instead (the grant check is unchanged either way):
+
+- `MCP_SERVERS` — `::`-separated stdio command lines, e.g.
+  `MCP_SERVERS="python -m src.tools.mcp_server"` or
+  `MCP_SERVERS="python -m src.tools.mcp_server :: node other-server.js"`.
+- `MCP_ORACLE=1` — shorthand for the built-in oracle server
+  (`python -m src.tools.mcp_server`); ignored when `MCP_SERVERS` is set.
+
+With neither set the registry stays fully in-process — the offline default the
+test-suite exercises.  `mcp` is an optional extra (`pip install -e '.[mcp]'`) and
+is imported lazily, so `import src.*` and `import app` work with it not installed.
+
+The server exposes the *same* `oracle` implementation, so for a given seed the
+omen drawn over MCP is byte-identical to the in-process one: `oracle-grove`
+produces the same ledger in both modes.
 
 ## Code
 
-- `src/tools/registry.py` — `ToolRegistry`, `ToolSpec`, `CapabilityViolation`
-- `src/tools/builtins.py` — `oracle`, `default_tool_registry()`
+- `src/tools/registry.py` — `ToolRegistry`, `ToolSpec`, `CapabilityViolation`, `ToolResolver`
+- `src/tools/builtins.py` — `oracle`, `default_tool_registry()` (MCP config gate)
+- `src/tools/mcp_server.py` — FastMCP stdio server exposing the built-in tools
+- `src/tools/mcp_client.py` — `MCPToolClient`, `MCPResolver`, env gate (`mcp_resolver_from_env`)
 - `src/agents/handlers.py` — `FortuneTeller` (handler that calls a tool)
 - `config/agents/fortune-teller.yaml`, `config/scenarios/oracle-grove.yaml`
+- `tests/test_tools.py` (in-process), `tests/test_mcp.py` (transport + capability)

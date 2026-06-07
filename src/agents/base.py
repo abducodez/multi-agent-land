@@ -30,6 +30,7 @@ from src.core.structured import build_output_model, json_instruction, parse_agen
 from src.models.router import ModelRouter
 
 if TYPE_CHECKING:
+    from src.core.memory_index import MemoryIndex
     from src.tools.registry import ToolRegistry
 
 _ctx = ContextBuilder()
@@ -69,9 +70,18 @@ class ManifestAgent(Agent):
 
     manifest: AgentManifest
 
-    def __init__(self, router: ModelRouter, tools: "ToolRegistry | None" = None) -> None:
+    def __init__(
+        self,
+        router: ModelRouter,
+        tools: "ToolRegistry | None" = None,
+        memory_index: "MemoryIndex | None" = None,
+    ) -> None:
         self.router = router
         self.tools = tools
+        # Optional semantic relevance index — a derived, rebuildable lens over the
+        # ledger (ADR-0018).  ``None`` (offline default) keeps salience on the
+        # keyword path.
+        self.memory_index = memory_index
         self._reflection_tracker: ReflectionTracker | None = None
         self.last_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
@@ -176,9 +186,12 @@ class ManifestAgent(Agent):
     def _recall(self, turn: int, projection: StageProjection, recent_events: tuple[Event, ...]) -> str:
         cfg = self.manifest.memory
         if cfg.use_salience:
-            return SalienceMemory(self.manifest.name, top_k=cfg.salience_top_k).format_for_prompt(
-                recent_events, current_turn=turn, query=projection.current_scene
-            )
+            # The index (when attached) upgrades only the relevance term to
+            # semantic search; recency/importance and the visibility filter are
+            # unchanged.  With no index this is the keyword-Jaccard path.
+            return SalienceMemory(
+                self.manifest.name, top_k=cfg.salience_top_k, index=self.memory_index
+            ).format_for_prompt(recent_events, current_turn=turn, query=projection.current_scene)
         return EpisodicMemory(self.manifest.name, max_recent=cfg.window).format_for_prompt(recent_events)
 
     def _tracker(self, threshold: int) -> ReflectionTracker:

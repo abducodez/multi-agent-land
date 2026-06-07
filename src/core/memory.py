@@ -15,16 +15,28 @@ Memory architecture (three layers):
      a high-level belief.  Reflection events are themselves visible to
      the agent, so beliefs accumulate over time without blowing the window.
 
-None of these layers maintain separate persistent state — they are pure
-functions over the shared append-only ledger.  Memory is always consistent
-with the ledger because it *is* the ledger.
+None of these layers maintain a separate *source of truth* — they are functions
+over the shared append-only ledger.  Memory is always consistent with the ledger
+because it *is* the ledger.
+
+The one optional accelerator is a semantic relevance index
+(:class:`~src.core.memory_index.MemoryIndex`, attached via ``SalienceMemory.index``
+and gated by ``MEMORY_INDEX`` — see ADR-0018).  It is a *derived, rebuildable*
+view: populated FROM ledger events, keyed by ``event.id`` (idempotent re-index),
+and used only to score the relevance term over events the visibility filter
+already admits.  Wipe it and it rebuilds from the ledger; with it unattached
+(the offline default) relevance is keyword overlap, exactly as below.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from src.core.events import Event
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from src.core.memory_index import MemoryIndex
 
 # ── importance weights by event kind ─────────────────────────────────────────
 
@@ -84,10 +96,18 @@ class SalienceMemory:
 
     salience(e) = w_rel·relevance + w_rec·recency + w_imp·importance
 
-    relevance:  keyword overlap between event text and the current scene.
-                Replace with cosine(embedding(e), embedding(scene)) in Phase 3.
+    relevance:  semantic similarity between the event and the current scene when
+                a :class:`~src.core.memory_index.MemoryIndex` is attached
+                (``index`` set), else keyword (Jaccard) overlap between the event
+                text and the scene.  The index is a *derived* lens over the same
+                ledger events — it changes only how the relevance term is scored,
+                never which events are eligible (see ``visible``) nor the recency
+                or importance terms.
     recency:    exponential decay — exp(−λ·Δturn).  λ=0.1 gives half-life ≈7 turns.
     importance: event-kind weight from _KIND_IMPORTANCE table.
+
+    Attach an index via ``index=...`` to use semantic relevance; with ``index``
+    left ``None`` (the default) the scoring is exactly the offline keyword path.
     """
 
     agent_name: str
@@ -96,31 +116,76 @@ class SalienceMemory:
     w_recency: float = 0.4
     w_importance: float = 0.3
     decay_lambda: float = 0.1
+    index: "MemoryIndex | None" = None
 
-    def score(self, event: Event, current_turn: int, query: str) -> float:
+    def _keyword_relevance(self, event: Event, query: str) -> float:
+        event_words = set(str(event.payload.get("text", "")).lower().split())
+        query_words = set(query.lower().split())
+        if not query_words or not event_words:
+            return 0.0
+        return len(query_words & event_words) / len(query_words | event_words)
+
+    def score(
+        self,
+        event: Event,
+        current_turn: int,
+        query: str,
+        relevance: float | None = None,
+    ) -> float:
+        """Composite salience.  *relevance* may be supplied (e.g. a semantic rank);
+        when ``None`` it is computed from keyword overlap as before."""
         recency = math.exp(-self.decay_lambda * max(0, current_turn - event.turn))
         importance = _KIND_IMPORTANCE.get(event.kind, 0.5)
-        event_text = str(event.payload.get("text", "")).lower()
-        query_words = set(query.lower().split())
-        event_words = set(event_text.split())
-        if not query_words or not event_words:
-            relevance = 0.0
-        else:
-            relevance = len(query_words & event_words) / len(query_words | event_words)
+        if relevance is None:
+            relevance = self._keyword_relevance(event, query)
         return (
             self.w_relevance * relevance
             + self.w_recency * recency
             + self.w_importance * importance
         )
 
-    def visible(self, events: tuple[Event, ...], current_turn: int, query: str) -> list[Event]:
-        candidates = [
+    def _candidates(self, events: tuple[Event, ...]) -> list[Event]:
+        """Ledger-derived visibility filter — unchanged whether or not an index
+        is attached: an agent only ever recalls its own events plus globally
+        visible kinds."""
+        return [
             e for e in events
             if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE
         ]
+
+    def _relevance_map(
+        self, candidates: list[Event], query: str
+    ) -> dict[str, float] | None:
+        """When an index is attached, derive a semantic relevance score per
+        candidate event (id → score in [0,1] by descending rank); else ``None``
+        so :meth:`score` uses keyword overlap.
+
+        The index is populated from the candidate events first, then queried —
+        derive, then read — so it never reports events the ledger has not
+        produced, and re-indexing is idempotent (keyed by ``event.id``).
+        """
+        if self.index is None or not query or not candidates:
+            return None
+        self.index.index(tuple(candidates))
+        hits = self.index.search(query, k=len(candidates))
+        eligible = {e.id for e in candidates}
+        ranked = [h.id for h in hits if h.id in eligible]
+        if not ranked:
+            return {}
+        n = len(ranked)
+        return {eid: (n - i) / n for i, eid in enumerate(ranked)}
+
+    def visible(self, events: tuple[Event, ...], current_turn: int, query: str) -> list[Event]:
+        candidates = self._candidates(events)
+        relevance = self._relevance_map(candidates, query)
         scored = sorted(
             candidates,
-            key=lambda e: self.score(e, current_turn, query),
+            key=lambda e: self.score(
+                e,
+                current_turn,
+                query,
+                relevance=None if relevance is None else relevance.get(e.id, 0.0),
+            ),
             reverse=True,
         )
         # Return in chronological order so prompts read naturally
@@ -130,14 +195,21 @@ class SalienceMemory:
     def format_for_prompt(
         self, events: tuple[Event, ...], current_turn: int, query: str
     ) -> str:
-        recalled = self.visible(events, current_turn, query)
+        candidates = self._candidates(events)
+        relevance = self._relevance_map(candidates, query)
+
+        def _score(e: Event) -> float:
+            rel = None if relevance is None else relevance.get(e.id, 0.0)
+            return self.score(e, current_turn, query, relevance=rel)
+
+        top = sorted(candidates, key=_score, reverse=True)[: self.top_k]
+        recalled = sorted(top, key=lambda e: e.turn)
         if not recalled:
             return "(no salient memories)"
         lines = []
         for e in recalled:
             text = e.payload.get("text") or e.payload.get("summary") or str(e.payload)
-            s = self.score(e, current_turn, query)
-            lines.append(f"[turn {e.turn:03d}][{e.kind}][sal={s:.2f}] {text}")
+            lines.append(f"[turn {e.turn:03d}][{e.kind}][sal={_score(e):.2f}] {text}")
         return "\n".join(lines)
 
 

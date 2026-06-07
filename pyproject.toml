@@ -38,6 +38,25 @@ litellm = [
 instructor = [
   "instructor>=1.5",
 ]
+# MCP tool transport (ADR-0017). Optional: exposes the built-in tools over a
+# stdio Model Context Protocol server and resolves granted tools over it when the
+# MCP_SERVERS / MCP_ORACLE gate is set. The capability check still runs first, so
+# MCP is transport, not the security boundary. The system runs fully offline on
+# the in-process registry without this; mcp is imported lazily so importing src.*
+# and app never requires it.
+mcp = [
+  "mcp>=1.0",
+]
+# Semantic memory index (ADR-0018). Optional: a derived, rebuildable vector lens
+# over the event ledger that upgrades the salience relevance term from keyword
+# overlap to semantic search when the MEMORY_INDEX gate is set. The ledger stays
+# the single source of truth; the index is repopulated from it. The system runs
+# fully offline on the keyword path without this; mem0 is imported lazily so
+# importing src.* and app never requires it. An embedding model is needed when
+# active (routed via OPENAI_API_KEY by default, or MEMORY_INDEX_CONFIG).
+memory = [
+  "mem0ai>=0.1",
+]
 
 [tool.ruff]
 line-length = 120
@@ -45,3 +64,8 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.uv.workspace]
+members = [
+    "modal",
+]

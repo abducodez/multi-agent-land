@@ -4,6 +4,13 @@ The ``oracle`` tool is deterministic (hash of its input) so tool-using scenarios
 stay reproducible offline — the same scene always draws the same omen.  It exists
 to exercise the capability contract end-to-end; replace or add tools (including
 MCP-server-backed ones) without touching any agent code.
+
+By default the registry resolves tools in-process (the offline default).  When the
+MCP transport is configured via the environment (``MCP_SERVERS`` or
+``MCP_ORACLE=1``, see ADR-0017), the same registry instead resolves tools over an
+MCP server — the capability check is unchanged either way.  The MCP client is
+imported lazily inside the gate, so ``import src.*`` and ``import app`` never
+require ``mcp``.
 """
 from __future__ import annotations
 
@@ -30,10 +37,32 @@ def oracle(seed: str = "", **_: object) -> dict:
 
 
 def default_tool_registry() -> ToolRegistry:
+    """Build the tool registry, gated to MCP transport when configured.
+
+    Offline default: every tool is an in-process callable.  If the MCP gate is set
+    (``MCP_SERVERS`` / ``MCP_ORACLE=1``), an MCP resolver is attached and granted
+    tools resolve over the configured server(s) instead — the capability check in
+    :meth:`ToolRegistry.call` still runs first, so the security boundary is
+    identical across transports (ADR-0017).
+    """
     registry = ToolRegistry()
-    registry.register(
-        "oracle",
-        description="Draw a single cryptic omen for the current scene. Params: {seed: str}.",
-        run=oracle,
-    )
+    resolver = _mcp_resolver()
+    if resolver is None:
+        # Offline / default path: register the in-process tools.
+        registry.register(
+            "oracle",
+            description="Draw a single cryptic omen for the current scene. Params: {seed: str}.",
+            run=oracle,
+        )
+    else:
+        # MCP path: leave the registry's in-process table empty so granted tools
+        # resolve over MCP; the capability check is unaffected.
+        registry.set_resolver(resolver)
     return registry
+
+
+def _mcp_resolver():
+    """Return an MCP resolver if the env gate is set, else ``None`` (lazy import)."""
+    from src.tools.mcp_client import mcp_resolver_from_env
+
+    return mcp_resolver_from_env()
