@@ -21,6 +21,7 @@ them by pointing ``base_url`` at the deployed URL.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 
 import modal
@@ -43,6 +44,22 @@ VLLM_CACHE_PATH = "/root/.cache/vllm"
 # Required only for gated repos (e.g. Gemma). Create it once with:
 #   modal secret create huggingface-secret HF_TOKEN=hf_...
 HF_SECRET_NAME = "huggingface-secret"
+
+# Name of the Modal Secret holding the bearer token clients must present.
+# The key MUST be VLLM_API_KEY — vLLM reads that env var and then enforces
+# `Authorization: Bearer <token>` on every request. Create it once with:
+#   modal secret create llm-api-key VLLM_API_KEY=sk-...
+API_KEY_SECRET_NAME = "llm-api-key"
+
+# Opt in to API-key auth at deploy time (no code edits needed):
+#   MODAL_LLM_REQUIRE_AUTH=1 modal deploy modal/app_google.py
+# When enabled, every endpoint mounts API_KEY_SECRET_NAME and rejects requests
+# without a valid bearer token. Off by default (endpoints are then public).
+REQUIRE_API_KEY = os.environ.get("MODAL_LLM_REQUIRE_AUTH", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # Weights and the vLLM compile cache are shared across every provider app, so a
 # model pulled once is warm for all subsequent deploys and containers.
@@ -179,7 +196,12 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
     """
     image = build_image(cfg)
     cmd = build_command(cfg)
-    secrets = [modal.Secret.from_name(HF_SECRET_NAME)] if cfg.gated else []
+    secrets = []
+    if cfg.gated:
+        secrets.append(modal.Secret.from_name(HF_SECRET_NAME))
+    if REQUIRE_API_KEY:
+        # Exposes VLLM_API_KEY in the container; vLLM then enforces bearer auth.
+        secrets.append(modal.Secret.from_name(API_KEY_SECRET_NAME))
 
     @app.function(
         name=cfg.endpoint_name,
