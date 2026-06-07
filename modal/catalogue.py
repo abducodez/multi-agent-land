@@ -139,6 +139,23 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
         gated=True,
         max_concurrent_inputs=64,
     ),
+    ModelConfig(
+        name="nvidia/Nemotron-Cascade-14B-Thinking",
+        endpoint_name="nemotron-cascade-14b-thinking",
+        # Dense 14B reasoning model built on Qwen3-14B Base; thinking-only. BF16
+        # weights (~28GB) plus KV cache fit a single 48GB L40S. A specialist
+        # model — left unbound so it can be cast explicitly at a reasoning-heavy
+        # agent (e.g. the Judge) without displacing a tier default.
+        params_b=14,
+        gpu="L40S:1",
+        max_model_len=32768,
+        # Qwen3-native in vLLM (no custom code); ChatML template with a thinking
+        # block parsed by the Qwen3 reasoning parser.
+        reasoning_parser="qwen3",
+        tool_call_parser="hermes",
+        enable_auto_tool_choice=True,
+        max_concurrent_inputs=48,
+    ),
 )
 
 # --- OpenBMB (MiniCPM) ---------------------------------------------------------

@@ -15,7 +15,7 @@ modal/
   service.py        Reusable serving layer: image + vllm command, register_model()
                     (provider-agnostic). Imports ModelConfig from catalogue.
   registry.py       Back-compat re-export of the catalogue's model lists.
-  app_nvidia.py     App "nvidia-llms"  — Nemotron 3 Nano 4B + 30B.
+  app_nvidia.py     App "nvidia-llms"  — Nemotron 3 Nano 4B + 30B, Cascade 14B Thinking.
   app_openbmb.py    App "openbmb-llms" — MiniCPM4.1-8B + MiniCPM-o 4.5.
   app_google.py     App "google-llms"  — Gemma 4 12B + 26B.
   client.py         OpenAI-SDK smoke-test client for any endpoint.
@@ -36,6 +36,7 @@ Each running endpoint also self-documents at `/docs` (Swagger UI) and
 | Provider | App            | Model                                   | Endpoint name         | GPU     |
 | -------- | -------------- | --------------------------------------- | --------------------- | ------- |
 | NVIDIA   | `nvidia-llms`  | NVIDIA-Nemotron-3-Nano-30B-A3B-BF16     | `nemotron-3-nano-30b` | H200:1  |
+| NVIDIA   | `nvidia-llms`  | Nemotron-Cascade-14B-Thinking           | `nemotron-cascade-14b-thinking` | L40S:1  |
 | NVIDIA   | `nvidia-llms`  | NVIDIA-Nemotron-3-Nano-4B-BF16          | `nemotron-3-nano-4b`  | L4:1    |
 | OpenBMB  | `openbmb-llms` | MiniCPM-o-4_5 (omni)                    | `minicpm-o-4-5`       | L40S:1  |
 | OpenBMB  | `openbmb-llms` | MiniCPM4.1-8B                           | `minicpm-4-1-8b`      | L40S:1  |
