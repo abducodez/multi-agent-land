@@ -132,12 +132,12 @@ class Registry:
             router.specs = specs
         return router
 
-    def build_agent(self, name: str, router: ModelRouter, tools=None) -> Agent:
+    def build_agent(self, name: str, router: ModelRouter, tools=None, memory_index=None) -> Agent:
         if name not in self.agents:
             raise KeyError(f"unknown agent {name!r} (have: {sorted(self.agents)})")
         manifest = self.agents[name]
         cls = HANDLERS.get(manifest.handler, ManifestAgent) if manifest.handler else ManifestAgent
-        agent = cls(router, tools)
+        agent = cls(router, tools, memory_index)
         agent.manifest = manifest  # YAML is the source of truth for declarative fields
         return agent
 
@@ -146,7 +146,15 @@ class Registry:
             raise KeyError(f"unknown scenario {name!r} (have: {sorted(self.scenarios)})")
         cfg = self.scenarios[name]
         router = router or self.build_router()
-        agents = tuple(self.build_agent(agent_name, router, tools) for agent_name in cfg.cast)
+        # Optional semantic relevance index — env-gated (MEMORY_INDEX), a derived
+        # lens over the ledger (ADR-0018).  None offline; one engine-wide index is
+        # shared across the cast.
+        from src.core.memory_index import memory_index_from_env
+
+        memory_index = memory_index_from_env()
+        agents = tuple(
+            self.build_agent(agent_name, router, tools, memory_index) for agent_name in cfg.cast
+        )
         return Scenario(
             name=cfg.name,
             default_seed=cfg.default_seed,

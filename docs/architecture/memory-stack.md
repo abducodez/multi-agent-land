@@ -48,7 +48,7 @@ salience(e) = w_rel·relevance(e, query) + w_rec·recency(e, turn) + w_imp·impo
 
 | Component | How computed | Default weight |
 |---|---|---|
-| relevance | Jaccard similarity between event text and current scene | 0.30 |
+| relevance | Semantic similarity when a `MemoryIndex` is attached (ADR-0018); else Jaccard similarity between event text and current scene | 0.30 |
 | recency | exp(−λ·Δturn), λ=0.1 → half-life ≈7 turns | 0.40 |
 | importance | Kind-based weight table | 0.30 |
 
@@ -73,9 +73,10 @@ prompt reads naturally (not by importance descending).
 important but older memories over irrelevant recent ones.
 First enable point: when the agent window fills up (>30 turns).
 
-**Phase 3 upgrade**: replace keyword-Jaccard relevance with cosine similarity
-over sentence embeddings (`sentence-transformers` or a lightweight embedding
-model), scoring against the current scene as the query vector.
+**Semantic relevance (ADR-0018, implemented)**: the keyword-Jaccard relevance is
+the offline default; attaching a `MemoryIndex` upgrades only that term to
+semantic search (see "Semantic Relevance Index" below). Recency, importance, the
+visibility filter, and the `format_for_prompt` shape are unchanged.
 
 ---
 
@@ -102,6 +103,46 @@ over 200 turns with an 8-event context window.
 **When to implement**: Phase 2 milestone.  The `ReflectionTracker` class is
 already present in `src/core/memory.py` — it just needs the agent to check
 `tracker.observe(events)` each turn and emit the reflection when due.
+
+---
+
+## Semantic Relevance Index (ADR-0018, optional)
+
+The `relevance` term in Layer 2 can be computed by **semantic search** instead of
+keyword overlap. This is a *derived, rebuildable lens over the ledger* — it
+changes how relevance is scored, never which events are eligible (the visibility
+filter and the recency/importance terms are untouched). The ledger stays the
+single source of truth (ADR-0005): the index is keyed by `event.id` (re-indexing
+is idempotent) and can be wiped and rebuilt from the ledger.
+
+```python
+@runtime_checkable
+class MemoryIndex(Protocol):
+    def index(self, events: tuple[Event, ...]) -> None: ...   # derive, idempotent by id
+    def search(self, query: str, k: int) -> list[Event]: ...  # read back by relevance
+```
+
+`SalienceMemory(..., index=...)` derives, then reads: it indexes the visible
+candidates first, then queries, so a hit can never be an event the ledger has not
+produced. With `index=None` (the offline default) the relevance term is keyword
+Jaccard, byte-for-byte unchanged.
+
+**Backend (`Mem0MemoryIndex`)**: stores each event as one raw memory with
+inference disabled (the text is embedded verbatim — no model-driven fact
+extraction), carrying the full event in metadata so a hit reconstructs the
+`Event`. Lazy-imported, so `import src.*` / `import app` work with the package not
+installed.
+
+**Gate**: `memory_index_from_env()` returns `None` unless `MEMORY_INDEX` is
+truthy. When active, an embedding model is required — routed via `OPENAI_API_KEY`
+by default, or pinned to a local embedder / the project's Postgres+pgvector
+(ADR-0014) via `MEMORY_INDEX_CONFIG` (a JSON blob forwarded to the backend's
+`from_config`). Install the `memory` extra (`mem0ai`).
+
+**Alternative backends**: the two-method protocol can wrap any retrieval store —
+a stateful agent-memory service (e.g. a Letta-style memory server) could be a
+`MemoryIndex` too, as long as it stays derived from and rebuildable from the
+ledger.
 
 ---
 
@@ -132,6 +173,6 @@ The layering order is deliberate:
 |---|---|---|
 | Keyword salience | 2 | `SalienceMemory` with Jaccard relevance |
 | Reflection events | 2 | `ReflectionTracker` + `agent.reflected` kind |
-| Embedding relevance | 3 | Replace Jaccard with cosine over embedding model |
-| pgvector retrieval | 3 | Store event embeddings; query by ANN similarity |
+| Embedding relevance | done | `MemoryIndex` semantic search for the relevance term (ADR-0018) |
+| pgvector retrieval | done | `MEMORY_INDEX_CONFIG` persists vectors in the ADR-0014 Postgres/pgvector store |
 | Belief graph | 4 | Structured belief store derived from reflection events |

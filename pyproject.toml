@@ -47,6 +47,16 @@ instructor = [
 mcp = [
   "mcp>=1.0",
 ]
+# Semantic memory index (ADR-0018). Optional: a derived, rebuildable vector lens
+# over the event ledger that upgrades the salience relevance term from keyword
+# overlap to semantic search when the MEMORY_INDEX gate is set. The ledger stays
+# the single source of truth; the index is repopulated from it. The system runs
+# fully offline on the keyword path without this; mem0 is imported lazily so
+# importing src.* and app never requires it. An embedding model is needed when
+# active (routed via OPENAI_API_KEY by default, or MEMORY_INDEX_CONFIG).
+memory = [
+  "mem0ai>=0.1",
+]
 
 [tool.ruff]
 line-length = 120
