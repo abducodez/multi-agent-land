@@ -25,6 +25,24 @@ exposes `complete_structured`, it uses the validated path; otherwise it falls
 back to the prompt-and-parse path. Both feed the same `Event` construction, so
 the conductor, ledger, and projections are identical either way.
 
+```mermaid
+flowchart TD
+    A["act() → _resolve_payload()"] --> Q{"provider has<br/>complete_structured?"}
+    Q -->|"yes · live"| Live["Instructor + LiteLLM<br/>kind-constrained model"]
+    Live --> LV{"validates?"}
+    LV -->|yes| Out["typed Event payload"]
+    LV -->|"no · retry ≤ max_retries"| Live
+    LV -->|"error / gives up"| Parse
+    Q -->|"no · offline stub"| Inst["append OUTPUT FORMAT → complete()"]
+    Inst --> Parse["parse_agent_output()"]
+    Parse --> T1{"Tier 1: strict JSON?"}
+    T1 -->|yes| Out
+    T1 -->|no| T2{"Tier 2: extract JSON block?"}
+    T2 -->|yes| Out
+    T2 -->|no| T3["Tier 3: wrap raw text<br/>_raw_fallback = true"]
+    T3 --> Out
+```
+
 ---
 
 ## The constraint block

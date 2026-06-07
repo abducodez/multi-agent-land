@@ -17,6 +17,16 @@ conductor routes accordingly.  Coupling is to the **event schema**, not to each 
 
 The conductor runs **two tracks per step** in order:
 
+```mermaid
+flowchart TD
+    S(["step() → _tick(): turn += 1"]) --> Gov["governor.check()"]
+    Gov --> P1["Track 1 — drain trigger queue FIFO<br/>(agents whose subscribes_to matched)"]
+    P1 --> P2["Track 2 — run tick agents<br/>(schedule.tick_every fires)"]
+    P2 --> N["appended events → notify_subscribers<br/>queue matching agents"]
+    N -.->|feeds next step| P1
+    P2 --> Snap["maybe snapshot"]
+```
+
 ### Track 1: Event-triggered (subscriptions)
 
 When any event is appended to the ledger, the conductor checks which agents

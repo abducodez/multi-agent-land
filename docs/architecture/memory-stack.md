@@ -15,6 +15,20 @@ This solves four problems at once:
 
 ## Three Layers
 
+```mermaid
+flowchart TD
+    L[("Append-only Ledger")] --> V["Visibility filter<br/>own events ∪ globally-visible kinds"]
+    V --> E["Layer 1 · EpisodicMemory<br/>recent window (always on)"]
+    V --> S["Layer 2 · SalienceMemory<br/>top-k: relevance × recency × importance"]
+    Idx["MemoryIndex · optional · ADR-0018<br/>semantic relevance"] -.->|upgrades relevance term| S
+    V --> Rf["Layer 3 · ReflectionMemory<br/>emits agent.reflected every N events"]
+    Rf -->|"agent.reflected (globally visible)"| L
+    E --> CB["ContextBuilder → prompt"]
+    S --> CB
+```
+
+All three layers are *views over the one ledger* — none holds separate state.
+
 ### Layer 1: EpisodicMemory (always on)
 
 The simplest layer.  An agent sees:

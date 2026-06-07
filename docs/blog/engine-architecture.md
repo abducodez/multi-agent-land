@@ -68,6 +68,15 @@ The window is capped at 8 events to stay within small-model context budgets.
 This is event sourcing plus CQRS in its simplest form: one write side (the ledger),
 many read sides (each agent's memory projection, the UI's stage view, the stats panel).
 
+```mermaid
+flowchart LR
+    Agents --> L[("Append-only Ledger<br/>one write side")]
+    L --> M1["each agent's memory"]
+    L --> M2["stage view · UI"]
+    L --> M3["stats panel"]
+    L --> M4["judge analysis"]
+```
+
 ---
 
 ## The Context Builder: Prompt Assembly as a Separate Concern

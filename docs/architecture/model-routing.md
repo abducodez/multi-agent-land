@@ -72,7 +72,7 @@ offline: null            # null=auto, true=stub everywhere, false=always live
 profiles:
   tiny:
     model: openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
-    base_url: https://${MODAL_WORKSPACE}--nemotron-3-nano-4b.modal.run/v1
+    base_url: https://${MODAL_WORKSPACE}--nvidia-llms-nemotron-3-nano-4b.modal.run/v1
     api_key: ${MODAL_LLM_KEY}
     temperature: 0.7
     max_tokens: 160

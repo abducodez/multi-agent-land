@@ -3,6 +3,31 @@
 One sim-tick, end to end.  `Conductor.step(n_ticks=1)` runs this loop; the model
 is stateless and all state is passed in per turn.
 
+```mermaid
+sequenceDiagram
+    participant C as Conductor
+    participant G as Governor
+    participant A as Agent
+    participant R as ModelRouter
+    participant L as Ledger
+    participant O as Observer
+    C->>G: begin_turn / check caps
+    Note over C,A: Phase 1 subscription agents, then Phase 2 tick agents
+    loop each acting agent
+        C->>G: check()
+        C->>A: act(projection, recent_events)
+        A->>A: ContextBuilder assembles prompt
+        A->>R: for_profile(model_profile)
+        R-->>A: small model -> typed event
+        A-->>C: Event (kind in may_emit)
+        C->>G: record_call(tokens, cost)
+        C->>L: append(event)
+        C->>O: consume(event) -> ViewDiff
+        Note over C: notify_subscribers queues agents for NEXT tick
+    end
+    C->>L: maybe snapshot every N
+```
+
 ```text
  0. step(n_ticks=N): repeat the tick body N times (two-clock: wall-clock maps to N).
  1. _tick(): turn += 1; governor.begin_turn(); governor.check() (turn/call/token caps).

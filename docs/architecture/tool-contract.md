@@ -48,10 +48,20 @@ tool running out-of-process over the Model Context Protocol (MCP) — same contr
 swappable transport, invisible to agents.  The capability check is the security
 boundary; MCP is only transport.
 
+```mermaid
+flowchart TD
+    A["agent.call_tool(name, params)"] --> B["ToolRegistry.call()"]
+    B --> C{"name in manifest.tools?"}
+    C -->|no| X["raise CapabilityViolation"]
+    C -->|yes| D{"registered in-process?"}
+    D -->|yes| E["run() → dict (default)"]
+    D -->|no| F{"resolver has it?"}
+    F -->|yes| G["MCP client → stdio server → dict"]
+    F -->|no| Y["raise KeyError"]
 ```
-Agent ──call_tool──► ToolRegistry ──(grant check FIRST)──► in-process fn   (default)
-                                                       └──► MCP client ─► stdio server
-```
+
+The capability check (node C) runs **first** — before any transport is touched —
+so swapping in-process for MCP never weakens the security boundary.
 
 `ToolRegistry.call(...)` enforces `tool in manifest.tools` and raises
 `CapabilityViolation` on a denied call **before any transport is touched** — then

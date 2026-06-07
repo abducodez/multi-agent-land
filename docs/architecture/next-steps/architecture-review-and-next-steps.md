@@ -71,6 +71,18 @@ Trace **Mystery Roots** (the "convergent blackboard swarm"):
 | `devils-advocate` | `agent.thought` (subscribes to `agent.spoke`) | ❌ — and it can't even see the hypothesis it's meant to rebut |
 | `mystery-judge` | `judge.verdict` | — but it sees **none** of the clues or hypotheses |
 
+```mermaid
+flowchart LR
+    CG["clue-gatherer<br/>emits agent.thought"]
+    HF["hypothesis-former<br/>emits agent.spoke"]
+    DA["devils-advocate"]
+    J["mystery-judge<br/>emits judge.verdict"]
+    HF -->|"triggers (subscribes_to agent.spoke)"| DA
+    HF -.->|"✗ but DA cannot read it"| DA
+    CG -.->|"✗ invisible"| J
+    HF -.->|"✗ invisible"| J
+```
+
 The judge reaches a verdict having seen only the genesis `world.observed` (the seed),
 its own prior verdicts, and visitor injections. The clue-gathering and
 hypothesis-forming machinery produces events **no one downstream reads.** The

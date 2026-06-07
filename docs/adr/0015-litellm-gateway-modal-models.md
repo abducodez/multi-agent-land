@@ -51,9 +51,10 @@ self-served vLLM endpoint accepts any token, so the key defaults to the
 conventional `"EMPTY"` when unset.
 
 **Workspace is not hard-coded.** Modal serves each endpoint at a distinct
-subdomain `https://<workspace>--<endpoint>.modal.run/v1`, so a single base URL
-cannot address all four. `config/models.yaml` templates only the deploy-specific
-workspace: `base_url: https://${MODAL_WORKSPACE}--<endpoint>.modal.run/v1` and
+subdomain `https://<workspace>--<app>-<endpoint>.modal.run/v1` (app = nvidia-llms /
+openbmb-llms / google-llms), so a single base URL cannot address all four.
+`config/models.yaml` templates only the deploy-specific workspace:
+`base_url: https://${MODAL_WORKSPACE}--<app>-<endpoint>.modal.run/v1` and
 `api_key: ${MODAL_LLM_KEY}`. `Registry.from_dir()` expands these on load
 (`_expand_env`); if any referenced var is unset the whole string collapses to `""`
 (an incomplete binding is *not configured* rather than a broken half-URL) and a

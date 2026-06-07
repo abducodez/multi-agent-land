@@ -6,18 +6,20 @@ One event-sourced engine; every world is a *configuration* of it.  Agents on the
 left produce into a shared ledger; oversight and rendering on the right consume
 from it.  The two sides never call each other.
 
-```text
-                 config/ (YAML)  ─────────────────────────────┐
-                 agents · scenarios · models                  │ Registry
-                                                               ▼
-Visitor ─► Gradio UI ─► Conductor ─► ManifestAgent ─► ModelRouter ─► small model
-                          │  ▲           │  └─► ToolRegistry (capability-checked)
-                  Governor│  │           ▼
-              (calls/tokens) │      Event Ledger (append-only, idempotent)
-                             │           │
-                             │      Projections ──► Observer ──► Gradio UI
-                             └───────────┘
+```mermaid
+flowchart LR
+    Config["config/ YAML<br/>agents · scenarios · models"] --> Registry --> Conductor
+    Visitor --> UI["Gradio UI"] --> Conductor
+    Governor["Governor<br/>calls · tokens · spend"] -.->|checks| Conductor
+    Conductor --> Agent["ManifestAgent"]
+    Agent --> Router["ModelRouter → small model"]
+    Agent --> Tools["ToolRegistry<br/>capability-checked"]
+    Agent -->|append| Ledger[("Event Ledger<br/>append-only · idempotent")]
+    Ledger -->|read| Projections --> Observer --> UI
 ```
+
+*Producers (left of the ledger) only ever **append**; consumers (right) only ever
+**read**. The two sides communicate through the ledger and never call each other.*
 
 The ledger is the only source of truth.  Agent memory, world state, UI state, and
 bloggable traces are all projections derived from events.

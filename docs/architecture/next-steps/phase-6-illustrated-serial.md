@@ -52,22 +52,18 @@ EventKind = Literal[
 
 ## The episode loop
 
-```
-episode.started
-    │
-    ├──→ Beat Proposer → beat.proposed
-    │         │
-    │         ├──→ Dialogue Writer → agent.spoke
-    │         ├──→ Scene Describer → world.observed
-    │         │         │
-    │         │         └──→ Artist → image.generated (MCP call)
-    │         │
-    │         └──→ Continuity Keeper → agent.thought (checks for errors)
-    │
-    └──→ Serial Judge reads all of the above
-          │
-          ├── judge.approved → Episode Publisher writes artifact
-          └── judge.rejected → Beat Proposer tries again (max 3 attempts)
+```mermaid
+flowchart TD
+    Start(["episode.started"]) --> Beat["Beat Proposer<br/>beat.proposed"]
+    Beat --> Dia["Dialogue Writer<br/>agent.spoke"]
+    Beat --> Scene["Scene Describer<br/>world.observed"]
+    Scene --> Art["Artist<br/>image.generated · MCP call"]
+    Beat --> Cont["Continuity Keeper<br/>agent.thought · checks errors"]
+    Dia --> Judge{"Serial Judge<br/>reads all of the above"}
+    Art --> Judge
+    Cont --> Judge
+    Judge -->|approved| Pub["Episode Publisher<br/>writes artifact"]
+    Judge -->|"rejected · retry ≤ 3"| Beat
 ```
 
 The judge holds the **publish gate**: no episode is published unless the judge approves.

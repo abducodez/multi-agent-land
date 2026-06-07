@@ -31,6 +31,16 @@ Drop a file in, and it exists.  No engine edit, no import to add.
 
 `src/core/registry.py` loads the directory and assembles live objects:
 
+```mermaid
+flowchart LR
+    Files["config/<br/>agents/*.yaml · scenarios/*.yaml · models.yaml"] --> Load["Registry.from_dir()"]
+    Load --> Val["validate_agent / validate_scenario<br/>Pydantic · extra=forbid"]
+    Val --> Reg["Registry<br/>agents · scenarios · models"]
+    Reg --> BS["build_scenario(name)"]
+    BS --> Cast["resolve cast → live ManifestAgents<br/>+ ModelRouter + ToolRegistry"]
+    Cast --> Scn["Scenario (runnable)"]
+```
+
 ```python
 reg = default_registry()                       # loads config/
 scenario = reg.build_scenario("mystery-roots") # cast names -> live agents

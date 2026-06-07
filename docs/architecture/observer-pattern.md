@@ -4,15 +4,17 @@
 
 The observer is the camera crew.  It has exactly one rule: **never append events**.
 
+```mermaid
+flowchart LR
+    Conductor --> Agents
+    Agents -->|append| Ledger[("Ledger")]
+    Ledger -->|read only| Obs["Observer.consume()"]
+    Obs --> Diff["ViewDiff — the delta"]
+    Diff --> Out["UI callback · SSE · WebSocket"]
 ```
-COGNITIVE LOOP (conductor + agents)     RENDERING (observer)
-       ↓ appends                             ↓ reads
-   [ Ledger ]  ────────────────────────→  Observer.consume()
-                                              ↓
-                                         ViewDiff
-                                              ↓
-                                         UI callback / SSE / WebSocket
-```
+
+The cognitive loop (left) writes; the observer (right) only reads. The world runs
+identically whether or not any observer is attached.
 
 The cognitive loop runs identically whether or not any observer is attached.
 The world is not "observed into existence" — it runs, and the observer watches.

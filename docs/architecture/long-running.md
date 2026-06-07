@@ -19,6 +19,18 @@ time.  This is what lets the same scenario "run in realtime" for a demo and
 
 ## The ledger is the checkpoint
 
+```mermaid
+flowchart LR
+    Run["step(n_ticks=N)"] -->|append| L[("Ledger")]
+    L --> Snap{"turn % snapshot_every == 0?"}
+    Snap -->|yes| Backup["snapshot_to(path)"] --> Run
+    Snap -->|no| Run
+    Run -.->|crash| Crash([process dies])
+    Crash --> From["SQLiteLedger.from_file(db)"]
+    From --> Restore["conductor.restore()<br/>adopt run_id + last turn"]
+    Restore --> Run
+```
+
 Because all state derives from the append-only ledger, crash recovery is nearly
 free:
 

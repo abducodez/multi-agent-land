@@ -73,6 +73,16 @@ a tool grant + handler, salience memory, and the visibility gotcha.
 Three custom kinds (`rumor.whispered`, `fact.checked`, `news.published`) — none of
 which the engine has ever heard of.
 
+```mermaid
+flowchart TD
+    Seed(["genesis: world.observed (the seed)"]) --> RS["rumor-starter · tick 1<br/>rumor.whispered"]
+    RS --> G["gossip<br/>subscribes rumor.whispered<br/>emits rumor.whispered"]
+    RS --> FC["fact-checker<br/>subscribes rumor.whispered<br/>oracle tool → fact.checked"]
+    G -.->|begets more gossip| G
+    G --> GZ["gazette · tick 5<br/>news.published"]
+    FC --> GZ
+```
+
 ### Step 2 — Write the agent manifests
 
 `config/agents/rumor-starter.yaml`:

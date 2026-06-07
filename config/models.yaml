@@ -16,8 +16,10 @@
 # The LiteLLM model string for a custom OpenAI-compatible endpoint is
 # `openai/<served_model_id>` (the HF repo id) with `base_url` pointing at the
 # endpoint's /v1 URL.  Modal serves each endpoint at
-#   https://<workspace>--<endpoint_name>.modal.run/v1
-# so only the workspace is deploy-specific: it is templated from $MODAL_WORKSPACE
+#   https://<workspace>--<app_name>-<endpoint_name>.modal.run/v1
+# where <app_name> is the modal.App name (nvidia-llms / openbmb-llms / google-llms)
+# and <endpoint_name> is the per-model function slug.  So only the workspace is
+# deploy-specific: it is templated from $MODAL_WORKSPACE
 # and never hard-coded.  $MODAL_LLM_KEY is the endpoint key (vLLM accepts any
 # token, default "EMPTY").  Unset templates expand to "" → the offline stub is
 # used and these live bindings are ignored.
@@ -29,25 +31,25 @@ offline: null
 profiles:
   tiny:
     model: openai/nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
-    base_url: https://${MODAL_WORKSPACE}--nemotron-3-nano-4b.modal.run/v1
+    base_url: https://${MODAL_WORKSPACE}--nvidia-llms-nemotron-3-nano-4b.modal.run/v1
     api_key: ${MODAL_LLM_KEY}
     temperature: 0.7
     max_tokens: 160
   fast:
     model: openai/openbmb/MiniCPM4.1-8B
-    base_url: https://${MODAL_WORKSPACE}--minicpm-4-1-8b.modal.run/v1
+    base_url: https://${MODAL_WORKSPACE}--openbmb-llms-minicpm-4-1-8b.modal.run/v1
     api_key: ${MODAL_LLM_KEY}
     temperature: 0.9
     max_tokens: 220
   balanced:
     model: openai/google/gemma-4-12B
-    base_url: https://${MODAL_WORKSPACE}--gemma-4-12b.modal.run/v1
+    base_url: https://${MODAL_WORKSPACE}--google-llms-gemma-4-12b.modal.run/v1
     api_key: ${MODAL_LLM_KEY}
     temperature: 0.8
     max_tokens: 320
   strong:
     model: openai/google/gemma-4-26B-A4B-it
-    base_url: https://${MODAL_WORKSPACE}--gemma-4-26b.modal.run/v1
+    base_url: https://${MODAL_WORKSPACE}--google-llms-gemma-4-26b.modal.run/v1
     api_key: ${MODAL_LLM_KEY}
     temperature: 0.6
     max_tokens: 480
