@@ -6,6 +6,7 @@ import socket
 import gradio as gr
 
 from src.core.conductor import Conductor
+from src.core.ledger_factory import make_ledger
 from src.core.registry import default_registry
 from src.tools.builtins import default_tool_registry
 from src.ui.render import render_config, render_event_log, render_stage, render_stats
@@ -25,10 +26,16 @@ _names = [n for n in _PREFERRED if n in _registry.scenarios] + [
 # display title -> internal scenario name
 SCENARIOS: dict[str, str] = {(_registry.scenarios[n].title or n): n for n in _names}
 
+# Ledger backend is env-gated (ADR-0014): DATABASE_URL → durable event store,
+# otherwise an in-memory Ledger.  Offline (the default) each scenario gets its own
+# fresh in-memory ledger, exactly as before.  With a single DATABASE_URL the
+# scenarios share one store; use scripts/resume_run.py (one DB per scenario) for
+# isolated durable runs.
 _conductors: dict[str, Conductor] = {
     title: Conductor(
         _registry.build_scenario(name, tools=_tools),
         governor=_registry.governor_for(name),
+        ledger=make_ledger(),
     )
     for title, name in SCENARIOS.items()
 }

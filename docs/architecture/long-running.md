@@ -34,6 +34,17 @@ conductor.step(n_ticks=60) # continue the same run
 `scripts/resume_run.py` is the end-to-end demo: run it twice against the same DB
 and the turn count climbs.  `tests/test_long_running.py` proves resume + snapshot.
 
+### Durable backend (env-gated)
+
+For a hosted, multi-instance deployment the checkpoint can live in managed
+Postgres instead of a local file.  `SqlAlchemyLedger` (ADR-0014) is a drop-in
+backend with the same idempotency + ordering guarantees, driving both Postgres
+(Neon) and SQLite through one SQLAlchemy code path.  Selection is env-gated:
+`make_ledger()` returns `SqlAlchemyLedger(DATABASE_URL)` when `DATABASE_URL` is
+set and the in-memory `Ledger` otherwise — so the system runs fully offline by
+default and never imports SQLAlchemy unless a backend is configured.  `restore()`
+works identically over it.
+
 ## The governor as safety valve
 
 A "many small models posting to a shared board" topology is exactly what produces
@@ -62,4 +73,6 @@ inference.  That is how a 20-agent village stays affordable.
 - `src/core/conductor.py` — `step(n_ticks)`, `restore()`, `_maybe_snapshot()`
 - `src/core/governor.py` — token + spend caps, `reset()`
 - `src/core/sqlite_ledger.py` — persistence, `snapshot_to()`, `from_file()`, `tail()`
+- `src/core/sqlalchemy_ledger.py` — durable Postgres/SQLite backend (ADR-0014)
+- `src/core/ledger_factory.py` — `make_ledger()`, env-gated backend selection
 - `scripts/resume_run.py` — resume/long-run demo entrypoint

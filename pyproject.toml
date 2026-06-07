@@ -17,6 +17,12 @@ dev = [
   "pytest>=8.2.0",
   "ruff>=0.5.0",
 ]
+# Durable event store backend (ADR-0014). Optional: the system runs fully
+# offline on the in-memory ledger without these. psycopg is the Neon driver.
+store = [
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3",
+]
 
 [tool.ruff]
 line-length = 120

@@ -35,16 +35,25 @@ volume = modal.Volume.from_name("multi-agent-land-runs", create_if_missing=True)
 
 @app.function(image=image, volumes={"/data": volume}, schedule=modal.Cron("0 * * * *"))
 def run_episode(scenario_name: str = DEFAULT_SCENARIO, n_ticks: int = TICKS_PER_EPISODE) -> dict:
+    import os
     from pathlib import Path
 
     from src.core.conductor import Conductor
+    from src.core.ledger_factory import database_url
     from src.core.registry import default_registry
     from src.core.sqlite_ledger import SQLiteLedger
     from src.tools.builtins import default_tool_registry
 
     db_path = f"/data/{scenario_name}.db"
     reg = default_registry()
-    ledger = SQLiteLedger.from_file(db_path) if Path(db_path).exists() else SQLiteLedger(db_path)
+    # Durable event store when DATABASE_URL is set (ADR-0014); otherwise the
+    # SQLite ledger on the persistent Modal Volume (the default deployment path).
+    if database_url():
+        from src.core.sqlalchemy_ledger import SqlAlchemyLedger
+
+        ledger = SqlAlchemyLedger.from_file(os.environ["DATABASE_URL"])
+    else:
+        ledger = SQLiteLedger.from_file(db_path) if Path(db_path).exists() else SQLiteLedger(db_path)
     conductor = Conductor(
         reg.build_scenario(scenario_name, tools=default_tool_registry()),
         governor=reg.governor_for(scenario_name),
