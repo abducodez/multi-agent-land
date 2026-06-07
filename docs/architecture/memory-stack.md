@@ -155,6 +155,16 @@ Postgres+pgvector, ADR-0014) via `MEMORY_INDEX_CONFIG` (a JSON blob forwarded
 verbatim to the backend's `from_config`). Install the `memory` extra (`mem0ai` +
 `sentence-transformers`). See ADR-0019.
 
+**Hosted backend (opt-in, ADR-0020)**: set `MEMORY_INDEX=cloud` (or
+`MEMORY_INDEX_BACKEND=cloud`) to use mem0's managed platform (`MemoryClient`,
+api.mem0.ai) instead of the local embedder. `Mem0CloudIndex` satisfies the *same*
+`MemoryIndex` protocol — derived, idempotent by `event.id`, ledger-is-truth,
+verbatim `infer=False` storage — so nothing downstream changes; only *where* the
+embedding and retrieval run differs. It needs `MEM0_API_KEY` (plus optional
+`MEM0_ORG_ID` / `MEM0_PROJECT_ID` / `MEM0_HOST`). **Caveat:** activating it sends
+ledger event text to mem0's servers — a deliberate departure from the
+off-the-grid default, which is why the local backend remains the default.
+
 **Alternative backends**: the two-method protocol can wrap any retrieval store —
 a stateful agent-memory service (e.g. a Letta-style memory server) could be a
 `MemoryIndex` too, as long as it stays derived from and rebuildable from the

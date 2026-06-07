@@ -22,6 +22,7 @@ from src.core.events import Event
 from src.core.manifest import AgentManifest, MemoryConfig
 from src.core.memory import SalienceMemory
 from src.core.memory_index import (
+    Mem0CloudIndex,
     Mem0MemoryIndex,
     MemoryIndex,
     memory_index_from_env,
@@ -71,6 +72,10 @@ class TestProtocol:
     def test_mem0_backend_is_memory_index(self):
         # No mem0 import needed: the backend is constructed lazily.
         assert isinstance(Mem0MemoryIndex(), MemoryIndex)
+
+    def test_cloud_backend_is_memory_index(self):
+        # No mem0 import needed: the platform client is constructed lazily.
+        assert isinstance(Mem0CloudIndex(), MemoryIndex)
 
 
 # ── layering: index drives the relevance term, recency/importance intact ────────
@@ -155,6 +160,13 @@ class TestIdempotentIndexing:
         # raise (mem0 may be absent), so reaching it on a dup would surface here.
         backend.index((_event("world.observed", eid="e1"),))  # no-op, no import
 
+    def test_cloud_backend_skips_already_indexed_ids(self):
+        """Cloud dedup is identical and happens before the client is built — so a
+        repeat id is a no-op with mem0 absent and no MEM0_API_KEY set."""
+        backend = Mem0CloudIndex()
+        backend._indexed.add("e1")
+        backend.index((_event("world.observed", eid="e1"),))  # no-op, no import/key
+
 
 # ── env gate (no mem0 required) ──────────────────────────────────────────────────
 
@@ -174,6 +186,31 @@ class TestEnvGate:
         idx = memory_index_from_env({"MEMORY_INDEX": "true", "MEMORY_INDEX_CONFIG": '{"version": "v1.1"}'})
         assert isinstance(idx, Mem0MemoryIndex)
         assert idx._config == {"version": "v1.1"}
+
+    def test_truthy_gate_selects_local_not_cloud(self):
+        assert isinstance(memory_index_from_env({"MEMORY_INDEX": "1"}), Mem0MemoryIndex)
+
+    def test_cloud_spelling_selects_hosted_backend(self):
+        for spelling in ("cloud", "mem0-cloud", "platform", "hosted"):
+            idx = memory_index_from_env({"MEMORY_INDEX": spelling})
+            assert isinstance(idx, Mem0CloudIndex), spelling
+
+    def test_backend_env_overrides_local_gate(self):
+        # Explicit MEMORY_INDEX_BACKEND=cloud wins even when the gate spells local.
+        idx = memory_index_from_env({"MEMORY_INDEX": "1", "MEMORY_INDEX_BACKEND": "cloud"})
+        assert isinstance(idx, Mem0CloudIndex)
+
+    def test_cloud_reads_credentials_from_env(self):
+        idx = memory_index_from_env(
+            {
+                "MEMORY_INDEX": "cloud",
+                "MEM0_API_KEY": "k-123",
+                "MEM0_ORG_ID": "org-1",
+                "MEM0_PROJECT_ID": "proj-1",
+            }
+        )
+        assert isinstance(idx, Mem0CloudIndex)
+        assert (idx._api_key, idx._org_id, idx._project_id) == ("k-123", "org-1", "proj-1")
 
 
 # ── agent wiring: _recall threads the index into salience ────────────────────────
@@ -235,5 +272,30 @@ class TestMem0RoundTrip:
         assert any(h.id == "rt1" for h in hits)
         # Mapped back to a real Event with payload intact (derived from metadata).
         hit = next(h for h in hits if h.id == "rt1")
+        assert hit.kind == "world.observed"
+        assert hit.payload.get("text", "").startswith("golden spores")
+
+
+# ── guarded real-mem0-CLOUD round-trip (requires mem0 + MEM0_API_KEY) ────────────
+
+
+class TestMem0CloudRoundTrip:
+    def test_index_then_search_recovers_event(self):
+        pytest.importorskip("mem0")
+        # Opt-in: this hits the hosted mem0 platform and sends text off-machine, so
+        # it only runs when explicitly enabled with a real key.
+        if not (os.getenv("MEM0_API_KEY") and os.getenv("MEM0_CLOUD_E2E")):
+            pytest.skip("set MEM0_API_KEY and MEM0_CLOUD_E2E=1 to run the hosted round-trip")
+
+        backend = Mem0CloudIndex()  # reads MEM0_API_KEY from the environment
+        ev = _event("world.observed", turn=1, text="golden spores drift over the glass forest", eid="rtc1")
+        try:
+            backend.index((ev,))
+            hits = backend.search("golden spores", k=5)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"mem0 cloud unavailable: {exc}")
+
+        assert any(h.id == "rtc1" for h in hits)
+        hit = next(h for h in hits if h.id == "rtc1")
         assert hit.kind == "world.observed"
         assert hit.payload.get("text", "").startswith("golden spores")

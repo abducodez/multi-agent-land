@@ -14,15 +14,22 @@ Two pieces:
     events back. Any backend that satisfies this protocol can supply semantic
     relevance — a vector service, a local embedding store, or a fake in tests.
 
-  * :class:`Mem0MemoryIndex` — a concrete backend. It is **lazy-imported and
-    env-gated**: with the backend not installed or not configured, nothing here
-    is imported and :class:`~src.core.memory.SalienceMemory` falls back to its
-    keyword-Jaccard relevance exactly as before. The backend activates only when
-    :func:`memory_index_from_env` finds it configured.
+  * Two concrete backends behind that protocol, both **lazy-imported and
+    env-gated** so nothing is imported and :class:`~src.core.memory.SalienceMemory`
+    stays on its keyword-Jaccard relevance unless an index is configured:
 
-Because the index is derived, ``index()`` upserts each event under its
-``event.id`` so re-indexing the same events is a no-op (no duplicates) — this is
-what makes the index rebuildable rather than authoritative.
+      - :class:`Mem0MemoryIndex` — the default, **off the grid**. Wraps the
+        ``mem0`` OSS ``Memory`` with a local sentence-transformers embedder; no
+        API key, nothing leaves the machine (ADR-0019).
+      - :class:`Mem0CloudIndex` — opt-in hosted backend. Wraps the ``mem0``
+        platform ``MemoryClient`` (api.mem0.ai). **Activating it sends ledger
+        event text to mem0's servers** and needs ``MEM0_API_KEY`` — a deliberate
+        departure from the off-the-grid default, so it is never the default
+        (ADR-0020).
+
+Because the index is derived, both backends upsert each event under its
+``event.id`` (process-local dedup) so re-indexing the same events is a no-op (no
+duplicates) — this is what makes the index rebuildable rather than authoritative.
 """
 
 from __future__ import annotations
@@ -33,14 +40,22 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from src.core.events import Event
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from mem0 import Memory
+    from mem0 import Memory, MemoryClient
 
-#: Env gate. Set to a truthy value to activate the semantic index; unset (the
+#: Env gate. Set to a truthy value to activate the local semantic index, or to a
+#: cloud spelling (see :data:`_CLOUD_VALUES`) for the hosted backend; unset (the
 #: default) keeps memory on the offline keyword path with nothing imported.
 INDEX_ENV = "MEMORY_INDEX"
 
-#: Truthy spellings accepted for the gate and boolean sub-options.
-_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on", "mem0"})
+#: Optional explicit backend selector (``local`` | ``cloud``). Takes precedence
+#: over the spelling of ``MEMORY_INDEX`` when set.
+BACKEND_ENV = "MEMORY_INDEX_BACKEND"
+
+#: Truthy spellings accepted for the gate and boolean sub-options (→ local backend).
+_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes", "on", "mem0", "local"})
+
+#: Spellings of ``MEMORY_INDEX`` that select the hosted mem0 platform backend.
+_CLOUD_VALUES: frozenset[str] = frozenset({"cloud", "mem0-cloud", "platform", "hosted"})
 
 #: Default mem0 config when ``MEMORY_INDEX_CONFIG`` is unset: embed LOCALLY with
 #: sentence-transformers (no API key; fully offline once the model is cached), so
@@ -79,7 +94,7 @@ class MemoryIndex(Protocol):
         ...
 
 
-# ── mem0 backend ────────────────────────────────────────────────────────────
+# ── shared event ⇄ entry helpers ──────────────────────────────────────────────
 
 
 def _event_text(event: Event) -> str:
@@ -87,77 +102,60 @@ def _event_text(event: Event) -> str:
     return str(event.payload.get("text") or event.payload.get("summary") or event.payload)
 
 
-class Mem0MemoryIndex:
-    """Semantic :class:`MemoryIndex` backed by the ``mem0`` vector memory.
+# ── shared mem0 backend base ──────────────────────────────────────────────────
 
-    Derived, not authoritative. Each ledger event is upserted as one raw memory
-    (``infer=False`` — text is stored verbatim, **no model extraction**, so
-    indexing is deterministic and the ledger stays the source of truth) carrying
-    the full event in ``metadata`` so a search hit reconstructs the original
-    :class:`Event` without a second lookup. The entry id is the ``event.id``, so
-    re-indexing the same event updates in place rather than duplicating — the
-    index is rebuildable from the ledger.
 
-    Configuration (env, read by :func:`memory_index_from_env`):
+class _Mem0BackendBase:
+    """Shared :class:`MemoryIndex` machinery for the mem0-backed indexes.
 
-      * ``MEMORY_INDEX`` — gate; truthy activates the index, unset disables it.
-      * Embeddings — run LOCALLY by default via sentence-transformers (no API
-        key, fully offline once the model is cached); see :data:`_LOCAL_INDEX_CONFIG`.
-        Install the backend with ``uv sync --extra memory``.
-      * ``MEMORY_INDEX_CONFIG`` — optional JSON config forwarded verbatim to
-        ``mem0.Memory.from_config``, replacing the local default. Use it to pick a
-        different embedder or to persist vectors in the project's own
-        Postgres/pgvector (the durable store from ADR-0014) instead of the default
-        in-process vector store, so the index lives beside the ledger it derives
-        from.
-
-    ``mem0`` is imported lazily inside :meth:`_memory` so ``import src.*`` and
-    ``import app`` work with the package not installed.
+    Subclasses supply the three variation points — how the client is built and
+    how a single event is stored / queried — while this base owns the protocol
+    surface that keeps the index *derived*: idempotent upsert keyed by
+    ``event.id`` and search-hit → :class:`Event` reconstruction from metadata.
     """
 
-    #: mem0 scopes memories to a session id; the index is engine-wide, so a fixed
+    #: mem0 scopes memories to an id; the index is engine-wide, so a fixed
     #: namespace keeps every event in one searchable space.
     _NAMESPACE = "ledger"
 
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config
-        self._mem: "Memory | None" = None
+    def __init__(self) -> None:
+        self._mem: object | None = None
         self._indexed: set[str] = set()
+
+    # ── variation points (subclass) ───────────────────────────────────────────
+
+    def _build_memory(self) -> object:
+        """Construct the underlying mem0 client (lazy-imported by the subclass)."""
+        raise NotImplementedError
+
+    def _store(self, mem: object, event: Event) -> None:
+        """Upsert one event verbatim into *mem* (``infer=False``; ledger is truth)."""
+        raise NotImplementedError
+
+    def _query(self, mem: object, query: str, k: int) -> list[dict]:
+        """Run semantic search on *mem*; return raw hit dicts (carrying metadata)."""
+        raise NotImplementedError
 
     # ── lazy construction ─────────────────────────────────────────────────────
 
-    def _memory(self) -> "Memory":
-        """Construct (once) and return the underlying ``mem0`` memory.
-
-        With no explicit config, the local sentence-transformers default
-        (:data:`_LOCAL_INDEX_CONFIG`) is used — never mem0's cloud-keyed default —
-        so an activated index stays fully offline.
-        """
+    def _memory(self) -> object:
         if self._mem is None:
-            from mem0 import Memory  # lazy: offline import must not require mem0
-
-            self._mem = Memory.from_config(self._config or _LOCAL_INDEX_CONFIG)
+            self._mem = self._build_memory()
         return self._mem
 
     # ── MemoryIndex protocol ──────────────────────────────────────────────────
 
     def index(self, events: tuple[Event, ...]) -> None:
-        """Upsert *events* into the vector store, keyed by ``event.id``.
+        """Upsert *events*, keyed by ``event.id`` — idempotent within the process.
 
-        Idempotent: an ``event.id`` already indexed in this process is skipped, so
-        re-indexing the same ledger slice each turn does not duplicate entries.
-        """
+        Dedup happens *before* the client is built, so re-indexing the same
+        ledger slice each turn never re-embeds and never forces a mem0 import."""
         fresh = [e for e in events if e.id not in self._indexed]
         if not fresh:
             return
         mem = self._memory()
         for event in fresh:
-            mem.add(
-                _event_text(event),
-                user_id=self._NAMESPACE,
-                metadata=_event_metadata(event),
-                infer=False,  # store verbatim; the ledger, not a model, is truth
-            )
+            self._store(mem, event)
             self._indexed.add(event.id)
 
     def search(self, query: str, k: int) -> list[Event]:
@@ -165,13 +163,131 @@ class Mem0MemoryIndex:
         if not query or k <= 0:
             return []
         mem = self._memory()
-        hits = mem.search(query, top_k=k, filters={"user_id": self._NAMESPACE})
         events: list[Event] = []
-        for hit in _result_items(hits):
+        for hit in self._query(mem, query, k):
             event = _event_from_metadata(hit.get("metadata"))
             if event is not None:
                 events.append(event)
         return events
+
+
+# ── local (off-the-grid) backend ──────────────────────────────────────────────
+
+
+class Mem0MemoryIndex(_Mem0BackendBase):
+    """Local semantic :class:`MemoryIndex` backed by the ``mem0`` OSS ``Memory``.
+
+    Derived, not authoritative, and **off the grid**: each ledger event is
+    upserted as one raw memory (``infer=False`` — text stored verbatim, **no
+    model extraction**) carrying the full event in ``metadata`` so a search hit
+    reconstructs the :class:`Event` without a second lookup. Embeddings run
+    locally via sentence-transformers by default (:data:`_LOCAL_INDEX_CONFIG`).
+
+    Configuration (env, read by :func:`memory_index_from_env`):
+
+      * ``MEMORY_INDEX`` — gate; truthy (``1``/``true``/``local``/…) activates this
+        backend, unset disables it.
+      * ``MEMORY_INDEX_CONFIG`` — optional JSON config forwarded verbatim to
+        ``mem0.Memory.from_config``, replacing the local default (pick a different
+        embedder, or persist vectors in the project's Postgres/pgvector, ADR-0014).
+
+    ``mem0`` is imported lazily inside :meth:`_build_memory` so ``import src.*`` and
+    ``import app`` work with the package not installed.
+    """
+
+    def __init__(self, config: dict | None = None) -> None:
+        super().__init__()
+        self._config = config
+
+    def _build_memory(self) -> "Memory":
+        from mem0 import Memory  # lazy: offline import must not require mem0
+
+        return Memory.from_config(self._config or _LOCAL_INDEX_CONFIG)
+
+    def _store(self, mem: object, event: Event) -> None:
+        mem.add(  # type: ignore[attr-defined]
+            _event_text(event),
+            user_id=self._NAMESPACE,
+            metadata=_event_metadata(event),
+            infer=False,  # store verbatim; the ledger, not a model, is truth
+        )
+
+    def _query(self, mem: object, query: str, k: int) -> list[dict]:
+        return _result_items(mem.search(query, top_k=k, filters={"user_id": self._NAMESPACE}))  # type: ignore[attr-defined]
+
+
+# ── hosted (opt-in) backend ────────────────────────────────────────────────────
+
+
+class Mem0CloudIndex(_Mem0BackendBase):
+    """Hosted semantic :class:`MemoryIndex` backed by the ``mem0`` platform.
+
+    Wraps ``mem0.MemoryClient`` (api.mem0.ai): embeddings, the vector store, and
+    retrieval all live in mem0's managed service. The :class:`MemoryIndex`
+    contract is identical to the local backend — derived, idempotent, ledger is
+    truth — and events are still stored verbatim (``infer=False``) with the full
+    event in ``metadata`` for reconstruction. The only difference is *where* the
+    work happens.
+
+    **Off-the-grid caveat (ADR-0019/0020).** Activating this backend sends ledger
+    event text to mem0's servers and requires a ``MEM0_API_KEY``. It is therefore
+    strictly opt-in and never the default; the local backend remains the engine's
+    off-the-grid default.
+
+    Configuration (env, read by :func:`memory_index_from_env`):
+
+      * ``MEMORY_INDEX=cloud`` (or ``MEMORY_INDEX_BACKEND=cloud``) — selects this
+        backend.
+      * ``MEM0_API_KEY`` — required platform key (falls back to the client's own
+        ``MEM0_API_KEY`` env read if not passed explicitly).
+      * ``MEM0_ORG_ID`` / ``MEM0_PROJECT_ID`` / ``MEM0_HOST`` — optional scoping.
+
+    ``mem0`` is imported lazily inside :meth:`_build_memory`, so the offline path
+    needs neither the package nor a key.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        org_id: str | None = None,
+        project_id: str | None = None,
+        host: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._api_key = api_key
+        self._org_id = org_id
+        self._project_id = project_id
+        self._host = host
+
+    def _build_memory(self) -> "MemoryClient":
+        from mem0 import MemoryClient  # lazy: offline import must not require mem0
+
+        # Pass only what is set; MemoryClient falls back to MEM0_API_KEY from the
+        # environment and raises loudly here (not at import) if no key is found.
+        kwargs = {
+            k: v
+            for k, v in {
+                "api_key": self._api_key,
+                "org_id": self._org_id,
+                "project_id": self._project_id,
+                "host": self._host,
+            }.items()
+            if v
+        }
+        return MemoryClient(**kwargs)
+
+    def _store(self, mem: object, event: Event) -> None:
+        # The platform `add` takes chat-style messages; one verbatim user turn per
+        # event, inference disabled so nothing but the ledger text is stored.
+        mem.add(  # type: ignore[attr-defined]
+            [{"role": "user", "content": _event_text(event)}],
+            user_id=self._NAMESPACE,
+            metadata=_event_metadata(event),
+            infer=False,
+        )
+
+    def _query(self, mem: object, query: str, k: int) -> list[dict]:
+        return _result_items(mem.search(query, user_id=self._NAMESPACE, top_k=k))  # type: ignore[attr-defined]
 
 
 # ── metadata round-trip (event ⇄ vector entry) ────────────────────────────────
@@ -210,10 +326,11 @@ def _event_from_metadata(metadata: dict | None) -> Event | None:
 
 
 def _result_items(hits: object) -> list[dict]:
-    """Normalise ``mem0.search`` output to a list of hit dicts.
+    """Normalise mem0 ``search`` output to a list of hit dicts.
 
-    ``mem0`` returns either ``{"results": [...]}`` (v1.1+) or a bare list,
-    depending on version/config; accept both so the backend is version-tolerant.
+    Both the OSS ``Memory`` and the platform ``MemoryClient`` return either
+    ``{"results": [...]}`` or a bare list depending on version/config; accept both
+    so the backends are version-tolerant.
     """
     if isinstance(hits, dict):
         results = hits.get("results", [])
@@ -230,16 +347,34 @@ def _is_truthy(value: str | None) -> bool:
 
 
 def memory_index_from_env(env: dict[str, str] | None = None) -> MemoryIndex | None:
-    """Build a :class:`Mem0MemoryIndex` from the env gate, or ``None`` if unset.
+    """Build a mem0-backed :class:`MemoryIndex` from the env, or ``None`` if unset.
 
-    Returns ``None`` (the offline default the suite exercises) unless
-    ``MEMORY_INDEX`` is truthy. ``mem0`` is only imported later, on first use, so
-    a truthy gate without the package installed still imports cleanly and fails
-    loudly only when the index is actually exercised.
+    Selection (``mem0`` is only imported later, on first use):
+
+      * gate unset / falsey → ``None`` (the offline keyword path the suite exercises).
+      * ``MEMORY_INDEX`` truthy (``1``/``true``/``local``/…) → :class:`Mem0MemoryIndex`
+        (local sentence-transformers; off the grid).
+      * ``MEMORY_INDEX`` ∈ {cloud, mem0-cloud, platform, hosted}, or
+        ``MEMORY_INDEX_BACKEND=cloud`` → :class:`Mem0CloudIndex` (hosted; sends
+        ledger text to mem0). An explicit ``MEMORY_INDEX_BACKEND`` wins over the
+        ``MEMORY_INDEX`` spelling.
     """
     source = os.environ if env is None else env
-    if not _is_truthy(source.get(INDEX_ENV)):
+    gate = (source.get(INDEX_ENV) or "").strip().lower()
+    backend = (source.get(BACKEND_ENV) or "").strip().lower()
+
+    is_cloud = backend == "cloud" or gate in _CLOUD_VALUES
+    if not (is_cloud or _is_truthy(gate)):
         return None
+
+    if is_cloud:
+        return Mem0CloudIndex(
+            api_key=source.get("MEM0_API_KEY") or None,
+            org_id=source.get("MEM0_ORG_ID") or None,
+            project_id=source.get("MEM0_PROJECT_ID") or None,
+            host=source.get("MEM0_HOST") or None,
+        )
+
     raw_config = (source.get("MEMORY_INDEX_CONFIG") or "").strip()
     config: dict | None = None
     if raw_config:

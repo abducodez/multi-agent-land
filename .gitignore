@@ -9,3 +9,4 @@ scripts/
 runs/
 *.db
 CLAUDE.md
+ui/raw
