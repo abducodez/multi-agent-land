@@ -1,4 +1,4 @@
-# ADR-0005: Serve Small Models on Modal, One App Per Provider
+# ADR-0014: Serve Small Models on Modal, One App Per Provider
 
 ## Status
 
@@ -27,7 +27,7 @@ OpenAI-compatible endpoints (vLLM behind an autoscaling web server).
   shared by every app, so the vLLM/Modal best practices are written once.
 - **Configuration is data** in `registry.py`: a model is one `ModelConfig`; a
   provider is one app file. This mirrors the project's "config, not code"
-  invariant (see ADR for declarative worlds).
+  invariant (ADR-0011).
 - Weights and the vLLM compile cache live in **shared Volumes**, so a model
   pulled once is warm across every provider app.
 
