@@ -1,10 +1,14 @@
 # Fishbowl UI — Assessment & Plan of Record
 
-> **Status: ◐ In progress — Phases 0–1 shipped (the data foundation); Phases 2–4
-> (the Gradio shell) pending.** Decisions locked 2026-06-08. The binding decision is
-> [ADR-0021](../../adr/0021-fishbowl-ui-gradio-presenter.md). This page is the
-> assessment and phased plan; it gains a "✅ Realized" banner and an as-built
-> companion (`architecture/fishbowl-ui.md`) once shipped.
+> **Status: ◐ In progress — Phases 0–3 shipped (the data foundation + the Gradio
+> shell); Phase 4 (polish & prize lanes) pending.** Decisions locked 2026-06-08. The
+> binding decision is [ADR-0021](../../adr/0021-fishbowl-ui-gradio-presenter.md). This
+> page is the assessment and phased plan.
+>
+> **✅ Realized — see the as-built companion
+> [architecture/fishbowl-ui.md](../fishbowl-ui.md)** for the shipped two-tab theater,
+> the `gr.HTML` + `gr.Timer` render loop, the hybrid transport, and the `view_model_at`
+> snapshot contract.
 
 ## Goal
 
@@ -104,14 +108,15 @@ Each phase is shippable and keeps the no-API-key stub working and the suite gree
   `tests/test_fishbowl.py::TestOfflineEmitsMoodAndThought`). `inject_user_event` gained an
   optional `label` (G6); the adapter assigns a per-scenario narrator `voice` (G4) and
   reads an optional verdict `reveal` (G5) when present. Additive; 277 tests green.
-- **Phase 2 — The Show (`gr.HTML` + `gr.Timer`, hybrid transport).** Port the CSS;
-  render Constellation first, then Feed and Split; the play-head state machine in
+- **Phase 2 — The Show ✅ (shipped).** `gr.HTML` + `gr.Timer` stage with the hybrid
+  transport; Constellation, Feed, and Split layouts; the play-head state machine in
   `gr.State`; poke strip → `inject_user_event` (with `label`, G6); verdict banner +
-  card-flip from `reveal` (G5).
-- **Phase 3 — The Lab (full composer).** Scenario grid + premise + seed/world +
-  narrator; editable cast `gr.Dataframe` (model → profile map + per-agent temp
-  override); judge `gr.Group`; tools `gr.CheckboxGroup`; budget `gr.Number`/`gr.Slider`
-  → per-run `WorldConfig` → `validate_world` → `Conductor`. "Surprise me" reroll.
+  card-flip from `reveal` (G5). Ported CSS / 3D flip / CRT layers. See the as-built
+  [architecture/fishbowl-ui.md](../fishbowl-ui.md) (`show.py`, `render/*`).
+- **Phase 3 — The Lab ✅ (shipped).** Scenario grid + premise + seed/world + narrator;
+  editable cast `gr.Dataframe` (model → profile map + per-agent temp override); judge
+  `gr.Group`; tools `gr.CheckboxGroup`; budget `gr.Number`/`gr.Slider` → per-run
+  `WorldConfig` → `validate_world` → `Conductor`. "Surprise me" reroll. See `lab.py`.
 - **Phase 4 — Polish & prize lanes.** Optional `gr.Server` + mounted React for the
   Off-Brand award (reuses the Phase-0 view-model as JSON); "Export the saga" → HF
   trace; write the as-built `architecture/fishbowl-ui.md`.
