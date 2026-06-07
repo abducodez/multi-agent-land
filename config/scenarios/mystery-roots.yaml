@@ -1,0 +1,20 @@
+name: mystery-roots
+title: "🔍 Mystery Roots"
+goal: >
+  Converge on the most interesting, evidence-supported explanation for the mystery:
+  gather clues, form hypotheses, challenge them, then deliver a verdict.
+default_seed: All the clocks in the wood stopped at 3:07. No one wound them down.
+example_seeds:
+  - All the clocks in the wood stopped at 3:07. No one wound them down.
+  - The bridge appeared overnight. It leads somewhere the map insists does not exist.
+  - Every morning the baker finds one extra loaf — baked perfectly but with ingredients she does not own.
+genesis_text: "A mystery settles over the wood: {seed}"
+cast:
+  - clue-gatherer
+  - hypothesis-former
+  - devils-advocate
+  - mystery-judge
+governor:
+  max_turns: 2000
+  max_calls_per_turn: 16
+  max_total_calls: 20000

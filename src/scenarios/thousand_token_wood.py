@@ -1,19 +1,18 @@
+"""Thousand Token Wood — divergent world-growth scenario.
+
+The cast, personas, model tiers, memory, and goal now live entirely in
+``config/`` (``scenarios/thousand-token-wood.yaml`` + the referenced agents).
+This module is just the stable ``build_scenario()`` entrypoint that asks the
+registry to assemble the declarative config into a live Scenario — proof that a
+scenario is data, not code.
+"""
 from __future__ import annotations
 
-from src.agents.tiny_wood import MischiefCritic, PocketActor, SceneWhisperer
-from src.models.provider import DeterministicTinyModel
+from src.core.registry import default_registry
 from src.scenarios.base import Scenario
+
+SCENARIO_NAME = "thousand-token-wood"
 
 
 def build_scenario() -> Scenario:
-    model = DeterministicTinyModel()
-    return Scenario(
-        name="thousand-token-wood",
-        default_seed="A village of stage props wakes up and argues about which fairy tale they belong to.",
-        agents=(
-            SceneWhisperer(model),
-            MischiefCritic(model),
-            PocketActor(model),
-        ),
-    )
-
+    return default_registry().build_scenario(SCENARIO_NAME)

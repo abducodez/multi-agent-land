@@ -8,6 +8,7 @@ from src.core.events import Event
 @dataclass
 class StageProjection:
     seed: str = ""
+    goal: str = ""
     current_scene: str = "The curtain has not risen."
     agent_notes: list[str] = field(default_factory=list)
     judge_notes: list[str] = field(default_factory=list)
@@ -16,9 +17,13 @@ class StageProjection:
     def apply(self, event: Event) -> None:
         if event.kind == "run.started":
             self.seed = str(event.payload["seed"])
+            self.goal = str(event.payload.get("goal", "")) or self.goal
             self.current_scene = f"The wood wakes around: {self.seed}"
         elif event.kind == "world.observed":
             self.current_scene = str(event.payload["text"])
+        elif event.kind == "agent.reflected":
+            self.agent_notes.append(f"💭 {event.actor} believes: {event.payload.get('text', '')}")
+            self.agent_notes = self.agent_notes[-8:]
         elif event.kind in {"agent.thought", "agent.spoke"}:
             self.agent_notes.append(f"{event.actor}: {event.payload['text']}")
             self.agent_notes = self.agent_notes[-8:]
@@ -28,6 +33,12 @@ class StageProjection:
         elif event.kind == "user.injected":
             self.user_artifacts.append(str(event.payload["text"]))
             self.user_artifacts = self.user_artifacts[-5:]
+        elif "text" in event.payload:
+            # Generic fallback: any drop-in agent that mints its own namespaced
+            # kind (e.g. "clue.found", "oracle.spoke") still renders on stage with
+            # zero engine edits, as long as it carries a `text` payload.
+            self.agent_notes.append(f"{event.actor} [{event.kind}]: {event.payload['text']}")
+            self.agent_notes = self.agent_notes[-8:]
 
 
 def rebuild_stage(events: tuple[Event, ...]) -> StageProjection:
@@ -35,4 +46,3 @@ def rebuild_stage(events: tuple[Event, ...]) -> StageProjection:
     for event in events:
         projection.apply(event)
     return projection
-

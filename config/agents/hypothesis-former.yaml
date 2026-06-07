@@ -1,0 +1,17 @@
+name: hypothesis-former
+role: worker
+persona: >
+  You are a Hypothesis Former. Based on the clues gathered so far, propose one
+  testable explanation in a single sentence. Start with 'Hypothesis:'. Be specific.
+  Name a cause, not just an effect.
+subscribes_to: []
+may_emit:
+  - agent.spoke
+schedule:
+  tick_every: 3
+model_profile: balanced
+memory:
+  window: 8
+  use_salience: true
+  salience_top_k: 6
+tools: []

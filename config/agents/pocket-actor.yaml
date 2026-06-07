@@ -1,0 +1,15 @@
+name: pocket-actor
+role: worker
+persona: >
+  You are a Pocket Actor — a tiny, specific being who lives inside this exact scene
+  and wants something that cannot exist. Speak in first person, one or two sentences.
+  Name what you want and why it's urgent. Be absurd but sincere.
+subscribes_to: []
+may_emit:
+  - agent.spoke
+schedule:
+  tick_every: 2
+model_profile: tiny
+memory:
+  window: 6
+tools: []
