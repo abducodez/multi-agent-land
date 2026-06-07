@@ -35,7 +35,7 @@ class OpenAICompatProvider(ModelProvider):
             except ImportError as exc:
                 raise ImportError(
                     "openai package is required for OpenAICompatProvider. "
-                    "Run: pip install openai"
+                    "Run: uv add openai"
                 ) from exc
             kwargs: dict = {}
             if self.base_url:

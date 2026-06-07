@@ -145,7 +145,7 @@ embed = ["sentence-transformers>=2.7.0", "numpy>=1.26.0"]
 ```
 
 Not required — falls back to Jaccard if not installed.
-Install with: `pip install "multi-agent-land[embed]"`
+Install with: `uv sync --extra embed`
 
 ---
 

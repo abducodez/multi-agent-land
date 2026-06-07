@@ -17,10 +17,11 @@ DEFAULT_SCENARIO = "thousand-token-wood"
 TICKS_PER_EPISODE = 60
 
 # Mount the whole repo (code + config/) so the registry resolves config via the
-# same __file__ logic it uses locally.  Deps come from requirements.txt.
+# same __file__ logic it uses locally.  Deps come from pyproject.toml (single
+# source of truth, pinned locally by uv.lock).
 image = (
     modal.Image.debian_slim()
-    .pip_install_from_requirements("requirements.txt")
+    .pip_install_from_pyproject("pyproject.toml")
     .add_local_dir(
         ".",
         remote_path="/root",

@@ -14,15 +14,15 @@ interactive story engine where the AI is load-bearing for the experience.
 ## Quickstart
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate         # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+uv sync                           # create .venv and install everything from the lockfile
 
 # Optional: add your API key for live inference
 cp .env.example .env              # then fill in OPENAI_API_KEY
 
-python app.py
+uv run app.py
 ```
+
+> Don't have [uv](https://docs.astral.sh/uv/)? `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 The app runs on a **deterministic local stub** with no API key — great for testing
 and demos that need to be fully reproducible.  Add an `OPENAI_API_KEY` to switch to
@@ -32,7 +32,7 @@ NVIDIA NIM) — set `OPENAI_BASE_URL` in `.env`.
 ### Run tests
 
 ```bash
-python -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ---
@@ -217,9 +217,9 @@ modal_app.py                Optional: serverless scheduled run (Modal)
 ```bash
 # 1. Build the thinnest slice
 # 2. Record the decision
-python -c "from scripts.new_journal_entry import main; main()" "What changed today"
+uv run python -c "from scripts.new_journal_entry import main; main()" "What changed today"
 # 3. Regenerate the living blog
-python scripts/snapshot_progress.py
+uv run scripts/snapshot_progress.py
 # 4. Confirm nothing broke
-python -m pytest tests/ -q
+uv run pytest tests/ -q
 ```
