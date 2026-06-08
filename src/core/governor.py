@@ -35,15 +35,18 @@ class Governor:
 
     def check(self, turn: int) -> None:
         if turn > self.max_turns:
-            raise BudgetExceeded(f"Turn cap {self.max_turns} reached")
+            raise BudgetExceeded(f"Turn cap {self.max_turns} reached", reason="max_turns")
         if self._total_calls >= self.max_total_calls:
-            raise BudgetExceeded(f"Total call cap {self.max_total_calls} reached")
+            raise BudgetExceeded(f"Total call cap {self.max_total_calls} reached", reason="max_total_calls")
         if self._calls_this_turn >= self.max_calls_per_turn:
-            raise BudgetExceeded(f"Per-turn call cap {self.max_calls_per_turn} reached on turn {turn}")
+            raise BudgetExceeded(
+                f"Per-turn call cap {self.max_calls_per_turn} reached on turn {turn}",
+                reason="max_calls_per_turn",
+            )
         if self.max_total_tokens is not None and self._total_tokens >= self.max_total_tokens:
-            raise BudgetExceeded(f"Total token cap {self.max_total_tokens} reached")
+            raise BudgetExceeded(f"Total token cap {self.max_total_tokens} reached", reason="max_total_tokens")
         if self.hourly_budget_usd is not None and self._spend_usd >= self.hourly_budget_usd:
-            raise BudgetExceeded(f"Spend cap ${self.hourly_budget_usd:.2f} reached")
+            raise BudgetExceeded(f"Spend cap ${self.hourly_budget_usd:.2f} reached", reason="hourly_budget_usd")
 
     def record_call(self, tokens: int = 0, cost_usd: float = 0.0) -> None:
         self._calls_this_turn += 1
@@ -72,6 +75,31 @@ class Governor:
             "spend_usd": round(self._spend_usd, 4),
         }
 
+    @property
+    def snapshot(self) -> dict[str, int | float | None]:
+        """Read-only view of the live counters alongside their configured limits.
+
+        Handy for UI surfaces that want to show "X of Y calls used" without
+        reaching into private fields."""
+        return {
+            **self.stats,
+            "max_turns": self.max_turns,
+            "max_calls_per_turn": self.max_calls_per_turn,
+            "max_total_calls": self.max_total_calls,
+            "max_total_tokens": self.max_total_tokens,
+            "hourly_budget_usd": self.hourly_budget_usd,
+        }
+
 
 class BudgetExceeded(RuntimeError):
-    pass
+    """Raised when a Governor bound trips.
+
+    Carries a structured ``reason`` naming which bound tripped (one of
+    ``max_turns`` / ``max_total_calls`` / ``max_calls_per_turn`` /
+    ``max_total_tokens`` / ``hourly_budget_usd``) while ``str(exc)`` stays a
+    human-readable message. Remains a ``RuntimeError`` subclass so existing
+    generic handlers keep working."""
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason

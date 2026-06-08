@@ -77,6 +77,13 @@ class FishbowlSession:
         """The generation-head: number of events in the ledger so far."""
         return len(self.conductor.ledger.events)
 
+    def has_verdict(self) -> bool:
+        """True once a ``judge.verdict`` event sits in the ledger — the show resolved.
+
+        The Fishbowl autoplay loop consults this to auto-pause the timer when the
+        Judge has ruled, so the curtain falls on its own (no extra token spend)."""
+        return any(getattr(e, "kind", None) == "judge.verdict" for e in self.conductor.ledger.events)
+
     @property
     def cast(self) -> list[AgentManifest]:
         return [agent.manifest for agent in self.scenario.agents]

@@ -1,0 +1,22 @@
+name: open-table
+title: "💬 Open Table"
+goal: >
+  Hold one simple, honest conversation about the seed topic — a curious voice, a
+  skeptical voice, and a host who keeps it moving. The point is a real, watchable
+  back-and-forth, not a script.
+default_seed: Is it better to plant a tree or build a bench in the village square?
+example_seeds:
+  - Is it better to plant a tree or build a bench in the village square?
+  - Should the town library stay open all night?
+  - Is it kinder to give directions or to walk someone there yourself?
+genesis_text: "The table is set, and the question on it is: '{seed}'"
+cast:
+  - chat-curious
+  - chat-skeptic
+  - chat-host
+governor:
+  max_turns: 40
+  max_calls_per_turn: 8
+  max_total_calls: 400
+  max_total_tokens: 30000
+  hourly_budget_usd: 3.0

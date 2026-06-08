@@ -89,6 +89,26 @@ class TestRenderMeters:
         html = render_meters(vm)
         assert "321" in html
 
+    def test_offline_run_shows_offline_stub_pill(self):
+        # the offline conductor run carries no live credentials → OFFLINE · STUB pill.
+        vm = _offline_vm()
+        assert vm["offline"] is True
+        html = render_meters(vm)
+        assert "OFFLINE · STUB" in html
+        assert "● LIVE" not in html
+
+    def test_live_flag_renders_live_pill(self):
+        vm = {"tokens": 0, "tokens_real": {"total_tokens": 10}, "token_ceiling": None, "rounds": 1, "offline": False}
+        html = render_meters(vm)
+        assert "● LIVE" in html
+        assert "OFFLINE" not in html
+
+    def test_spend_pill_shown_only_when_cost_accrued(self):
+        base = {"tokens": 0, "tokens_real": {"total_tokens": 10}, "token_ceiling": None, "rounds": 1, "offline": False}
+        assert "Spend" not in render_meters({**base, "spend_usd": 0.0})
+        html = render_meters({**base, "spend_usd": 0.0123})
+        assert "Spend" in html and "$0.0123" in html
+
 
 class TestRenderVerdict:
     def test_empty_when_no_verdict(self):

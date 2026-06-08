@@ -15,6 +15,7 @@ from src.core.events import Event
 from src.core.governor import Governor
 from src.core.manifest import AgentManifest
 from src.core.projections import rebuild_stage
+from src.models.openai_compat import has_live_credentials
 from src.models.provider import estimate_tokens
 from src.ui.fishbowl.adapter import (
     VOICES,
@@ -110,6 +111,11 @@ def view_model_at(
     chosen_voice = voice or scenario_voice(scenario_name)
     voice_name, voice_desc = VOICES.get(chosen_voice, ("NARRATOR", ""))
 
+    # Live vs. offline-stub binding (drives the meters' LIVE/OFFLINE pill) and the
+    # governor's real spend, read from the same stats dict that carries tokens_real.
+    stats = dict(governor.stats) if governor is not None else None
+    spend_usd = float(stats["spend_usd"]) if stats is not None and "spend_usd" in stats else 0.0
+
     return {
         "step": k,
         "total": n,
@@ -125,6 +131,8 @@ def view_model_at(
         "rounds": rounds,
         "max_rounds": max_rounds,
         "tokens": _estimate_tokens_through(prefix),
-        "tokens_real": dict(governor.stats) if governor is not None else None,
+        "tokens_real": stats,
         "token_ceiling": token_ceiling,
+        "offline": not has_live_credentials(),
+        "spend_usd": spend_usd,
     }
