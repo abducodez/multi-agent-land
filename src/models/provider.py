@@ -67,6 +67,16 @@ _STUB_THOUGHTS: dict[str, list[str]] = {
         "Give it back changed, never opposite — keep the shape, bend the meaning.",
         "Whatever they dropped, I have already swallowed and re-coloured it.",
     ],
+    "chat-curious": [
+        "I think there's a better answer hiding just behind that one.",
+        "If I keep asking, maybe we'll find the part nobody said out loud yet.",
+        "I love this — I just want to know the why underneath the what.",
+    ],
+    "chat-skeptic": [
+        "Sounds nice, but I've seen this go sideways before.",
+        "Everyone's agreeing too fast; someone should poke the soft spot.",
+        "I'll grant the point, but only after they've earned it.",
+    ],
 }
 _STUB_THOUGHT_DEFAULT = ["Best to keep this part to myself for now."]
 
@@ -124,6 +134,21 @@ class DeterministicTinyModel(ModelProvider):
                 "I am collecting echoes so I can knit a ladder to the moon.",
                 "Please do not applaud yet; my shadow is still rehearsing.",
                 "I lost the map, but the map keeps sending postcards.",
+            ],
+            "chat-curious": [
+                "Wait, what would actually change for the people who pass through every day?",
+                "That's interesting — but who decides, and how do they know it's right?",
+                "I'm curious: which one would the village still love in ten years?",
+            ],
+            "chat-skeptic": [
+                "Sure, but a tree takes years and a bench takes an afternoon.",
+                "Nice in theory; who waters it when everyone's gone home?",
+                "I'm not convinced — comfort today might beat shade we never sit under.",
+            ],
+            "chat-host": [
+                "Good points all around — let's hear what each of you would miss if we chose the other.",
+                "Let me nudge us forward: what does the square need most, right now?",
+                "Lovely tension here — say more about who this is really for.",
             ],
         }
         options = choices.get(role, ["The wood hums and waits."])
