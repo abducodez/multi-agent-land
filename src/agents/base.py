@@ -16,6 +16,7 @@ Backward compatibility: Phase-0/1 agents extend Agent directly and are
 unaffected.  The conductor checks ``getattr(agent, "manifest", None)`` to
 decide whether manifest-based routing applies.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -42,6 +43,7 @@ _REFLECTION_KIND = "agent.reflected"
 
 # ── minimal interface ─────────────────────────────────────────────────────────
 
+
 class Agent(ABC):
     name: str
 
@@ -57,6 +59,7 @@ class Agent(ABC):
 
 
 # ── manifest-driven base ──────────────────────────────────────────────────────
+
 
 class ManifestAgent(Agent):
     """Base class for manifest-driven agents.
@@ -141,6 +144,16 @@ class ManifestAgent(Agent):
 
     # ── model routing ─────────────────────────────────────────────────────────
 
+    @property
+    def _route_key(self) -> str:
+        """Router key for this agent: the explicit ``model_endpoint`` catalogue key
+        when set (a specific served model), else the logical ``model_profile`` tier.
+
+        The router accepts either — a catalogue key resolves to that model's live
+        binding, a tier to the profile default — so an agent can be pinned to one
+        concrete Modal model without the engine naming a model anywhere (ADR-0022)."""
+        return self.manifest.model_endpoint or self.manifest.model_profile
+
     def _resolve_payload(
         self,
         role: str,
@@ -157,7 +170,7 @@ class ManifestAgent(Agent):
         instruction and run the tolerant parser as before.  Token/cost usage is
         recorded from the provider in both paths.
         """
-        provider = self.router.for_profile(self.manifest.model_profile)
+        provider = self.router.for_profile(self._route_key)
         if hasattr(provider, "complete_structured"):
             model = build_output_model(allowed, extra_fields)
             try:
@@ -176,7 +189,7 @@ class ManifestAgent(Agent):
 
     def _complete(self, role: str, prompt: str) -> str:
         """Route to the provider for this agent's profile and record token usage."""
-        provider = self.router.for_profile(self.manifest.model_profile)
+        provider = self.router.for_profile(self._route_key)
         raw = provider.complete(role, prompt)
         self.last_usage = dict(provider.last_usage)
         return raw
@@ -206,7 +219,7 @@ class ManifestAgent(Agent):
             f"RECENT MEMORY (events you witnessed)\n{memory}\n\n"
             "TASK\nSynthesise the above into ONE short, high-level belief about yourself or the "
             "world. It will replace raw memories in your future context.\n\n"
-            'OUTPUT FORMAT\nReply with a single JSON object and nothing else: '
+            "OUTPUT FORMAT\nReply with a single JSON object and nothing else: "
             '{"kind": "agent.reflected", "text": "<one-sentence belief>"}'
         )
         raw = self._complete(self.manifest.name + "-reflect", prompt)

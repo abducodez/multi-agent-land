@@ -71,6 +71,25 @@ class TestManifestAgentEmits:
         agent.act("r", 1, StageProjection(), ())
         assert router.for_profile("tiny").variant == "stub:tiny"
 
+    def test_model_endpoint_overrides_profile(self):
+        # An explicit catalogue endpoint pins a specific model: _route_key prefers it
+        # over the tier, and the agent routes there (ADR-0022).
+        class _Pinned(ManifestAgent):
+            manifest = AgentManifest(
+                name="scene-whisperer",
+                role="worker",
+                persona="You speak on a specific model.",
+                may_emit=["world.observed"],
+                model_profile="tiny",
+                model_endpoint="minicpm-4-1-8b",
+            )
+
+        agent = _Pinned(router := _router())
+        assert agent._route_key == "minicpm-4-1-8b"
+        agent.act("r", 1, StageProjection(), ())
+        # the routed (cached) provider is the endpoint's stub, not the tiny tier's
+        assert router.for_profile("minicpm-4-1-8b").variant == "stub:minicpm-4-1-8b"
+
 
 class TestManifestAgentSalience:
     def test_salience_path_runs(self):

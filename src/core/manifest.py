@@ -104,6 +104,16 @@ class AgentManifest(BaseModel):
     """Logical profile: resolved to a concrete model name by the provider.
     tiny=<=4B, fast=<=7B, balanced=<=13B, strong=<=32B."""
 
+    model_endpoint: str | None = None
+    """Optional catalogue key (``modal/catalogue.py`` endpoint slug, e.g.
+    ``"minicpm-4-1-8b"``) binding this agent to one *specific* served model,
+    overriding the tier default in ``model_profile``.  None → route by profile.
+
+    This is how a cast mixes concrete sponsor models — one mind on MiniCPM, the
+    Judge on Nemotron — while ``model_profile`` stays the decoding/offline fallback.
+    The router resolves the key against the live catalogue (ADR-0022); offline it
+    folds into the deterministic stub like any profile, so demos stay reproducible."""
+
     # Memory
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
 

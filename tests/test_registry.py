@@ -56,6 +56,43 @@ class TestDefaultRegistry:
             reg.build_scenario("no-such-scenario")
 
 
+class TestFromWorld:
+    """A composed WorldConfig (e.g. from the Lab) builds a registry on the same path."""
+
+    def _world(self):
+        from src.core.config import validate_world
+
+        reg = default_registry()
+        base = reg.scenarios["thousand-token-wood"]
+        # Pin one agent to a specific catalogue model, the rest by tier.
+        agents = []
+        for name in base.cast:
+            m = reg.agents[name]
+            if name == "pocket-actor":
+                m = m.model_copy(update={"model_endpoint": "minicpm-4-1-8b"})
+            agents.append(m.model_dump(mode="python"))
+        return validate_world(
+            {
+                "agents": agents,
+                "scenarios": [base.model_dump(mode="python")],
+            }
+        )
+
+    def test_builds_scenario_and_router_from_world(self):
+        reg = Registry.from_world(self._world())
+        assert set(reg.agents) >= {"scene-whisperer", "pocket-actor", "echo"}
+        sc = reg.build_scenario("thousand-token-wood")
+        assert len(sc.agents) == 4
+        pocket = next(a for a in sc.agents if a.name == "pocket-actor")
+        assert pocket.manifest.model_endpoint == "minicpm-4-1-8b"
+        assert pocket._route_key == "minicpm-4-1-8b"
+
+    def test_governor_threaded_from_world(self):
+        reg = Registry.from_world(self._world())
+        gov = reg.governor_for("thousand-token-wood")
+        assert gov.max_turns == 60  # carried from the scenario's governor
+
+
 class TestHandlerBinding:
     def test_handler_class_used_when_named(self):
         @register_handler("test-handler")

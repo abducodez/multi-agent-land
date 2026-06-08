@@ -47,14 +47,22 @@ play-head, so concurrent visitors never share a world.
 ### The Lab — compose a run
 
 `lab.py` (`build_lab`) is the full interactive composer (ADR-0021, decision 4): a
-scenario grid, premise / seed / world text fields, a narrator `gr.Dropdown`, an
-**editable cast `gr.Dataframe`** (per-agent model→profile map + temperature override),
-a judge `gr.Group`, a tools `gr.CheckboxGroup`, and budget `gr.Number`/`gr.Slider`
-controls. "Surprise me" rerolls a cast; "Summon" collects the inputs into a per-run
-`WorldConfig`, runs it through `validate_world()` (ADR-0011), builds the `Conductor`,
-and switches to The Show. The Lab's abstract model choices map onto the four engine
-profiles (`tiny`/`fast`/`balanced`/`strong`, ADR-0010); per-agent temperature is a
-per-run override, since temperature is otherwise per-*profile* in `config/models.yaml`.
+scenario grid, premise / seed / world text fields, a narrator `gr.Dropdown`, a
+**per-cast model picker**, a judge `gr.Group`, a tools `gr.CheckboxGroup`, and budget
+`gr.Number`/`gr.Slider` controls.
+
+The cast picker is a `@gr.render` over the scenario: one row per player (name + a model
+`gr.Dropdown`), re-rendered as the cast changes.  Crucially, **every dropdown offers only
+the models actually hosted on Modal** — its choices come from `modal_catalogue.entries()`
+(the catalogue is the single source of truth and loads offline), so you can't cast a model
+that isn't deployable.  Each pick writes the chosen endpoint slug into a `cast_models`
+`gr.State` (`{agent_name: endpoint_key}`); the Judge gets its own catalogue dropdown in
+§04.  "Surprise me" rerolls a cast; **"Summon" makes the choice real**: `collect_world_config`
+maps each selection onto the agent's `model_endpoint` (ADR-0022), runs the per-run
+`WorldConfig` through `validate_world()` (ADR-0011), and `Registry.from_world()` builds a
+`Conductor` on the exact same engine path as a config-file run — so the model you pick is
+the model that speaks (offline → the deterministic stub, demo still reproducible).  A bad
+compose degrades to the scenario's default cast, so Summon never breaks the demo.
 
 ### The Show — watch it unfold
 

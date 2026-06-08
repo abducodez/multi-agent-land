@@ -86,12 +86,16 @@ _BASE_ENV = {
 def build_image(cfg: ModelConfig) -> modal.Image:
     """Build the container image for a model. Layers are cached and shared, so
     text models that only differ in env reuse the same base layers."""
-    image = (
-        modal.Image.from_registry(CUDA_IMAGE, add_python=PYTHON_VERSION)
-        .entrypoint([])  # drop the CUDA image's default entrypoint
-        .uv_pip_install(f"vllm=={VLLM_VERSION}")
-        .env(_BASE_ENV)
-    )
+    image = modal.Image.from_registry(CUDA_IMAGE, add_python=PYTHON_VERSION).entrypoint(
+        []
+    )  # drop the CUDA image's default entrypoint
+    # vLLM version is per-model (defaults to the pinned VLLM_VERSION). A model can
+    # opt into a nightly wheel when the pinned release can't serve its architecture.
+    if cfg.vllm_version == "nightly":
+        image = image.uv_pip_install("vllm", pre=True, extra_index_url="https://wheels.vllm.ai/nightly")
+    else:
+        image = image.uv_pip_install(f"vllm=={cfg.vllm_version or VLLM_VERSION}")
+    image = image.env(_BASE_ENV)
     if cfg.extra_pip:
         image = image.uv_pip_install(*cfg.extra_pip)
     if cfg.env:

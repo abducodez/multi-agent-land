@@ -28,6 +28,8 @@ schedule:
 
 # Model (resolved to a concrete small model by the ModelRouter)
 model_profile: fast            # tiny ≤4B | fast ≤7B | balanced ≤13B | strong ≤32B
+model_endpoint: null           # optional: pin ONE specific catalogue model (modal/catalogue.py
+                               # endpoint slug, e.g. minicpm-4-1-8b), overriding the tier above
 
 # Memory (a view over the ledger, not separate state)
 memory:
@@ -52,6 +54,12 @@ output_extra_fields: []        # extra payload fields the model is asked for, e.
   reactive, periodic, or both.  Cadence is per-agent; scenarios don't schedule.
 - **`model_profile`** never names a model; the router (config/env) does.  Mix
   tiers freely across a cast.
+- **`model_endpoint`** is the escape hatch from tiers to a *specific* served model:
+  a `modal/catalogue.py` endpoint slug the router resolves to that model's live
+  binding (overriding `model_profile`).  `null` → route by tier.  This is how a cast
+  pins concrete sponsor models — one mind on MiniCPM, the Judge on Nemotron — and what
+  the Fishbowl Lab's per-cast model picker writes.  Offline it folds into the
+  deterministic stub like any tier, so demos stay reproducible.  See ADR-0022.
 - **`handler`** stays `null` for the common case (the generic `ManifestAgent`).
   Set it to a key registered via `@register_handler` for agents that call tools or
   need custom prompt logic; the YAML still supplies all declarative fields.

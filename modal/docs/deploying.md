@@ -81,8 +81,16 @@ changes needed:
 | `reasoning_parser` / `tool_call_parser` / `enable_auto_tool_choice` | OpenAI tool/reasoning features. |
 | `multimodal` / `mm_limits` | Image/audio/video inputs and per-prompt caps.               |
 | `trust_remote_code`     | Required by MiniCPM / Nemotron custom modeling code.           |
+| `vllm_version`          | Per-model inference-stack pin (escape hatch); `None` = the default `VLLM_VERSION`, `"nightly"` = latest nightly wheel, else a pinned version. |
 | `extra_vllm_args`       | Raw `vllm serve` flags appended verbatim (escape hatch).       |
 | `extra_pip` / `env`     | Extra image deps / container env (escape hatch).               |
+
+> **Per-model vLLM version.** The image pins `VLLM_VERSION` (see `service.py`) for
+> reproducible deploys. A single model can override it via `vllm_version` when the
+> pinned release can't serve its architecture — this is scoped to that model's image,
+> so one model's bump never touches another provider's app. The Gemma 4 entries set
+> `vllm_version="nightly"` (plus `transformers>=5.10.2` and `VLLM_USE_FLASHINFER_SAMPLER=0`)
+> because the `gemma4_unified` architecture is unservable on the pinned release.
 
 ### Add a model
 

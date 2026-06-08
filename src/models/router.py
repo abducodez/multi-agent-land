@@ -101,9 +101,45 @@ class ModelRouter:
     def _spec_for(self, profile: str) -> ProfileSpec:
         if profile in self.specs:
             return self.specs[profile]
-        decoding = _PROFILE_DECODING.get(profile, _PROFILE_DECODING["fast"])
+        # A key that is not one of the four tiers names a *specific* catalogue model
+        # (an agent's ``model_endpoint``): resolve it to that model's live binding so
+        # a cast can pin concrete Modal models (ADR-0022).  Only reached on the live
+        # path — offline, ``_build`` serves the stub before this runs.
+        if profile not in _PROFILE_DECODING:
+            spec = self._catalogue_spec(profile)
+            if spec is not None:
+                return spec
+            # Unknown non-tier key with no catalogue match → degrade to the fast tier
+            # rather than crash ``resolve_model`` on a key it does not recognise.
+            profile = "fast"
+        decoding = _PROFILE_DECODING[profile]
         return ProfileSpec(
             model=resolve_model(profile),  # type: ignore[arg-type]
+            temperature=float(decoding["temperature"]),
+            max_tokens=int(decoding["max_tokens"]),
+        )
+
+    def _catalogue_spec(self, key: str) -> ProfileSpec | None:
+        """Build a :class:`ProfileSpec` from a catalogue endpoint *key*, or None.
+
+        The model string / endpoint URL / api key come from the catalogue + env
+        (``modal_catalogue.binding_for``); decoding inherits the model's tier default
+        (an unbound specialist model → the balanced tier).  Returns None when the key
+        is not in the catalogue, so the caller can fall back gracefully."""
+        try:
+            from src.models import modal_catalogue
+
+            entry = modal_catalogue.entry_by_key(key)
+            if entry is None:
+                return None
+            binding = modal_catalogue.binding_for(key)
+        except Exception:  # pragma: no cover - defensive: catalogue unavailable
+            return None
+        decoding = _PROFILE_DECODING.get(entry.get("profile") or "balanced", _PROFILE_DECODING["balanced"])
+        return ProfileSpec(
+            model=binding["model"],
+            base_url=binding["base_url"] or None,
+            api_key=binding["api_key"] or None,
             temperature=float(decoding["temperature"]),
             max_tokens=int(decoding["max_tokens"]),
         )

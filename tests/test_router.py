@@ -71,6 +71,45 @@ class TestModelRouterOnline:
         assert provider.max_tokens == 320  # _PROFILE_DECODING["balanced"]
 
 
+class TestModelRouterCatalogueEndpoint:
+    """A non-tier router key names a specific catalogue model (manifest.model_endpoint)."""
+
+    def test_offline_endpoint_key_serves_distinct_stub(self):
+        # A concrete catalogue key routes like any profile offline: the deterministic
+        # stub, with the key folded into its variant so the choice still varies output.
+        router = ModelRouter(offline=True)
+        provider = router.for_profile("minicpm-4-1-8b")
+        assert isinstance(provider, DeterministicTinyModel)
+        assert "minicpm-4-1-8b" in provider.variant
+        assert provider.variant != router.for_profile("gemma-4-12b").variant
+
+    def test_online_endpoint_key_resolves_to_catalogue_binding(self, monkeypatch):
+        monkeypatch.setenv("MODAL_WORKSPACE", "demo-ws")
+        monkeypatch.setenv("MODAL_LLM_KEY", "EMPTY")
+        monkeypatch.delenv("MODEL_BALANCED", raising=False)
+        router = ModelRouter(offline=False)
+        provider = router.for_profile("gemma-4-12b")
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.model == "openai/google/gemma-4-12B"
+        assert "gemma-4-12b" in provider.api_base
+        assert provider.max_tokens == 320  # balanced tier decoding
+
+    def test_unbound_specialist_uses_balanced_decoding(self, monkeypatch):
+        # nemotron-cascade-14b-thinking has profile=None → balanced decoding defaults.
+        monkeypatch.setenv("MODAL_WORKSPACE", "demo-ws")
+        router = ModelRouter(offline=False)
+        provider = router.for_profile("nemotron-cascade-14b-thinking")
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.max_tokens == 320
+
+    def test_unknown_key_degrades_to_fast_tier(self, monkeypatch):
+        monkeypatch.setenv("MODEL_FAST", "fallback-model")
+        router = ModelRouter(offline=False)
+        provider = router.for_profile("not-a-real-endpoint")
+        assert provider.model == "fallback-model"
+        assert provider.max_tokens == 220  # fast tier decoding
+
+
 class TestFromEnv:
     def test_offline_without_binding(self, monkeypatch):
         # No Modal binding (and no stray cloud key) → deterministic offline stub.

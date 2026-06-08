@@ -17,13 +17,38 @@ names a model.
 ## How a turn resolves a model
 
 ```
-manifest.model_profile  ──►  ModelRouter.for_profile(profile)  ──►  ModelProvider
-        (e.g. "tiny")              (cached per profile)            (concrete model)
+manifest.model_endpoint or model_profile  ──►  ModelRouter.for_profile(key)  ──►  ModelProvider
+        (the agent's "route key")                 (cached per key)              (concrete model)
 ```
 
-`ManifestAgent._complete()` calls `router.for_profile(self.manifest.model_profile)`
-every turn and records the provider's `last_usage` so the conductor can meter
-tokens — and, on the live path, real cost — into the Governor.
+`ManifestAgent` computes a **route key** — `self._route_key`, the explicit
+`model_endpoint` when set, else the `model_profile` tier — and calls
+`router.for_profile(self._route_key)` every turn, recording the provider's
+`last_usage` so the conductor can meter tokens (and, live, real cost) into the
+Governor.  The router accepts either kind of key: a tier resolves to the profile
+default, a catalogue endpoint slug to that specific model's binding.
+
+## Pinning a specific model (`model_endpoint`)
+
+Tiers are the default, but a manifest can pin one mind to a **specific catalogue
+model** by setting `model_endpoint` to an endpoint slug from `modal/catalogue.py`
+(e.g. `minicpm-4-1-8b`).  This overrides the tier and is how a cast mixes concrete
+sponsor models — one worker on MiniCPM, the Judge on Nemotron Cascade — including the
+*unbound specialist* models that no tier defaults to.  See ADR-0022.
+
+```
+ModelRouter._spec_for(key)
+  key in specs                → that ProfileSpec (the four tiers from models.yaml)
+  key is a catalogue endpoint → _catalogue_spec(key): binding_for(key) + the model's
+                                tier decoding (unbound specialist → balanced defaults)
+  unknown non-tier key        → degrade to the fast tier (never crash)
+```
+
+Offline this path is never reached — `_build` serves the deterministic stub for any
+key, with the key folded into the stub's `variant`, so picking a different model still
+varies the (reproducible) output.  The **Fishbowl Lab** writes `model_endpoint` from
+its per-cast model picker, so the model you choose in the UI is the model that runs
+(see [fishbowl-ui.md](fishbowl-ui.md)).
 
 ## Transport: the LiteLLM gateway (live path)
 
@@ -118,7 +143,9 @@ everything on the big model.
 
 ## Code
 
-- `src/models/router.py` — `ModelRouter`, `ProfileSpec`, `_PROFILE_DECODING`
+- `src/models/router.py` — `ModelRouter`, `ProfileSpec`, `_PROFILE_DECODING`, `_catalogue_spec()` (endpoint key → binding)
+- `src/agents/base.py` — `ManifestAgent._route_key` (endpoint-or-tier)
+- `src/core/registry.py` — `Registry.from_world()` (a UI/LLM-composed run on the same path)
 - `src/models/litellm_provider.py` — `LiteLLMProvider` (live transport, real cost)
 - `src/models/modal_catalogue.py` — engine view of the catalogue (key → binding)
 - `src/core/manifest.py` — `resolve_model()` (env → catalogue default)

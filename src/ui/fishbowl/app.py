@@ -527,6 +527,16 @@ def _wire(
     summon_btn = _h(lab_handles, "summon", "summon_btn", "launch", "start")
     scenario_in = _h(lab_handles, "scenario", "scenario_select", "scenario_dropdown")
     seed_in = _h(lab_handles, "seed", "seed_in", "world_seed")
+    # Composer inputs — the per-cast Modal model picks (cast_models) and the run knobs;
+    # all looked up defensively so the shell still runs if the Lab omits a widget.
+    premise_in = _h(lab_handles, "premise")
+    cast_models_in = _h(lab_handles, "cast_models")
+    judge_model_in = _h(lab_handles, "judge_model")
+    judge_policy_in = _h(lab_handles, "judge_policy")
+    judge_strictness_in = _h(lab_handles, "judge_strictness")
+    tools_in = _h(lab_handles, "tools")
+    tokens_in = _h(lab_handles, "tokens")
+    max_rounds_in = _h(lab_handles, "max_rounds")
 
     def _scenario_title(value) -> str:
         """Resolve a Lab scenario selection (title or internal name) to a title key."""
@@ -537,11 +547,67 @@ def _wire(
                 return title
         return _DEFAULT_TITLE
 
-    # ── Summon: build a fresh session, reset, jump to the Show, render head ──────
-    def on_summon(scenario_value, seed_value, layout, mind_reader):
+    def _compose_session(name, **knobs):
+        """Build a session for a Lab-composed run: the selected Modal models drive the
+        cast (ADR-0022).  The composed WorldConfig flows through ``Registry.from_world``
+        onto the exact same engine path as a config-file run.  Any compose/validate error
+        degrades to the scenario's default cast so Summon always yields a runnable show
+        (and with no credentials the deterministic stub drives it, demo reproducible)."""
+        from src.core.registry import Registry
+        from src.ui.fishbowl.lab import collect_world_config
+
+        try:
+            world = collect_world_config(
+                scenario=name,
+                premise=knobs.get("premise") or "",
+                seed=knobs.get("seed") or "",
+                cast_models=knobs.get("cast_models") if isinstance(knobs.get("cast_models"), dict) else {},
+                judge_policy=knobs.get("judge_policy") or "Majority Vote",
+                judge_model=knobs.get("judge_model") or "",
+                judge_strictness=knobs.get("judge_strictness")
+                if isinstance(knobs.get("judge_strictness"), (int, float))
+                else 50,
+                tools=knobs.get("tools") if isinstance(knobs.get("tools"), list) else [],
+                tokens=knobs.get("tokens") if isinstance(knobs.get("tokens"), (int, float)) else None,
+                max_rounds=knobs.get("max_rounds") if isinstance(knobs.get("max_rounds"), (int, float)) else None,
+            )
+            return FishbowlSession(name, registry=Registry.from_world(world), tools=_tools)
+        except Exception:
+            return _new_session(name)  # bad compose → default cast; Summon never breaks
+
+    # ── Summon: build a fresh session from the composed run, reset, jump to the Show ──
+    def on_summon(
+        scenario_value,
+        seed_value,
+        premise,
+        cast_models,
+        judge_model,
+        judge_policy,
+        judge_strictness,
+        tools,
+        tokens,
+        max_rounds,
+        layout,
+        mind_reader,
+    ):
         title = _scenario_title(scenario_value)
         name = SCENARIOS.get(title, "")
-        session = _new_session(name) if name else None
+        session = (
+            _compose_session(
+                name,
+                premise=premise,
+                seed=seed_value,
+                cast_models=cast_models,
+                judge_model=judge_model,
+                judge_policy=judge_policy,
+                judge_strictness=judge_strictness,
+                tools=tools,
+                tokens=tokens,
+                max_rounds=max_rounds,
+            )
+            if name
+            else None
+        )
         if session is not None:
             session.reset((seed_value or "").strip())
             k = session.head
@@ -555,6 +621,14 @@ def _wire(
         summon_inputs = [
             scenario_in if scenario_in is not None else scenario_state,
             seed_in if seed_in is not None else blank_state,  # empty seed when no widget
+            premise_in if premise_in is not None else blank_state,
+            cast_models_in if cast_models_in is not None else blank_state,
+            judge_model_in if judge_model_in is not None else blank_state,
+            judge_policy_in if judge_policy_in is not None else blank_state,
+            judge_strictness_in if judge_strictness_in is not None else blank_state,
+            tools_in if tools_in is not None else blank_state,
+            tokens_in if tokens_in is not None else blank_state,
+            max_rounds_in if max_rounds_in is not None else blank_state,
             layout_state,
             mind_reader_state,
         ]
@@ -568,30 +642,33 @@ def _wire(
     # Without this, switching to a new world (e.g. the spy game) leaves the premise,
     # seed, cast table, and narrator showing the previous scenario — and Summon would
     # genesis with the wrong seed.  Refreshing them makes "compose a spy game" one click.
+    # The cast picker re-seeds itself (it is a gr.render over the scenario), so it is not
+    # in this list; we re-seed the static fields plus the Judge's default Modal model.
     _scenario_fields = [
         (_h(lab_handles, "premise"), "premise"),
         (seed_in, "seed"),
         (_h(lab_handles, "world"), "world"),
-        (_h(lab_handles, "cast"), "cast"),
         (_h(lab_handles, "narrator"), "narrator"),
+        (_h(lab_handles, "judge_model"), "judge_model"),
     ]
     _present_fields = [(handle, key) for handle, key in _scenario_fields if handle is not None]
 
     if scenario_in is not None and _present_fields:
 
         def on_scenario_change(scenario_value):
-            from src.ui.fishbowl.lab import _cast_rows_for
+            from src.ui.fishbowl.lab import _default_model_key, _judge_manifest
 
             cfg = _registry.scenarios.get(SCENARIOS.get(_scenario_title(scenario_value), ""))
             if cfg is None:
                 return tuple(gr.update() for _ in _present_fields)
             seeds = list(cfg.example_seeds) or [cfg.default_seed]
+            judge = _judge_manifest(cfg)
             updates = {
                 "premise": gr.update(value=cfg.goal),
                 "seed": gr.update(choices=seeds, value=cfg.default_seed),
                 "world": gr.update(value=cfg.genesis_text or ""),
-                "cast": gr.update(value=_cast_rows_for(cfg)),
                 "narrator": gr.update(value=scenario_voice(cfg.name)),
+                "judge_model": gr.update(value=_default_model_key(judge) if judge else None),
             }
             return tuple(updates[key] for _handle, key in _present_fields)
 

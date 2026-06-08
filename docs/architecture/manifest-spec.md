@@ -25,6 +25,7 @@ class AgentManifest(BaseModel):
 
     # Model
     model_profile: ModelProfile      # tiny | fast | balanced | strong
+    model_endpoint: str | None       # optional: pin ONE catalogue model, overriding the tier
 
     # Memory
     memory: MemoryConfig             # window, use_salience, salience_top_k, reflection_threshold
@@ -97,6 +98,15 @@ Logical model tier.  Resolved to a concrete model name at runtime:
 | `strong` | ≤32B | gpt-4o | `MODEL_STRONG` |
 
 The pattern: workers use `fast` or `tiny`; the judge and reflector use `balanced` or `strong`.
+
+### `model_endpoint`
+Optional escape hatch from tiers to a **specific served model**: a `modal/catalogue.py`
+endpoint slug (e.g. `minicpm-4-1-8b`) the router binds this agent to, overriding
+`model_profile`.  `None` (default) → route by tier.  Lets a cast mix concrete sponsor
+models (one mind on MiniCPM, the Judge on Nemotron Cascade), including the *unbound
+specialist* models no tier defaults to.  Offline it folds into the deterministic stub like
+any tier, so demos stay reproducible.  This is what the Fishbowl Lab's per-cast model picker
+writes.  See [model-routing.md](model-routing.md) and ADR-0022.
 
 ### `memory.window`
 Number of recent visible events to include in every prompt (recency-window mode).

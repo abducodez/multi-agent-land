@@ -23,7 +23,9 @@ from __future__ import annotations
 import gradio as gr
 
 from src.core.config import ScenarioConfig, validate_scenario, validate_world
+from src.core.manifest import AgentManifest
 from src.core.registry import default_registry
+from src.models import modal_catalogue
 from src.ui.fishbowl.adapter import VOICES, scenario_voice
 
 # ── design vocabulary (mirrors ui/raw/lab.jsx) ──────────────────────────────────
@@ -37,9 +39,6 @@ JUDGE_POLICIES: list[str] = [
     "Judge's Whim",
 ]
 
-# Logical model profiles the engine understands (manifest.ModelProfile).
-MODEL_PROFILES: list[str] = ["tiny", "fast", "balanced", "strong"]
-
 # MCP tool grants the cast may reach for (friendly label, stored id).  Mirrors
 # ui/raw/lab.jsx:MCP_TOOLS; the value is what we store on the run.
 TOOL_CHOICES: list[tuple[str, str]] = [
@@ -50,9 +49,6 @@ TOOL_CHOICES: list[tuple[str, str]] = [
     ("oracle · ask the unseen", "oracle"),
     ("tts.speak · give it a voice", "tts.speak"),
 ]
-
-# Cast Dataframe columns (editable in the Lab).
-CAST_COLUMNS: list[str] = ["name", "archetype", "model_profile", "temp"]
 
 # The scenario we lead with — the hackathon's north-star world.
 _PREFERRED_SCENARIO = "thousand-token-wood"
@@ -77,25 +73,62 @@ def _scenario_by_title(title: str) -> ScenarioConfig | None:
     return None
 
 
-def _cast_rows_for(scenario: ScenarioConfig) -> list[list]:
-    """Seed editable cast rows from a scenario's cast manifests.
+def model_choices() -> list[tuple[str, str]]:
+    """Dropdown choices for the Modal-hosted catalogue: ``(friendly label, endpoint key)``.
 
-    Each row is ``[name, archetype, model_profile, temp]``.  The archetype and
-    model_profile come straight from the agent manifest; temp defaults to 0.8 (the
-    model default) so the column is meaningful but editable.
-    """
+    The single source of truth is ``modal/catalogue.py`` (read through the engine's
+    ``modal_catalogue`` view), so the Lab can *only* offer models that are actually
+    deployable — and the list loads offline (the catalogue is a plain stdlib file), so
+    the picker is populated even with no API key.  Empty list → a stripped deployment
+    with no catalogue, in which case the cast falls back to the deterministic stub."""
+    choices: list[tuple[str, str]] = []
+    for entry in modal_catalogue.entries():
+        served = entry["served_model_id"].split("/")[-1]
+        params = f"{entry['params_b']:g}B" if entry.get("params_b") else "?"
+        tier = entry["profile"] or "specialist"
+        provider = entry["provider"].title()
+        choices.append((f"{served} · {params} · {tier} · {provider}", entry["key"]))
+    return choices
+
+
+def _default_model_key(manifest: AgentManifest) -> str | None:
+    """Catalogue key a cast row defaults to: the manifest's explicit ``model_endpoint``,
+    else the catalogue's default model for its tier, else the first catalogue model (or
+    None when the catalogue is empty)."""
+    if manifest.model_endpoint:
+        return manifest.model_endpoint
+    tiered = modal_catalogue.default_key_for_profile(manifest.model_profile)
+    if tiered:
+        return tiered
+    entries = modal_catalogue.entries()
+    return entries[0]["key"] if entries else None
+
+
+def _judge_manifest(scenario: ScenarioConfig) -> AgentManifest | None:
+    """The scenario's judge agent (first ``role == "judge"`` in the cast), or None."""
     registry = default_registry()
-    rows: list[list] = []
     for agent_name in scenario.cast:
         manifest = registry.agents.get(agent_name)
-        if manifest is None:
-            # A scenario referencing an unknown agent shouldn't happen (validate_world
-            # guards it) but degrade gracefully rather than crash the form.
-            rows.append([agent_name, f"the {agent_name}", "fast", 0.8])
+        if manifest is not None and manifest.role == "judge":
+            return manifest
+    return None
+
+
+def _cast_defaults(scenario: ScenarioConfig) -> dict[str, str]:
+    """Default model selection for a scenario's *non-judge* cast (name → endpoint key).
+
+    The Judge is bound under §04, so it is excluded here.  Used to seed (and re-seed on
+    scenario change) the ``cast_models`` state the picker writes into."""
+    registry = default_registry()
+    defaults: dict[str, str] = {}
+    for agent_name in scenario.cast:
+        manifest = registry.agents.get(agent_name)
+        if manifest is None or manifest.role == "judge":
             continue
-        archetype = manifest.archetype or f"the {manifest.role}"
-        rows.append([manifest.name, archetype, manifest.model_profile, 0.8])
-    return rows
+        key = _default_model_key(manifest)
+        if key:
+            defaults[agent_name] = key
+    return defaults
 
 
 def _voice_choices() -> list[tuple[str, str]]:
@@ -113,8 +146,9 @@ def build_lab() -> dict[str, gr.components.Component]:
     Wires no callbacks and imports no sibling render/show module — the app shell
     (Unit 9) binds ``summon_btn`` to the session.  Returns a dict of every handle a
     caller needs to read the composed run (keys: ``scenario, premise, seed, world,
-    narrator, cast, judge_policy, judge_model, judge_strictness, tools, tokens,
-    max_rounds, seed_num, cadence, summon_btn, surprise_btn``).
+    narrator, cast_models, judge_policy, judge_model, judge_strictness, tools, tokens,
+    max_rounds, seed_num, cadence, summon_btn, surprise_btn``).  ``cast_models`` is a
+    ``gr.State`` holding ``{agent_name: catalogue_endpoint_key}`` for the non-judge cast.
     """
     scenarios = _ordered_scenarios()
     first = scenarios[0]
@@ -160,24 +194,63 @@ def build_lab() -> dict[str, gr.components.Component]:
             lines=2,
         )
 
-    # 03 — The Cast (editable Dataframe)
+    # 03 — The Cast: one Modal-hosted model per mind.  The picker offers ONLY models in
+    # the catalogue (modal/catalogue.py), and the choice drives the run (ADR-0022).  A
+    # gr.render keeps one row per player as the scenario (and its cast size) changes; each
+    # row's dropdown writes the chosen endpoint key into the cast_models state below.
+    cast_models = gr.State(_cast_defaults(first))
+    handles["cast_models"] = cast_models
+    catalogue = model_choices()
     with gr.Group():
         gr.Markdown(
-            "**03 · The Cast** — bind any mind to any model "
-            "(profile: tiny / fast / balanced / strong); watch the expensive one play"
+            "**03 · The Cast** — bind each mind to a model **hosted on Modal** "
+            "(the only models you can pick); the Judge is set in §04"
         )
-        handles["cast"] = gr.Dataframe(
-            value=_cast_rows_for(first),
-            headers=CAST_COLUMNS,
-            datatype=["str", "str", "str", "number"],
-            column_count=len(CAST_COLUMNS),
-            # The grid re-seeds (name/archetype/model) when the scenario changes; it shows
-            # the player roster — a scenario's judge/host is configured under §04, mirroring
-            # the prototype's 4-player spy cast (ui/raw/data.js).
-            row_count=len(first.cast),
-            interactive=True,
-            label="Cast",
-        )
+
+        @gr.render(inputs=[handles["scenario"]])
+        def _render_cast(scenario_value, _choices=catalogue):
+            scenario = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
+            if scenario is None:
+                gr.Markdown("_No scenario selected._")
+                return
+            registry = default_registry()
+            shown = 0
+            for agent_name in scenario.cast:
+                manifest = registry.agents.get(agent_name)
+                if manifest is None or manifest.role == "judge":
+                    continue  # the Judge is configured under §04
+                shown += 1
+                with gr.Row():
+                    gr.Markdown(
+                        f"**{manifest.name}**<br/>"
+                        f"<span style='opacity:.7'>{manifest.archetype or f'the {manifest.role}'}</span>"
+                    )
+                    picker = gr.Dropdown(
+                        choices=_choices,
+                        value=_default_model_key(manifest),
+                        label="model · Modal",
+                        interactive=bool(_choices),
+                        scale=2,
+                    )
+
+                # Capture the agent name per row; the dropdown writes its key into the
+                # shared cast_models dict the Summon handler reads.
+                def _set_model(key, state, _name=manifest.name):
+                    return {**(state or {}), _name: key}
+
+                picker.change(_set_model, inputs=[picker, cast_models], outputs=[cast_models])
+            if not shown:
+                gr.Markdown("_This scenario has no selectable players._")
+            elif not _choices:
+                gr.Markdown("_No Modal models in the catalogue — the cast runs the deterministic stub._")
+
+    # Switching scenarios re-seeds the model picks to the new cast's defaults so a stale
+    # override from the previous world never leaks into the run.
+    def _reset_cast_models(scenario_value):
+        scn = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
+        return _cast_defaults(scn) if scn else {}
+
+    handles["scenario"].change(_reset_cast_models, inputs=[handles["scenario"]], outputs=[cast_models])
 
     # 04 — The Judge + 05 — Tools (side by side)
     with gr.Row():
@@ -189,9 +262,10 @@ def build_lab() -> dict[str, gr.components.Component]:
                 label="Policy preset",
             )
             handles["judge_model"] = gr.Dropdown(
-                choices=MODEL_PROFILES,
-                value="strong",
-                label="Bound model profile",
+                choices=catalogue,
+                value=_default_model_key(_judge_manifest(first)) if _judge_manifest(first) else None,
+                label="Judge model · Modal",
+                interactive=bool(catalogue),
             )
             handles["judge_strictness"] = gr.Slider(
                 minimum=0,
@@ -244,7 +318,7 @@ def collect_world_config(
     scenario: str,
     premise: str,
     seed: str,
-    cast_rows: list,
+    cast_models: dict[str, str] | None,
     judge_policy: str,
     judge_model: str,
     judge_strictness: float,
@@ -255,25 +329,29 @@ def collect_world_config(
     """Assemble + validate a per-run world from the Lab's form values.
 
     Returns the validated :class:`WorldConfig` (raising ``pydantic.ValidationError``
-    on an incoherent run).  This is the bridge Unit 9 uses to build a Conductor from a
-    composed run.
+    on an incoherent run).  This is the bridge the app shell uses to build a Conductor
+    from a composed run via :meth:`Registry.from_world`.
 
-    The base scenario (selected by its display *title*) supplies the cast roster and
-    the agent manifests; the edited ``cast_rows`` (``[name, archetype, model_profile,
-    temp]``) override each agent's ``model_profile`` and ``archetype`` non-destructively
-    via :meth:`pydantic.BaseModel.model_copy`.  The premise overrides the scenario goal,
-    ``seed`` becomes its ``default_seed``, and the budget knobs feed the governor.
+    The base scenario (selected by its display *title* or internal name) supplies the
+    cast roster and agent manifests.  Model selection binds each mind to a *specific*
+    Modal-hosted model: ``cast_models`` maps ``{agent_name: catalogue_endpoint_key}`` for
+    the players and ``judge_model`` is the Judge's endpoint key (§04).  Each becomes that
+    agent's ``model_endpoint`` (ADR-0022) — non-destructively via ``model_copy``, so the
+    shared registry is untouched.  Only keys that exist in ``modal_catalogue`` are honoured
+    (the picker offers nothing else; we re-check so a stale key can't reach the run); an
+    agent with no/blank/unknown selection keeps its manifest tier.  The premise overrides
+    the scenario goal, ``seed`` becomes its ``default_seed``, and the budget knobs feed the
+    governor.
 
-    The judge knobs (``judge_policy`` / ``judge_model`` / ``judge_strictness``) and the
-    ``tools`` grant are accepted and shape-checked, but the deeper synthesis (turning a
-    policy preset into a judge AgentManifest, wiring tool grants onto worker manifests) is
-    deferred to the engine and TODO'd below — every dict this builds is still passed
-    through ``validate_scenario`` / ``validate_world`` before return, so the contract
-    ("emit, validate, run") holds. See ADR-0011.
+    The judge knobs (``judge_policy`` / ``judge_strictness``) and the ``tools`` grant are
+    accepted and shape-checked, but the deeper synthesis (policy preset → judge behaviour,
+    tool grants onto worker manifests) is deferred and TODO'd below — every dict this builds
+    still passes through ``validate_scenario`` / ``validate_world`` before return, so the
+    contract ("emit, validate, run") holds.  See ADR-0011 / ADR-0022.
 
-    TODO(unit-9): map ``judge_policy`` / ``judge_model`` to a concrete judge AgentManifest
-    and wire the selected ``tools`` onto each worker's manifest ``tools`` grant once the
-    judge/tool contracts land in the live path.
+    TODO: map ``judge_policy`` / ``judge_strictness`` to concrete judge behaviour and wire
+    the selected ``tools`` onto each worker's manifest ``tools`` grant once those contracts
+    land in the live path.
     """
     registry = default_registry()
     base = _scenario_by_title(scenario)
@@ -283,28 +361,27 @@ def collect_world_config(
     if base is None:
         raise ValueError(f"unknown scenario {scenario!r} (have: {sorted(registry.scenarios)})")
 
-    # Edits per cast row → manifest overrides, keyed by name.  Non-destructive: we
-    # model_copy each manifest rather than mutating the cached registry instance.
-    edits: dict[str, dict] = {}
-    for row in cast_rows or []:
-        if not row or row[0] in (None, ""):
-            continue
-        name = str(row[0]).strip()
-        patch: dict = {}
-        if len(row) > 1 and row[1] not in (None, ""):
-            patch["archetype"] = str(row[1])
-        if len(row) > 2 and str(row[2]).strip() in MODEL_PROFILES:
-            patch["model_profile"] = str(row[2]).strip()
-        edits[name] = patch
+    # Only catalogue-hosted models may be cast: the picker offers nothing else, and we
+    # re-check here so an out-of-band or stale key can never reach the run.
+    valid_keys = {e["key"] for e in modal_catalogue.entries()}
+    selections = dict(cast_models or {})
+    judge_key = (judge_model or "").strip()
 
-    # Build the per-run cast: every manifest the scenario references, with overrides.
+    # Build the per-run cast: every manifest the scenario references, with its chosen
+    # Modal model pinned via model_endpoint.  Non-destructive: model_copy, never mutate
+    # the cached registry instance.
     agents = []
     cast_names: list[str] = []
     for agent_name in base.cast:
         manifest = registry.agents.get(agent_name)
         if manifest is None:
             raise ValueError(f"scenario {base.name!r} references undefined agent {agent_name!r}")
-        manifest = manifest.model_copy(update=edits.get(agent_name, {}))
+        # The Judge's model comes from §04; every other mind from the cast picker.
+        chosen = judge_key if manifest.role == "judge" else selections.get(agent_name)
+        patch: dict = {}
+        if chosen and chosen in valid_keys:
+            patch["model_endpoint"] = chosen
+        manifest = manifest.model_copy(update=patch)
         agents.append(manifest.model_dump(mode="python"))
         cast_names.append(manifest.name)
 

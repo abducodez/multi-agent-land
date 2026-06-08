@@ -22,7 +22,14 @@ from pathlib import Path
 import yaml
 
 from src.agents.base import Agent, ManifestAgent
-from src.core.config import GovernorConfig, ModelsConfig, ScenarioConfig, validate_agent, validate_scenario
+from src.core.config import (
+    GovernorConfig,
+    ModelsConfig,
+    ScenarioConfig,
+    WorldConfig,
+    validate_agent,
+    validate_scenario,
+)
 from src.core.governor import Governor
 from src.core.manifest import AgentManifest
 from src.models.router import ModelRouter, ProfileSpec
@@ -155,6 +162,21 @@ class Registry:
             models = ModelsConfig.model_validate(raw_models)
 
         return cls(agents=agents, scenarios=scenarios, models=models)
+
+    @classmethod
+    def from_world(cls, world: WorldConfig) -> "Registry":
+        """Build an in-memory registry from a composed, validated :class:`WorldConfig`.
+
+        The in-memory mirror of :meth:`from_dir`: agents, scenarios, and model
+        bindings come straight off the world object instead of ``config/``.  So a
+        run composed by the Lab (or an LLM) flows through the exact same
+        ``build_scenario`` / ``build_router`` / ``governor_for`` path as a
+        config-file run — emit a world, validate it, run it.  See ADR-0011 / ADR-0022."""
+        return cls(
+            agents={a.name: a for a in world.agents},
+            scenarios={s.name: s for s in world.scenarios},
+            models=world.models,
+        )
 
     # ── building ───────────────────────────────────────────────────────────────
 
