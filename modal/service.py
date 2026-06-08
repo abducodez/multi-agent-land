@@ -66,6 +66,26 @@ REQUIRE_API_KEY = os.environ.get("MODAL_LLM_REQUIRE_AUTH", "").lower() in (
     "yes",
 )
 
+# Emit logs as structured JSON (one object per line) instead of vLLM's default
+# human-readable text. Opt in at deploy time (no code edits), mirroring the auth
+# toggle above:
+#   MODAL_LLM_JSON_LOGS=1 modal deploy modal/app_google.py
+# Off by default — the coloured text logs are nicer to watch live; turn this on
+# when shipping logs to an aggregator or grepping fields. Request-level logging
+# itself (the per-request detail) is always on via ModelConfig, independent of
+# the format chosen here.
+JSON_LOGS = os.environ.get("MODAL_LLM_JSON_LOGS", "").lower() in ("1", "true", "yes")
+
+# Verbosity for the served loggers (vLLM honours VLLM_LOGGING_LEVEL; the JSON
+# config applies the same level). Read at deploy time and baked into the image.
+LOG_LEVEL = os.environ.get("MODAL_LLM_LOG_LEVEL", "INFO").upper()
+
+# Where the structured-logging module + its generated config live in the
+# container. The module dir goes on PYTHONPATH so vLLM can import the formatter
+# the dictConfig references (``vllm_logging.JsonFormatter``).
+_LOG_MODULE_DIR = "/opt/mal_logging"
+_LOG_CONFIG_PATH = "/tmp/vllm_logging.json"
+
 # Weights and the vLLM compile cache are shared across every provider app, so a
 # model pulled once is warm for all subsequent deploys and containers.
 hf_cache_vol = modal.Volume.from_name("huggingface-cache", create_if_missing=True)
@@ -77,10 +97,8 @@ _BASE_ENV = {
     "HF_HUB_CACHE": HF_CACHE_PATH,
     "HF_XET_HIGH_PERFORMANCE": "1",  # faster weight downloads
     "VLLM_LOG_STATS_INTERVAL": "1",
-    # Pin the V1 engine — better scheduling, prefix caching, and chunked prefill
-    # than V0. Default in recent vLLM; set explicitly so the high-perf path is
-    # never silently lost on a version bump.
-    "VLLM_USE_V1": "1",
+    # Verbosity of vLLM's own loggers (throughput/cache stats, request logs).
+    "VLLM_LOGGING_LEVEL": LOG_LEVEL,
     # Persist torch.compile + CUDA-graph artifacts on the shared vLLM cache
     # Volume (mounted at VLLM_CACHE_PATH). The first container compiles; every
     # later cold start replays the cached graphs instead of recompiling, so we
@@ -105,6 +123,22 @@ def build_image(cfg: ModelConfig) -> modal.Image:
     else:
         image = image.uv_pip_install(f"vllm=={cfg.vllm_version or VLLM_VERSION}")
     image = image.env(_BASE_ENV)
+    if JSON_LOGS:
+        # Ship the stdlib JSON formatter and put it on PYTHONPATH so vLLM can
+        # import it when it applies the dictConfig. ``serve()`` writes the config
+        # file and points VLLM_LOGGING_CONFIG_PATH at it. Baking the toggle into
+        # the image env is what lets the (deploy-time) flag reach the container.
+        from pathlib import Path
+
+        image = (
+            image.add_local_file(
+                Path(__file__).with_name("vllm_logging.py"),
+                f"{_LOG_MODULE_DIR}/vllm_logging.py",
+                copy=True,
+            )
+            .env({"PYTHONPATH": _LOG_MODULE_DIR})
+            .env({"MODAL_LLM_JSON_LOGS": "1", "MODAL_LLM_LOG_LEVEL": LOG_LEVEL})
+        )
     if cfg.extra_pip:
         image = image.uv_pip_install(*cfg.extra_pip)
     if cfg.env:
@@ -151,6 +185,17 @@ def build_command(cfg: ModelConfig) -> list[str]:
         cmd += ["--max-num-seqs", str(cfg.max_num_seqs)]
     if cfg.max_num_batched_tokens:
         cmd += ["--max-num-batched-tokens", str(cfg.max_num_batched_tokens)]
+    # Observability: log each incoming request (id, params, token counts) so the
+    # Modal logs show what's actually being served. Bound the logged prompt length
+    # by default so a long context can't blow up the log line.
+    if cfg.log_requests:
+        cmd += ["--enable-log-requests"]
+    if cfg.log_outputs:
+        cmd += ["--enable-log-outputs"]
+    if cfg.max_log_len is not None:
+        cmd += ["--max-log-len", str(cfg.max_log_len)]
+    if not cfg.uvicorn_access_log:
+        cmd += ["--disable-uvicorn-access-log"]
     if cfg.reasoning_parser:
         cmd += ["--reasoning-parser", cfg.reasoning_parser]
     if cfg.enable_auto_tool_choice:
@@ -206,10 +251,21 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
     @modal.concurrent(max_inputs=cfg.max_concurrent_inputs, target_inputs=target_inputs)
     @modal.web_server(port=VLLM_PORT, startup_timeout=cfg.startup_timeout)
     def serve():
+        import os
         import subprocess
 
+        env = dict(os.environ)
+        # When structured logging is on, generate the dictConfig file and point
+        # vLLM at it. Done at container start (not build) so the level is picked
+        # up from the env without rebuilding the image.
+        if env.get("MODAL_LLM_JSON_LOGS", "").lower() in ("1", "true", "yes"):
+            import vllm_logging
+
+            vllm_logging.write_config(_LOG_CONFIG_PATH, level=env.get("MODAL_LLM_LOG_LEVEL", "INFO"))
+            env["VLLM_LOGGING_CONFIG_PATH"] = _LOG_CONFIG_PATH
+
         # vLLM serves the OpenAI REST API on VLLM_PORT; Modal exposes it publicly.
-        subprocess.Popen(cmd)
+        subprocess.Popen(cmd, env=env)
 
     return serve
 

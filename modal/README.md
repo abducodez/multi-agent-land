@@ -18,6 +18,8 @@ modal/
   app_nvidia.py     App "nvidia-llms"  — Nemotron 3 Nano 4B + 30B, Cascade 14B Thinking.
   app_openbmb.py    App "openbmb-llms" — MiniCPM4.1-8B + MiniCPM-o 4.5.
   app_google.py     App "google-llms"  — Gemma 4 12B + 26B.
+  vllm_logging.py   Dependency-free JSON log formatter shipped into the image
+                    when MODAL_LLM_JSON_LOGS=1 (structured logs via vLLM dictConfig).
   client.py         OpenAI-SDK smoke-test client for any endpoint.
   openapi.yaml      Checked-in OpenAPI 3.1 spec for the served API surface.
   pyproject.toml    uv workspace member (deploy/client tooling; non-package).

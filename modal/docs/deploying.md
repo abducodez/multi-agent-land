@@ -85,6 +85,10 @@ changes needed:
 | `async_scheduling`      | Overlap CPU request scheduling with GPU compute (on by default; off for the Transformers-backend Gemma + omni models). |
 | `enforce_eager`         | Skip CUDA-graph capture — faster cold start, lower steady-state throughput. |
 | `max_num_seqs` / `max_num_batched_tokens` | Batch-size and per-step token budget (memory vs. throughput). |
+| `log_requests`          | Log each request's id, sampling params, and token counts (on by default). |
+| `log_outputs`           | Also log generated text (verbose; off by default).            |
+| `max_log_len`           | Truncate logged prompts/outputs to N chars (`None` = no cap; default 2048). |
+| `uvicorn_access_log`    | Keep the per-request HTTP access line (method, path, status). |
 | `reasoning_parser` / `tool_call_parser` / `enable_auto_tool_choice` | OpenAI tool/reasoning features. |
 | `multimodal` / `mm_limits` | Image/audio/video inputs and per-prompt caps.               |
 | `trust_remote_code`     | Required by MiniCPM / Nemotron custom modeling code.           |
@@ -162,6 +166,47 @@ Auth Tokens (see `docs/modal-llms.txt` → Proxy Auth Tokens).
 
 See [`openapi.md`](openapi.md) for the full API reference and the checked-in
 OpenAPI spec (`../openapi.yaml`).
+
+## Observability & logging
+
+Every container's stdout/stderr is captured by Modal — watch it live with
+`modal app logs <app-name>` or in the dashboard. Two layers shape what you see:
+
+**Request-level detail (on by default).** Each endpoint runs vLLM with
+`--enable-log-requests`, so every call logs its request id, sampling params, and
+(on completion) prompt/generation token counts and finish reason. `--max-log-len`
+caps the logged prompt at 2048 chars so a long context can't bloat a log line.
+The uvicorn access log (method, path, status, latency) stays on. Tune per model:
+
+| Knob              | Effect                                                        |
+| ----------------- | ------------------------------------------------------------- |
+| `log_requests`    | Per-request id / params / token counts (default **on**).      |
+| `log_outputs`     | Also log the generated text — verbose, can echo story content (default off). |
+| `max_log_len`     | Truncate logged prompts/outputs; set `None` to log them in full. |
+| `uvicorn_access_log` | Set `False` to drop the per-request HTTP access line.      |
+
+Clients can pass an `X-Request-Id` header and it shows up in the request logs —
+handy for correlating an engine call with its server-side line.
+
+**Structured JSON (opt-in).** For grepping fields or shipping to an aggregator,
+emit one JSON object per log line instead of vLLM's coloured text. Turn it on at
+deploy time — no code edits:
+
+```bash
+MODAL_LLM_JSON_LOGS=1 modal deploy modal/app_nvidia.py
+MODAL_LLM_JSON_LOGS=1 MODAL_LLM_LOG_LEVEL=DEBUG modal deploy modal/app_google.py
+```
+
+This ships a dependency-free formatter (`modal/vllm_logging.py`) into the image
+and points vLLM's `VLLM_LOGGING_CONFIG_PATH` at a generated `dictConfig`, so
+**all** vLLM + uvicorn logs (including the request logs above) come out as JSON
+with `ts` / `level` / `logger` / `msg` / `src` plus any structured extras (request
+id, token counts). `MODAL_LLM_LOG_LEVEL` (default `INFO`) sets verbosity for both
+the text and JSON paths. Leave JSON off for live demos — the coloured text is
+easier to watch.
+
+Throughput, KV-cache usage, and prefix-cache hit rate are logged every second
+(`VLLM_LOG_STATS_INTERVAL`) and also exposed as Prometheus metrics at `/metrics`.
 
 ## GPU sizing cheatsheet
 

@@ -82,6 +82,13 @@ class ModelConfig:
     max_num_seqs: int | None = None  # cap sequences batched per step (memory vs. throughput)
     max_num_batched_tokens: int | None = None  # token budget per scheduler step (prefill throughput)
 
+    # Observability / request logging (vLLM serve flags). Defaults give per-request
+    # visibility in the container logs out of the box; see ``service.build_command``.
+    log_requests: bool = True  # log each request's id, sampling params, and token counts
+    log_outputs: bool = False  # also log generated text (verbose; can echo story content) — opt-in
+    max_log_len: int | None = 2048  # truncate logged prompts/outputs to N chars (None = no cap)
+    uvicorn_access_log: bool = True  # keep uvicorn's per-request HTTP access line (method, path, status)
+
     # OpenAI feature parsers (vLLM names; leave None if unsupported on the model)
     reasoning_parser: str | None = None
     tool_call_parser: str | None = None
@@ -238,6 +245,12 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         # Prefix caching still applies and stays on (the default).
         enforce_eager=True,
         async_scheduling=False,
+        # Text-only in the cast (vision/audio is the MiniCPM-o specialist's job).
+        # vLLM auto-detects gemma4_unified as multimodal and otherwise spends a big
+        # slice of cold-start profiling a *video* encoder we never call (and the MM
+        # warmup fails anyway). Zeroing the per-prompt MM limits disables that whole
+        # path — faster start, less GPU memory, more KV cache.
+        mm_limits={"image": 0, "audio": 0, "video": 0},
         # gemma4_unified uses *variable* head dims (256 on sliding-attention layers,
         # 512 on full-attention ones). vLLM <= 0.22.1 (incl. the pinned 0.21.0) sizes
         # the o_proj from a uniform head_dim and dies on the full-attention layers
@@ -266,6 +279,9 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         # CUDA graphs / async scheduler. Prefix caching stays on by default.
         enforce_eager=True,
         async_scheduling=False,
+        # Text-only in the cast — disable the auto-detected multimodal (video)
+        # encoder to cut cold-start profiling and free memory (see the 12B above).
+        mm_limits={"image": 0, "audio": 0, "video": 0},
         # Same gemma4_unified fix as the 12B above (nightly vLLM + transformers
         # >= 5.10.2 + FlashInfer sampler off).
         vllm_version="nightly",
