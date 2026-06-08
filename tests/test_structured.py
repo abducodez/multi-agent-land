@@ -174,6 +174,20 @@ class TestCleanClue:
         assert "TEA" not in clue.upper()
         assert clue == "A pale gold warmth fills the cup."
 
+    def test_first_person_opener_survives_when_it_is_all_there_is(self):
+        # The spy-bex failure: an over-thinker's whole line is a first-person opener. Soft
+        # meta alone must be PROMOTED to the clue, not stripped to nothing (no usable line).
+        clue, _ = clean_clue("I think mine is something rooted, tall, and still.")
+        assert clue == "I think mine is something rooted, tall, and still."
+        assert is_usable_line(clue)
+
+    def test_first_person_opener_yields_to_real_speech(self):
+        # When a plain clue survives alongside the first-person preamble, the preamble drops
+        # to residue and the clean spoken line wins.
+        clue, residue = clean_clue("I think mine is the odd one. A pale gold warmth fills the cup.")
+        assert clue == "A pale gold warmth fills the cup."
+        assert "I think" in residue
+
 
 class TestIsUsableLine:
     def test_rejects_empty_placeholder_and_example(self):

@@ -257,13 +257,22 @@ def _salvage_text(cleaned: str) -> dict[str, str]:
     return {"text": "…"}
 
 
-# Meta-commentary / instruction-echo / reasoning-preamble a weak model leaks when asked
-# for JSON: drop any sentence matching this so the model's scratchpad never becomes the
-# spoken line ("Alright, the user wants me to play as CARA…", "Looking at the clues…").
-_META = re.compile(
-    r"secret word|the word is|my word|need to|have to|also include|must (?:be|include|output|name|provide)|"
+# HARD meta — a secret-word leak or an echo of the JSON/format instruction.  These must
+# NEVER become the spoken line; they always go to the (private) residue, even when nothing
+# else survives (better to skip the turn than ship the secret or the schema).
+_HARD_META = re.compile(
+    r"secret word|the word is|my word|also include|must (?:include|output|name|provide)|"
     r"\bjson\b|\bschema\b|\bmood\b|\bthought\b|one or two sentence|vivid and specific|"
-    r"\bagent\.\w+|brief,? evocative|output format|\bfield\b|"
+    r"\bagent\.\w+|brief,? evocative|output format|\bfield\b",
+    re.IGNORECASE,
+)
+# SOFT meta — a scratchpad/planning preamble or a first-person opener ("Alright, the user
+# wants me to play as CARA…", "Let me… I should…", "I think mine is…").  Dropped to residue
+# when real speech survives alongside it, but PROMOTED to the spoken line when it is all the
+# model gave: on the prose fallback an over-thinker's "I think mine is…" is in-character
+# speech, not reasoning, so shipping it beats raising "no usable line" and skipping the turn.
+_SOFT_META = re.compile(
+    r"need to|have to|must be\b|"
     r"\balright\b|\bokay\b|the user\b|looking at|let me\b|my clue\b|play as\b|"
     r"\bas (?:cara|bex|nil|ovo)\b|i (?:should|need|must|will|think|'ll|'m|am)\b|the (?:scenario|game|prompt)\b",
     re.IGNORECASE,
@@ -274,9 +283,15 @@ _CAPS_TOKEN = re.compile(r"\b[A-Z]{3,}\b")
 _EXAMPLE_ECHO = "a brief, evocative response"
 
 
+def _is_hard_meta(sentence: str) -> bool:
+    """True if *sentence* leaks the secret (caps token) or echoes the format instruction —
+    never a spoken line, no matter what."""
+    return bool(_HARD_META.search(sentence)) or bool(_CAPS_TOKEN.search(sentence))
+
+
 def _is_meta(sentence: str) -> bool:
-    """True if *sentence* is scratchpad/meta or names a secret word in caps."""
-    return bool(_META.search(sentence)) or bool(_CAPS_TOKEN.search(sentence))
+    """True if *sentence* is hard meta or a soft scratchpad/planning preamble."""
+    return _is_hard_meta(sentence) or bool(_SOFT_META.search(sentence))
 
 
 def clean_clue(raw: str) -> tuple[str, str]:
@@ -304,11 +319,26 @@ def clean_clue(raw: str) -> tuple[str, str]:
             cleaned = tail
 
     kept: list[str] = []
+    soft: list[str] = []
     for s in _SENTENCE_SPLIT.split(cleaned):
         sentence = s.strip()
         if len(sentence) < 6 or sentence.startswith("{"):
             continue
-        (residue if _is_meta(sentence) else kept).append(sentence.strip(" \"'"))
+        clean_sentence = sentence.strip(" \"'")
+        if _is_hard_meta(sentence):
+            residue.append(clean_sentence)
+        elif _SOFT_META.search(sentence):
+            soft.append(clean_sentence)
+        else:
+            kept.append(clean_sentence)
+
+    # Soft meta rides as private residue when real speech survives — but when it's all the
+    # model gave, it IS the line: a "thinking out loud" opener still passed every hard guard
+    # (no secret word, no schema echo), so shipping it beats skipping the turn.
+    if kept:
+        residue.extend(soft)
+    else:
+        kept = soft
 
     return " ".join(kept)[:300].strip(), " ".join(p for p in residue if p)[:600].strip()
 
