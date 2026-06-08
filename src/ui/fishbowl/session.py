@@ -58,6 +58,11 @@ class FishbowlSession:
     def step(self, n_ticks: int = 1) -> None:
         self.conductor.step(n_ticks)
 
+    def step_one(self) -> bool:
+        """Advance a single agent (streaming): one event per call so the Show reveals
+        each mind the moment it responds, not after the whole turn finishes."""
+        return self.conductor.step_one()
+
     def inject(self, text: str, label: str | None = None) -> None:
         self.conductor.inject_user_event(text, label=label)
         self.conductor.step()

@@ -15,6 +15,26 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# ── model-failure sentinel ──────────────────────────────────────────────────────
+#
+# ``complete()`` returns ``str`` by contract, so a failed call (a flaky connection, a
+# 5xx, a bad key) can't surface as an exception here — it comes back wearing this prefix
+# instead.  Agents detect it with :func:`is_model_error` and raise, so the conductor's
+# resilient loop skips that turn and records it in ``agent_errors`` rather than speaking
+# the raw error on stage (ADR-0023).
+MODEL_ERROR_PREFIX = "[model error:"
+
+
+def model_error(exc: object) -> str:
+    """Format a failed model call as the recognizable failure sentinel."""
+    return f"{MODEL_ERROR_PREFIX} {exc}]"
+
+
+def is_model_error(text: str) -> bool:
+    """True when *text* is the failure sentinel a provider returns instead of a line."""
+    return (text or "").lstrip().startswith(MODEL_ERROR_PREFIX)
+
+
 class ModelProvider:
     def complete(self, role: str, prompt: str) -> str:
         raise NotImplementedError

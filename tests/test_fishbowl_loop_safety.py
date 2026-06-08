@@ -125,6 +125,20 @@ def test_advance_counts_only_generating_ticks() -> None:
     assert ticks2 == 6
 
 
+def test_autoplay_streams_one_agent_per_advance() -> None:
+    # Each generating advance reveals exactly ONE new event, so the UI shows each mind
+    # the moment it responds rather than after the whole turn (the streaming request).
+    session = _session_with_governor(Governor(max_total_calls=10_000, max_turns=10_000))
+    k = session.head
+    for _ in range(6):
+        before = session.head
+        k, _ticks, stop = advance_one_tick(session, k, 0)
+        if stop:
+            break
+        assert session.head - before <= 1  # never more than one event per advance
+        assert k == session.head  # the play-head tracks the freshly streamed event
+
+
 # ── the STOPPED banner + LIVE/OFFLINE topbar ─────────────────────────────────────
 
 

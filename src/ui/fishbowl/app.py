@@ -191,6 +191,9 @@ except Exception:  # pragma: no cover - fallback session keeps the shell live
         def step(self) -> None:
             self.conductor.step()
 
+        def step_one(self) -> bool:
+            return self.conductor.step_one()
+
         def inject(self, text: str, *, label: str | None = None) -> None:
             if text and text.strip():
                 self.conductor.inject_user_event(text.strip(), label=label)
@@ -336,7 +339,7 @@ def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max
     if ticks >= max_auto_ticks:
         return k, ticks, f"autoplay tick cap {max_auto_ticks} reached"
     try:
-        session.step()  # at the head → generate
+        session.step_one()  # at the head → generate ONE agent (stream it, don't wait for the turn)
     except BudgetExceeded as exc:
         return session.head, ticks, (getattr(exc, "reason", None) or str(exc))
     return session.head, ticks + 1, None
@@ -686,7 +689,7 @@ def _wire(
             out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
             return (0, *_pad_values(out, show_outs), *_run_tail())
         try:
-            session.step()
+            session.step_one()  # ⏭ advances one agent so each utterance shows on its own
         except BudgetExceeded as exc:
             reason = getattr(exc, "reason", None) or str(exc)
             panes = _stopped_panes(session, session.head, layout=layout, mind_reader=mind_reader, reason=reason)

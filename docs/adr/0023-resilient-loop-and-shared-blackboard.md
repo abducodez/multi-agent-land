@@ -155,6 +155,44 @@ Decisions:
    after four full rounds (`tick_every: 4`), and that verdict ending the show is by
    design (`has_verdict()` halts autoplay).
 
+## Follow-up: stream one agent at a time
+
+`step()` runs a whole turn (every scheduled agent) before returning, so the Show only
+updated once the last mind had spoken — a ~40s blank wait per turn on the live path.
+`Conductor.step_one()` is the streaming counterpart: it drains a per-turn ``_pending``
+queue one actor at a time (opening a new turn — incrementing ``turn``, checking the
+governor, queuing this turn's subscription + tick actors — only when the queue empties,
+and absorbing triggered subscribers into the same turn so cascades still resolve). The
+Fishbowl autoplay and the ⏭ button now call `step_one`, so each agent appears the moment
+it responds. The loop-safety backstops are unchanged (the counter still increments per
+generating advance; the head grows by at most one). `step()` keeps the
+turn-at-a-time semantics for tests, cron, and resume.
+
+## Follow-up: truncated reasoning, model-error sentinels, and no echoing
+
+A later live run surfaced three more leaks/quality issues, each fixed at its layer:
+
+- **Unterminated reasoning.** A reasoning model truncated mid-think emits
+  `<think>Alright, the user wants me to play as CARA… Since COFFEE is common, I shou` with
+  no closing tag — the old stripper only removed *closed* `<think>…</think>`. `_strip_reasoning`
+  now also drops everything from an unterminated open tag to the end, and `extract_reasoning`
+  captures that tail as the (private) thought. So the truncated monologue — and the secret it
+  names — never becomes the line; the turn is skipped.
+- **Generic secret-word guard.** Beyond `<think>`, a model sometimes names the word in bare
+  prose ("Since COFFEE is common…"). `clean_clue` now drops any sentence containing a
+  standalone ALL-CAPS token (`_CAPS_TOKEN`, ≥3 letters) — personas write secrets as
+  COFFEE / TEA / TREE and a slip echoes them in caps, where a clue never would — plus broader
+  reasoning-preamble patterns (Alright / the user / Looking at / play as / I should…).
+- **Model-error sentinels.** `complete()` returns `"[model error: …]"` (it can't raise — it
+  returns `str`) on a transient connection drop. `is_model_error` / `_guard_model_error` turn
+  that back into an `AgentOutputError` so the resilient loop skips the turn instead of speaking
+  the raw connection error as a clue or verdict.
+- **No echoing (conversation flow).** Small models ignore "never repeat" and looped a single
+  line verbatim across the whole cast. `ManifestAgent._is_repeat` skips a spoken line that
+  near-duplicates (token-set Jaccard ≥ 0.8) a recent one on the ledger, and the blackboard nudge
+  now demands a genuinely new angle. **Live only** — the offline stub's curated catalogue is
+  reproducible by design, and de-duplicating its small line set would starve demos and tests.
+
 ## References
 
 - `src/core/context.py` — `ContextBuilder._blackboard_block`

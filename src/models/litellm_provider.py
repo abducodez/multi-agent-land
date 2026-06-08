@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from src.models.openai_compat import OpenAICompatProvider
-from src.models.provider import ModelProvider
+from src.models.provider import ModelProvider, model_error
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -60,6 +60,10 @@ class LiteLLMProvider(ModelProvider):
     max_tokens: int = 256
     max_retries: int = 2
     """Validation retries for :meth:`complete_structured` (live structured output)."""
+    num_retries: int = 2
+    """Transport retries LiteLLM makes on a transient call failure — a dropped
+    connection, a timeout, a 5xx.  Lets a flaky endpoint self-heal mid-demo before the
+    call gives up and returns the failure sentinel."""
     _last_usage: dict = field(default_factory=dict, init=False, repr=False)
     _last_cost: float = field(default=0.0, init=False, repr=False)
     _last_reasoning: str = field(default="", init=False, repr=False)
@@ -74,13 +78,14 @@ class LiteLLMProvider(ModelProvider):
                 messages=self._messages(role, prompt),
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
+                num_retries=self.num_retries,
             )
             text = (response.choices[0].message.content or "").strip()
             self._capture_usage(litellm, response, prompt, text)
             return text
         except Exception as exc:
             self._zero_usage()
-            return f"[model error: {exc}]"
+            return model_error(exc)
 
     def complete_structured(
         self,
@@ -119,6 +124,7 @@ class LiteLLMProvider(ModelProvider):
                 messages=self._messages(role, prompt),
                 response_model=response_model,
                 max_retries=self.max_retries,
+                num_retries=self.num_retries,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )

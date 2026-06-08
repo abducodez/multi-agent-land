@@ -19,6 +19,7 @@ decide whether manifest-based routing applies.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,7 @@ from src.core.structured import (
     json_instruction,
     parse_agent_output,
 )
+from src.models.provider import is_model_error
 from src.models.router import ModelRouter
 
 if TYPE_CHECKING:
@@ -56,6 +58,12 @@ _PROSE_FALLBACK = (
     "No JSON, no labels, no analysis, no quotation marks. "
     "Never name or spell the secret word you were given; only describe it."
 )
+
+# Spoken kinds we de-duplicate so the cast advances the conversation instead of echoing
+# the same line (small models ignore "never repeat"; this enforces it).  Verdicts and
+# world/reflection events are excluded — they are not table chatter.
+_SPEECH_KINDS = frozenset({"agent.spoke", "oracle.spoke", "agent.thought"})
+_WORD = re.compile(r"[a-z0-9']+")
 
 
 # ── minimal interface ─────────────────────────────────────────────────────────
@@ -143,6 +151,17 @@ class ManifestAgent(Agent):
 
         parsed = self._resolve_payload(self.manifest.name, base_prompt, allowed, extra_fields)
 
+        # Don't echo the table: if this line near-duplicates a recent spoken one, skip
+        # the turn (the conductor records it and moves on) so the conversation advances.
+        # Live only — the offline stub's curated catalogue is reproducible by design, and
+        # de-duplicating its small set of lines would starve demos and tests of events.
+        if (
+            not getattr(self.router, "offline", False)
+            and parsed.get("kind") in _SPEECH_KINDS
+            and self._is_repeat(parsed.get("text", ""), recent_events)
+        ):
+            raise AgentOutputError(f"{self.manifest.name}: repeated a recent line — skipped to keep it moving")
+
         return Event(
             run_id=run_id,
             turn=turn,
@@ -150,6 +169,23 @@ class ManifestAgent(Agent):
             actor=self.manifest.name,
             payload={k: v for k, v in parsed.items() if k != "kind"},
         )
+
+    @staticmethod
+    def _is_repeat(text: str, recent_events: tuple[Event, ...], *, look_back: int = 12, threshold: float = 0.8) -> bool:
+        """True when *text* echoes a recent spoken line — exact (token set) or high overlap.
+
+        Enforces the "say something new" rule small models ignore: peers' and the agent's
+        own recent lines are compared by token-set Jaccard, so a verbatim or near-verbatim
+        repeat is caught and skipped, keeping the conversation moving instead of looping."""
+        tokens = set(_WORD.findall((text or "").lower()))
+        if not tokens:
+            return False
+        spoken = [e for e in recent_events if e.kind in _SPEECH_KINDS][-look_back:]
+        for event in spoken:
+            prior = set(_WORD.findall(str(event.payload.get("text", "")).lower()))
+            if prior and len(tokens & prior) / len(tokens | prior) >= threshold:
+                return True
+        return False
 
     def _build_extra_prompt(
         self,
@@ -209,13 +245,26 @@ class ManifestAgent(Agent):
         instruction = json_instruction(allowed, extra_fields=extra_fields)
         raw = provider.complete(role, f"{prompt}\n{instruction}")
         self.last_usage = dict(provider.last_usage)
+        self._guard_model_error(role, raw)
         parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
         return self._with_reasoning(parsed, provider, raw, wants_thought)
+
+    def _guard_model_error(self, role: str, raw: str) -> None:
+        """Raise when *raw* is a provider failure sentinel, not a spoken line.
+
+        ``complete()`` returns the ``[model error: …]`` sentinel instead of raising when
+        a model call fails (a transient connection drop, a 5xx).  Turning it back into an
+        exception here hands the failure to the conductor's resilient loop, which skips
+        this agent's turn and records it in ``agent_errors`` — so the error never reaches
+        the stage as the agent's line (ADR-0023)."""
+        if is_model_error(raw):
+            raise AgentOutputError(f"{getattr(self, 'name', role)}: model call failed — {raw}")
 
     def _prose_fallback(self, role, prompt, allowed, wants_thought, provider) -> dict:
         """Re-prompt for a plain spoken line and clean it; skip the turn if it's junk."""
         raw = provider.complete(role, prompt + _PROSE_FALLBACK)
         self.last_usage = dict(provider.last_usage)
+        self._guard_model_error(role, raw)
         clue, residue = clean_clue(raw)
         if not is_usable_line(clue):
             raise AgentOutputError(f"{getattr(self, 'name', role)}: no usable line from prose fallback")
@@ -249,6 +298,7 @@ class ManifestAgent(Agent):
         provider = self.router.for_profile(self._route_key)
         raw = provider.complete(role, prompt)
         self.last_usage = dict(provider.last_usage)
+        self._guard_model_error(role, raw)
         return raw
 
     # ── memory ──────────────────────────────────────────────────────────────

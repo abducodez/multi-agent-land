@@ -184,3 +184,44 @@ class TestConductorResilience:
         c.reset("seed")
         with pytest.raises(BudgetExceeded):
             c.step()
+
+
+class TestConductorStepOne:
+    """``step_one`` streams a single agent per call so the UI shows each mind as it
+    responds, while preserving turn semantics and per-agent error isolation."""
+
+    def test_one_event_per_call_with_turn_rollover(self):
+        scenario = Scenario(name="s", default_seed="seed", agents=(_SpeakingAgent(), _SpeakingAgent()))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")
+        base = len(c.ledger.events)
+
+        c.step_one()  # turn 1, first actor
+        assert len(c.ledger.events) == base + 1
+        assert c.turn == 1
+        c.step_one()  # turn 1, second actor — still the same turn
+        assert len(c.ledger.events) == base + 2
+        assert c.turn == 1
+        c.step_one()  # queue drained → a NEW turn opens
+        assert len(c.ledger.events) == base + 3
+        assert c.turn == 2
+
+    def test_step_one_isolates_a_failing_agent(self):
+        # boom is first: its failed call produces no event but must not block the speaker.
+        scenario = Scenario(name="s", default_seed="seed", agents=(_ExplodingAgent(), _SpeakingAgent()))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")
+        base = len(c.ledger.events)
+
+        c.step_one()  # pops boom → raises internally → recorded, no event appended
+        assert len(c.ledger.events) == base
+        assert c.agent_errors and c.agent_errors[-1]["agent"] == "boom"
+        c.step_one()  # pops the speaker → one real event
+        assert len(c.ledger.events) == base + 1
+        assert c.ledger.events[-1].actor == "speaker"
+
+    def test_step_one_performs_genesis_on_empty_ledger(self):
+        c = _conductor()
+        assert c.step_one() is True
+        kinds = {e.kind for e in c.ledger.events}
+        assert "run.started" in kinds and "world.observed" in kinds

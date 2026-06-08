@@ -18,7 +18,8 @@ def test_blackboard_surfaces_peer_lines():
     assert "WHAT'S BEEN SAID" in prompt
     assert "a morning fuel" in prompt
     assert "warm and comforting" in prompt
-    assert "never repeat" in prompt.lower()
+    # nudges toward a fresh contribution, not an echo
+    assert "new angle" in prompt.lower() and "echo" in prompt.lower()
 
 
 def test_blackboard_prompts_the_first_speaker_to_open():

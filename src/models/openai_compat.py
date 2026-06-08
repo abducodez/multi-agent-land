@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from src.models.provider import ModelProvider
+from src.models.provider import ModelProvider, model_error
 
 
 def _default_compat_model() -> str:
@@ -96,7 +96,7 @@ class OpenAICompatProvider(ModelProvider):
             return text
         except Exception as exc:
             self._last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-            return f"[model error: {exc}]"
+            return model_error(exc)
 
     @staticmethod
     def _system_for_role(role: str) -> str:

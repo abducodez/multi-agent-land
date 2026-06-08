@@ -160,6 +160,20 @@ class TestCleanClue:
         assert clue == "A warm cup soothes the morning."
         assert "spy" in residue
 
+    def test_unterminated_think_yields_no_clue_but_keeps_thought(self):
+        # Verbatim live shape: truncated mid-think, no closing tag, and it names the word.
+        raw = "<think>Alright, the user wants me to play as CARA. Since COFFEE is common, I shou"
+        clue, residue = clean_clue(raw)
+        assert clue == ""  # all reasoning, no answer → caller skips the turn
+        assert "COFFEE" not in clue.upper()
+        assert "COFFEE" in residue.upper()  # preserved as the (private) mind-reader thought
+
+    def test_all_caps_token_sentence_is_dropped(self):
+        # A generic secret-word guard: a sentence with an ALL-CAPS token is never the clue.
+        clue, _ = clean_clue("It pairs with TEA at dawn. A pale gold warmth fills the cup.")
+        assert "TEA" not in clue.upper()
+        assert clue == "A pale gold warmth fills the cup."
+
 
 class TestIsUsableLine:
     def test_rejects_empty_placeholder_and_example(self):

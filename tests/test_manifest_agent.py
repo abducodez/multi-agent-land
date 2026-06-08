@@ -183,3 +183,96 @@ class TestProseFallback:
             agent._prose_fallback(
                 "r", "P", ["agent.spoke"], False, _FakeProvider("Secret word is COFFEE. Need to output JSON.")
             )
+
+
+class _FailingRouter:
+    """Routes every profile to a provider whose call failed — it returns the
+    ``[model error: …]`` sentinel instead of a line, as a live provider does on a
+    transient connection drop."""
+
+    def __init__(self, exc: object) -> None:
+        from src.models.provider import model_error
+
+        self._provider = _FakeProvider(model_error(exc))
+
+    def for_profile(self, key: str):
+        return self._provider
+
+
+class TestModelErrorIsNeverSpoken:
+    """A failed model call must never reach the stage as the agent's line. ``complete()``
+    returns the failure sentinel (it can't raise — it returns ``str``); the agent turns it
+    back into an :class:`AgentOutputError` so the conductor's resilient loop skips the turn
+    and records it, rather than speaking the raw connection error (ADR-0023)."""
+
+    _CONN_ERR = "litellm.InternalServerError: InternalServerError: OpenAIException - Connection error."
+
+    def test_prose_fallback_raises_on_model_error(self):
+        from src.models.provider import model_error
+
+        agent = _Seedkeeper(_router())
+        with pytest.raises(AgentOutputError) as exc:
+            agent._prose_fallback(
+                "scene-whisperer", "P", ["world.observed"], False, _FakeProvider(model_error(self._CONN_ERR))
+            )
+        assert "model call failed" in str(exc.value)
+
+    def test_act_raises_so_the_loop_skips_the_turn(self):
+        # End-to-end through act(): the routed provider's call failed, so the agent raises
+        # rather than emitting an event whose text is the connection error.
+        agent = _Seedkeeper(_FailingRouter(self._CONN_ERR))
+        with pytest.raises(AgentOutputError):
+            agent.act("r", 1, StageProjection(seed="moss"), _events("run.started"))
+
+
+class TestRepeatGuard:
+    """Conversation flow: a near-duplicate spoken line is skipped so the cast advances
+    instead of echoing each other (the verbatim-repeat loop seen live)."""
+
+    @staticmethod
+    def _spoken(*texts: str) -> tuple[Event, ...]:
+        return tuple(
+            Event(run_id="r", turn=i, kind="agent.spoke", actor="a", payload={"text": t})
+            for i, t in enumerate(texts, start=1)
+        )
+
+    def test_exact_repeat_is_caught(self):
+        line = "The scent lingers long after brewing, almost like a memory."
+        assert ManifestAgent._is_repeat(line, self._spoken(line))
+
+    def test_a_distinct_line_passes(self):
+        recent = self._spoken("The scent lingers long after brewing, almost like a memory.")
+        assert not ManifestAgent._is_repeat("A bitter jolt that wakes the whole house at dawn.", recent)
+
+    def test_only_spoken_kinds_are_compared(self):
+        # A look-alike verdict in history must not block a fresh clue (different kind).
+        recent = (Event(run_id="r", turn=1, kind="judge.verdict", actor="host", payload={"text": "A warm cup."}),)
+        assert not ManifestAgent._is_repeat("A warm cup.", recent)
+
+    def test_act_skips_a_live_repeat_but_offline_keeps_it(self):
+        # The guard is live-only: through act() a LIVE router skips a verbatim repeat,
+        # while the offline stub (reproducible, curated) keeps emitting.
+        class _Prov:
+            last_usage = {"total_tokens": 1}
+            last_reasoning = ""
+
+            def complete(self, role, prompt):
+                return "A warm cup soothes the morning."
+
+        class _LiveRouter:
+            offline = False
+
+            def for_profile(self, key):
+                return _Prov()
+
+        class _A(ManifestAgent):
+            manifest = AgentManifest(
+                name="a", persona="p", may_emit=["agent.spoke"], schedule=ScheduleConfig(tick_every=1)
+            )
+
+        prior = self._spoken("A warm cup soothes the morning.")
+        with pytest.raises(AgentOutputError):
+            _A(_LiveRouter()).act("r", 2, StageProjection(), prior)
+        # Same repeat, but offline → emitted, never skipped (keeps demos/tests reproducible).
+        ev = _A(_router()).act("r", 2, StageProjection(), prior)
+        assert ev.kind == "agent.spoke"

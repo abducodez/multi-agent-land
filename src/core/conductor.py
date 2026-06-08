@@ -69,6 +69,10 @@ class Conductor:
         self.run_id = str(uuid4())
         self.turn = 0
         self._trigger_queue: deque[tuple["Agent", Event]] = deque()
+        # Actors still to act in the CURRENT turn — the queue ``step_one`` drains one
+        # at a time so the UI can show each agent the moment it responds, instead of
+        # waiting for the whole turn (ADR-0023).  ``step()`` does not use it.
+        self._pending: deque["Agent"] = deque()
         # Agents that failed to act this run, newest last — a single agent's crash
         # is isolated (the rest of the cast still acts) and recorded here for the UI
         # and tests, never swallowed silently (ADR-0023).
@@ -87,6 +91,7 @@ class Conductor:
         if self.observer:
             self.observer.reset()
         self._trigger_queue.clear()
+        self._pending.clear()
         self.agent_errors.clear()
         self.run_id = str(uuid4())
         self.turn = 0
@@ -130,6 +135,44 @@ class Conductor:
                 continue
             self._tick()
             self._maybe_snapshot()
+
+    def step_one(self) -> bool:
+        """Advance exactly ONE actor, opening a new turn when the queue is empty.
+
+        This is the streaming counterpart to :meth:`step`: ``step`` runs a whole turn
+        (every scheduled agent) before returning, so the UI only sees the result once
+        the last mind has spoken; ``step_one`` produces a single event per call, so each
+        agent appears the moment it responds.  Turn semantics are preserved — a new turn
+        opens (incrementing ``turn``, checking the governor, queuing this turn's
+        subscription + tick actors) only when the previous turn's queue drains, and
+        subscribers an agent triggers are absorbed into the same turn (mirroring the
+        ``_tick`` drain loop).
+
+        Returns True when it produced an event (or performed genesis), False when the
+        opened turn had no actors.  May raise :class:`BudgetExceeded` like ``step``."""
+        if not self.ledger.events:
+            self.reset(self.scenario.default_seed)
+            return True
+
+        if not self._pending:
+            self.turn += 1
+            self.governor.begin_turn(self.turn)
+            self.governor.check(self.turn)
+            self._pending.extend(agent for agent, _ in self._trigger_queue)
+            self._trigger_queue.clear()
+            self._pending.extend(self._tick_scheduled_agents())
+            if not self._pending:
+                return False
+
+        agent = self._pending.popleft()
+        self._run_agent(agent, self.projection)
+        # Absorb subscribers this agent's event just triggered into the current turn,
+        # so a subscription cascade still resolves within the turn (as in ``_tick``).
+        while self._trigger_queue:
+            triggered, _ = self._trigger_queue.popleft()
+            self._pending.append(triggered)
+        self._maybe_snapshot()
+        return True
 
     def inject_user_event(self, text: str, label: str | None = None) -> None:
         self.turn += 1

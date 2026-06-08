@@ -79,5 +79,6 @@ class ContextBuilder:
         return (
             "WHAT'S BEEN SAID (the table so far — react to it)\n"
             f"{lines}\n"
-            "Add a NEW line that moves things forward — never repeat one already said.\n\n"
+            "Do NOT echo or rephrase any line above. Add a GENUINELY NEW angle — a different "
+            "sense, detail, or suspicion — that moves the conversation forward.\n\n"
         )

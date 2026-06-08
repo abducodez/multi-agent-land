@@ -27,6 +27,8 @@ import json
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
+from src.models.provider import is_model_error
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -115,6 +117,12 @@ _REASONING_BLOCK = re.compile(
     r"<\s*(think|thinking|reason|reasoning|analysis|scratchpad|monologue)\s*>(.*?)<\s*/\s*\1\s*>",
     re.DOTALL | re.IGNORECASE,
 )
+# An UNTERMINATED reasoning block — the model was truncated mid-think (no closing tag),
+# so everything from the open tag onward is reasoning, not the answer.
+_REASONING_OPEN = re.compile(
+    r"<\s*(?:think|thinking|reason|reasoning|analysis|scratchpad|monologue)\s*>",
+    re.IGNORECASE,
+)
 _CODE_FENCE = re.compile(r"```[a-zA-Z]*\n?|\n?```")
 # Sentences/lines that are obviously scratchpad or meta-commentary about the task —
 # used only when salvaging a fallback line, so a "thinking out loud" model's notes
@@ -131,21 +139,34 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
 def _strip_reasoning(raw: str) -> str:
-    """Remove tagged reasoning blocks and code fences from *raw*."""
+    """Remove reasoning blocks and code fences from *raw*.
+
+    Strips closed ``<think>…</think>`` blocks, then — if an UNTERMINATED reasoning
+    block remains (truncated mid-think) — drops everything from that open tag to the
+    end, since none of it is the answer."""
     raw = _REASONING_BLOCK.sub(" ", raw or "")
     raw = _CODE_FENCE.sub("", raw)
+    open_tag = _REASONING_OPEN.search(raw)
+    if open_tag:
+        raw = raw[: open_tag.start()]
     return raw.strip()
 
 
 def extract_reasoning(raw: str, limit: int = 600) -> str:
-    """Return inline ``<think>…</think>`` reasoning from *raw* (joined, trimmed).
+    """Return the model's inline reasoning from *raw* (joined, trimmed).
 
-    Empty when the model emitted no tagged reasoning — e.g. when vLLM already split
-    it into ``reasoning_content`` (the provider captures that separately). Used to
-    populate the mind-reader ``thought``; never fed back into any agent's prompt."""
-    blocks = [m.group(2).strip() for m in _REASONING_BLOCK.finditer(raw or "")]
-    joined = " ".join(b for b in blocks if b)
-    return joined[:limit].strip()
+    Captures both closed ``<think>…</think>`` blocks and an UNTERMINATED one (the
+    truncated-mid-think case), so the mind-reader ``thought`` still has the thinking
+    even when the answer never arrived.  Empty when there are no reasoning tags — e.g.
+    when vLLM split it into ``reasoning_content`` (captured separately by the provider).
+    Never fed back into any agent's prompt."""
+    raw = raw or ""
+    parts = [m.group(2).strip() for m in _REASONING_BLOCK.finditer(raw)]
+    remainder = _REASONING_BLOCK.sub(" ", raw)
+    open_tag = _REASONING_OPEN.search(remainder)
+    if open_tag:
+        parts.append(remainder[open_tag.end() :].strip())
+    return " ".join(p for p in parts if p)[:limit].strip()
 
 
 def _balanced_objects(text: str) -> list[str]:
@@ -236,16 +257,26 @@ def _salvage_text(cleaned: str) -> dict[str, str]:
     return {"text": "…"}
 
 
-# Meta-commentary / instruction-echo a weak model leaks when asked for JSON: drop any
-# sentence matching this so the model's scratchpad — or the secret word it names while
-# reasoning ("Secret word is COFFEE…") — never becomes the spoken line.
+# Meta-commentary / instruction-echo / reasoning-preamble a weak model leaks when asked
+# for JSON: drop any sentence matching this so the model's scratchpad never becomes the
+# spoken line ("Alright, the user wants me to play as CARA…", "Looking at the clues…").
 _META = re.compile(
     r"secret word|the word is|my word|need to|have to|also include|must (?:be|include|output|name|provide)|"
     r"\bjson\b|\bschema\b|\bmood\b|\bthought\b|one or two sentence|vivid and specific|"
-    r"\bagent\.\w+|brief,? evocative|output format|\bfield\b",
+    r"\bagent\.\w+|brief,? evocative|output format|\bfield\b|"
+    r"\balright\b|\bokay\b|the user\b|looking at|let me\b|my clue\b|play as\b|"
+    r"\bas (?:cara|bex|nil|ovo)\b|i (?:should|need|must|will|think|'ll|'m|am)\b|the (?:scenario|game|prompt)\b",
     re.IGNORECASE,
 )
+# A standalone ALL-CAPS token (≥3 letters) — personas write the secret as COFFEE / TEA /
+# TREE, and a model that slips it does so in caps; clues never do.  A generic word-leak guard.
+_CAPS_TOKEN = re.compile(r"\b[A-Z]{3,}\b")
 _EXAMPLE_ECHO = "a brief, evocative response"
+
+
+def _is_meta(sentence: str) -> bool:
+    """True if *sentence* is scratchpad/meta or names a secret word in caps."""
+    return bool(_META.search(sentence)) or bool(_CAPS_TOKEN.search(sentence))
 
 
 def clean_clue(raw: str) -> tuple[str, str]:
@@ -257,7 +288,10 @@ def clean_clue(raw: str) -> tuple[str, str]:
     when nothing usable survives — the caller then skips the turn rather than ship
     junk); *residue* is the stripped thinking, usable as the private mind-reader
     thought (never shown to other agents)."""
-    residue: list[str] = [m.group(2).strip() for m in _REASONING_BLOCK.finditer(raw or "")]
+    residue: list[str] = []
+    reasoning = extract_reasoning(raw)  # closed + unterminated <think>, the truncated case
+    if reasoning:
+        residue.append(reasoning)
     cleaned = _strip_reasoning(raw)
 
     m = _TEXT_VALUE.search(cleaned)
@@ -266,7 +300,7 @@ def clean_clue(raw: str) -> tuple[str, str]:
 
     if cleaned.count('"') % 2 == 1:
         tail = cleaned.rsplit('"', 1)[-1].strip()
-        if len(tail) >= 8 and not _META.search(tail):
+        if len(tail) >= 8 and not _is_meta(tail):
             cleaned = tail
 
     kept: list[str] = []
@@ -274,13 +308,17 @@ def clean_clue(raw: str) -> tuple[str, str]:
         sentence = s.strip()
         if len(sentence) < 6 or sentence.startswith("{"):
             continue
-        (residue if _META.search(sentence) else kept).append(sentence.strip(" \"'"))
+        (residue if _is_meta(sentence) else kept).append(sentence.strip(" \"'"))
 
     return " ".join(kept)[:300].strip(), " ".join(p for p in residue if p)[:600].strip()
 
 
 def is_usable_line(text: str) -> bool:
-    """True when *text* is a real spoken line — not empty, a ``…`` placeholder, or the example."""
+    """True when *text* is a real spoken line — not empty, a ``…`` placeholder, the
+    example, or a provider failure sentinel that slipped through (defense in depth: the
+    agent already raises on a model error before this gate, see ADR-0023)."""
+    if is_model_error(text):
+        return False
     normalized = (text or "").strip().lower().strip(" .…\"'")
     return len(normalized) >= 6 and normalized != _EXAMPLE_ECHO
 
