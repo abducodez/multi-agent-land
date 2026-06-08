@@ -23,10 +23,18 @@ import gradio as gr
 
 # ── engine read surface (public; never mutated here) ───────────────────────────
 from src.core.conductor import Conductor
+from src.core.governor import BudgetExceeded
 from src.core.ledger_factory import make_ledger
 from src.core.registry import default_registry
+from src.models.openai_compat import has_live_credentials
 from src.tools.builtins import default_tool_registry
 from src.ui.fishbowl.view_model import view_model_at
+
+# ── loop-safety backstop ────────────────────────────────────────────────────────
+# Belt-and-suspenders against a runaway autoplay loop: even when the governor never
+# trips (e.g. a generous budget) the timer halts after this many consecutive auto-ticks
+# per play session.  The user explicitly asked for "no infinite, token-burning loop".
+_MAX_AUTO_TICKS = 40
 
 # ── defensive imports of sibling units ─────────────────────────────────────────
 # Each block degrades to a placeholder so the shell runs before the leaf modules land.
@@ -172,6 +180,10 @@ except Exception:  # pragma: no cover - fallback session keeps the shell live
         def head(self) -> int:
             return len(self.conductor.ledger.events)
 
+        def has_verdict(self) -> bool:
+            # Mirrors the real session's loop-safety helper so on_tick never crashes.
+            return any(getattr(e, "kind", None) == "judge.verdict" for e in self.conductor.ledger.events)
+
         def reset(self, seed: str) -> None:
             self.conductor.reset(seed or self.conductor.scenario.default_seed)
 
@@ -303,9 +315,66 @@ def _render_at(session: FishbowlSession | None, k: int, *, layout: str, mind_rea
     return render_show_html(vm, layout=layout, mind_reader=mind_reader)
 
 
+def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max_auto_ticks: int = _MAX_AUTO_TICKS):
+    """Decide one autoplay tick without touching Gradio — the loop-safety core.
+
+    Returns ``(new_k, new_ticks, stop_reason)``.  ``stop_reason`` is ``None`` while the
+    show should keep playing and a human-readable string once autoplay must halt — on a
+    verdict at the head (the show resolved), a tripped governor budget, or the
+    ``max_auto_ticks`` backstop.  Replaying the existing prefix (k < head) is free and
+    never counts toward the backstop; only *generating* ticks do.  This is the pure
+    function the timer handler and the loop-safety tests both drive."""
+    k = int(k or 0)
+    ticks = int(ticks or 0)
+    if session is None:
+        return 0, 0, None
+    if session.has_verdict():
+        return k, ticks, "verdict reached — the show resolved"
+    if k < session.head:
+        return k + 1, ticks, None  # replay forward through the existing prefix
+    if ticks >= max_auto_ticks:
+        return k, ticks, f"autoplay tick cap {max_auto_ticks} reached"
+    try:
+        session.step()  # at the head → generate
+    except BudgetExceeded as exc:
+        return session.head, ticks, (getattr(exc, "reason", None) or str(exc))
+    return session.head, ticks + 1, None
+
+
+def _stopped_banner_html(reason: str) -> str:
+    """A ``⛔ STOPPED`` banner reusing the verdict-banner chrome (assets/styles.css).
+
+    Surfaced in the verdict pane when the governor trips a budget bound or the
+    autoplay backstop fires, so the run halts visibly instead of crashing the
+    Gradio callback or burning tokens in a loop."""
+    import html as _html
+
+    text = _html.escape(reason or "budget exceeded")
+    return _fishbowl(
+        '<div class="verdict banner">'
+        '<div class="eyebrow">&#9940; Stopped</div>'
+        f'<div class="disp vb-text">{text}</div>'
+        "</div>",
+        role="fb-verdict",
+    )
+
+
 # ── CRT theater chrome ──────────────────────────────────────────────────────────
 
-_TOPBAR_HTML = """
+
+def _live_chip() -> str:
+    """The topbar status chip — computed from the live-credential env gate.
+
+    Shows ``● LIVE · MODAL`` (with the pulsing dot) when a Modal model binding is
+    configured, else ``OFFLINE · STUB`` so the demo is honest about which path is
+    driving the cast.  Offline-first: with no env vars the stub label shows."""
+    if has_live_credentials():
+        return '<span class="chip live"><span class="live-dot"></span>&#9679; LIVE &middot; MODAL</span>'
+    return '<span class="chip live"><span class="live-dot"></span>OFFLINE &middot; STUB</span>'
+
+
+def _topbar_html() -> str:
+    return f"""
 <div class="fishbowl">
   <div class="topbar">
     <div class="brand">
@@ -313,12 +382,15 @@ _TOPBAR_HTML = """
       <span class="sub">a fishbowl of minds you can read</span>
     </div>
     <div class="topbar-status">
-      <span class="chip live"><span class="live-dot"></span>OFFLINE-FIRST</span>
+      {_live_chip()}
       <span class="topbar-tag eyebrow">small minds &middot; one ledger &middot; &le; 32B</span>
     </div>
   </div>
 </div>
 """
+
+
+_TOPBAR_HTML = _topbar_html()
 
 # The CSS expects these overlay layers (ui/raw/Fishbowl.html).
 _CRT_BG_HTML = '<div class="crt-bg"></div><div class="crt-grid"></div>'
@@ -344,6 +416,8 @@ def build_app() -> gr.Blocks:
         mind_reader_state = gr.State(False)
         layout_state = gr.State("constellation")
         blank_state = gr.State("")  # stand-in input when a leaf widget is absent
+        stopped_state = gr.State(False)  # set once the run halts (budget/backstop/verdict)
+        tick_count_state = gr.State(0)  # consecutive autoplay ticks (the 40-tick backstop)
 
         with gr.Tabs() as tabs:
             with gr.Tab("The Lab", id="lab"):
@@ -364,6 +438,8 @@ def build_app() -> gr.Blocks:
             mind_reader_state=mind_reader_state,
             layout_state=layout_state,
             blank_state=blank_state,
+            stopped_state=stopped_state,
+            tick_count_state=tick_count_state,
         )
 
     return demo
@@ -391,6 +467,8 @@ def _wire(
     mind_reader_state: gr.State,
     layout_state: gr.State,
     blank_state: gr.State,
+    stopped_state: gr.State,
+    tick_count_state: gr.State,
 ) -> None:
     """Connect Lab/Show component handles to session transport + HTML re-render.
 
@@ -403,8 +481,36 @@ def _wire(
     verdict_out = _h(show_handles, "verdict", "verdict_html")
     show_outs = [c for c in (stage_out, feed_out, meters_out, verdict_out) if c is not None]
 
-    # Show transport controls.
+    # Transport controls (looked up early so output lists can include the timer).
     timer = _h(show_handles, "timer")
+    # The "halt tail" appended to advancing handlers' outputs: stop the timer (when one
+    # exists) + record the stopped flag.  ``_halt_tail``/``_run_tail`` keep the returned
+    # tuple aligned to whichever of these outputs are wired.
+    _tail_outs = ([timer] if timer is not None else []) + [stopped_state]
+
+    def _halt_tail() -> tuple:
+        """Tail values that STOP autoplay: (timer active=False?, stopped=True)."""
+        return ((gr.update(active=False),) if timer is not None else ()) + (True,)
+
+    def _run_tail(stopped: bool = False) -> tuple:
+        """Tail values that leave the timer untouched: (timer no-op?, stopped flag)."""
+        return ((gr.update(),) if timer is not None else ()) + (stopped,)
+
+    def _stopped_panes(session, k: int, *, layout: str, mind_reader: bool, reason: str) -> tuple:
+        """Render the Show at *k* but swap the verdict pane for the STOPPED banner.
+
+        Returns a tuple aligned to ``show_outs`` (verdict pane last when present), so
+        the run halts *visibly* without crashing the callback."""
+        panes = list(_render_at(session, k, layout=layout, mind_reader=mind_reader))
+        banner = _stopped_banner_html(reason)
+        if verdict_out is not None:
+            panes[3] = banner  # the 4th pane (stage, feed, meters, verdict) is the verdict
+        elif feed_out is not None:
+            # No verdict pane wired — surface the halt in the feed so it is never silent.
+            panes[1] = banner
+        return _pad_values(tuple(panes), show_outs)
+
+    # Show transport controls.
     scrubber = _h(show_handles, "scrubber", "slider", "scrub")
     play_btn = _h(show_handles, "play", "play_btn")
     step_btn = _h(show_handles, "step", "step_btn", "next", "advance")
@@ -441,7 +547,8 @@ def _wire(
         else:
             k = 0
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (session, k, title, gr.update(selected="show"), *_pad_values(out, show_outs))
+        # Summon starts a fresh run: clear the stopped flag and the autoplay backstop.
+        return (session, k, title, gr.update(selected="show"), *_pad_values(out, show_outs), False, 0)
 
     if summon_btn is not None:
         summon_inputs = [
@@ -453,24 +560,31 @@ def _wire(
         summon_btn.click(
             on_summon,
             inputs=summon_inputs,
-            outputs=[session_state, k_state, scenario_state, tabs, *show_outs],
+            outputs=[session_state, k_state, scenario_state, tabs, *show_outs, stopped_state, tick_count_state],
         )
 
     # ── ⏭ / ▶ at head → step (generate) then render at the new head ─────────────
+    # Returns (k, *show_outs, *halt-tail) — a tripped governor stops the timer and
+    # paints the STOPPED banner instead of crashing the Gradio callback.
     def step_at_head(session, layout, mind_reader):
-        if session is not None:
+        if session is None:
+            out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
+            return (0, *_pad_values(out, show_outs), *_run_tail())
+        try:
             session.step()
-            k = session.head
-        else:
-            k = 0
+        except BudgetExceeded as exc:
+            reason = getattr(exc, "reason", None) or str(exc)
+            panes = _stopped_panes(session, session.head, layout=layout, mind_reader=mind_reader, reason=reason)
+            return (session.head, *panes, *_halt_tail())
+        k = session.head
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs))
+        return (k, *_pad_values(out, show_outs), *_run_tail())
 
     if step_btn is not None and show_outs:
         step_btn.click(
             step_at_head,
             inputs=[session_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *_tail_outs],
         )
 
     # ── scrubber / ⏮ → pure prefix view (no stepping) ───────────────────────────
@@ -498,24 +612,22 @@ def _wire(
         )
 
     # ── gr.Timer.tick → hybrid: advance k (replay) below head, else step ────────
-    def on_tick(session, k, layout, mind_reader):
-        k = int(k or 0)
-        if session is None:
-            out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
-            return (0, *_pad_values(out, show_outs))
-        if k < session.head:
-            k += 1  # replay forward through the existing prefix
-        else:
-            session.step()  # at the head → generate
-            k = session.head
-        out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs))
+    # Loop-safe: stops autoplay on a tripped governor, on a verdict at the head (the
+    # show resolved), or after _MAX_AUTO_TICKS consecutive generating ticks (the hard
+    # backstop the user asked for).  Returns (k, *show_outs, *halt-tail, tick_count).
+    def on_tick(session, k, layout, mind_reader, tick_count):
+        new_k, new_ticks, stop_reason = advance_one_tick(session, k, tick_count)
+        if stop_reason is not None:
+            panes = _stopped_panes(session, new_k, layout=layout, mind_reader=mind_reader, reason=stop_reason)
+            return (new_k, *panes, *_halt_tail(), new_ticks)
+        out = _render_at(session, new_k, layout=layout, mind_reader=mind_reader)
+        return (new_k, *_pad_values(out, show_outs), *_run_tail(), new_ticks)
 
     if timer is not None and show_outs:
         timer.tick(
             on_tick,
-            inputs=[session_state, k_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            inputs=[session_state, k_state, layout_state, mind_reader_state, tick_count_state],
+            outputs=[k_state, *show_outs, *_tail_outs, tick_count_state],
         )
 
     # ── speed radio → timer interval; play/pause → timer.active ──────────────────
@@ -531,10 +643,12 @@ def _wire(
         play_active = gr.State(False)
 
         def on_play(active):
+            # Toggle play/pause; each fresh ▶ resets the autoplay backstop counter so the
+            # next run gets a full _MAX_AUTO_TICKS budget rather than inheriting the old one.
             new = not bool(active)
-            return new, gr.update(active=new)
+            return new, gr.update(active=new), 0
 
-        play_btn.click(on_play, inputs=[play_active], outputs=[play_active, timer])
+        play_btn.click(on_play, inputs=[play_active], outputs=[play_active, timer, tick_count_state])
 
     # ── layout radio + "Read their minds" → re-render the stage HTML ─────────────
     if layout_radio is not None and show_outs:
@@ -562,14 +676,20 @@ def _wire(
         )
 
     # ── poke buttons / poke_send → inject then render at the new head ────────────
+    # Injecting steps the conductor, so a poke can trip the governor too — wrap it.
     def _poke_after(session, text, label_value, layout, mind_reader):
-        if session is not None:
+        if session is None:
+            out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
+            return (0, *_pad_values(out, show_outs), *_run_tail())
+        try:
             session.inject((text or ""), label=label_value)
-            k = session.head
-        else:
-            k = 0
+        except BudgetExceeded as exc:
+            reason = getattr(exc, "reason", None) or str(exc)
+            panes = _stopped_panes(session, session.head, layout=layout, mind_reader=mind_reader, reason=reason)
+            return (session.head, *panes, *_halt_tail())
+        k = session.head
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs))
+        return (k, *_pad_values(out, show_outs), *_run_tail())
 
     if poke_send is not None and poke_text is not None and show_outs:
         # Free-text poke: the textbox supplies the text; a neutral label.
@@ -579,7 +699,7 @@ def _wire(
         poke_send.click(
             on_poke_send,
             inputs=[session_state, poke_text, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *_tail_outs],
         )
 
     for btn in poke_buttons:
@@ -598,7 +718,7 @@ def _wire(
         btn.click(
             make_preset(label),
             inputs=[session_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *_tail_outs],
         )
 
 
