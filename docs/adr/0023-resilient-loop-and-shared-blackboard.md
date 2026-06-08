@@ -123,6 +123,38 @@ Decisions:
    closed `"text"` value, a trailing unterminated draft-quote, or scratchpad-dropped
    sentences — only `…` when nothing survives.
 
+## Follow-up: the live fallback fights weak models, and the host must commit
+
+A third live run showed two more issues:
+
+- **Re-prompting with the JSON schema backfires on weak models.** When the structured
+  call failed, the old fallback appended the *same* `json_instruction` and ran the
+  tolerant parser. Small / reasoning models then **echoed the instruction** ("Need to
+  output JSON with kind agent.spoke…"), **copied the example** verbatim ("A brief,
+  evocative response."), and **leaked the secret while reasoning** ("…Secret word is
+  COFFEE…") straight into the spoken line.
+- **The show stopped on a non-verdict.** The host (`tick_every: 3`) fired and *stalled*
+  ("let the final clues be cast before I dissect") — yet the Fishbowl autoplay halts on
+  the first `judge.verdict`, so the show ended on a non-accusation.
+
+Decisions:
+
+1. **Plain-prose live fallback (no JSON to echo).** When `complete_structured` fails (or
+   returns an empty line), `ManifestAgent._prose_fallback` re-prompts for *one or two
+   in-character sentences and nothing else* — no schema, no example, no fields. The
+   answer is cleaned by `structured.clean_clue`, which strips reasoning blocks and drops
+   meta/instruction/secret-word sentences (`_META`), returning the clue plus the residue
+   (used as the private thought). The offline stub path is unchanged (it parses the JSON
+   instruction fine).
+2. **Skip a turn rather than ship junk.** If the cleaned clue is degenerate (empty, `…`,
+   the example echo, or all-meta — `is_usable_line`), the agent raises `AgentOutputError`;
+   the resilient loop records it on `agent_errors` and moves on. No `…` or scratchpad
+   ever reaches the stage; the blackboard lets the rest of the cast carry the round.
+3. **The host commits.** `spy-host`'s persona now requires it to name exactly one mind as
+   the spy in its single message — no deferring, no "before I dissect". It fires once
+   after four full rounds (`tick_every: 4`), and that verdict ending the show is by
+   design (`has_verdict()` halts autoplay).
+
 ## References
 
 - `src/core/context.py` — `ContextBuilder._blackboard_block`

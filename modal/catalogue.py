@@ -72,6 +72,16 @@ class ModelConfig:
     max_model_len: int | None = None  # cap context to fit memory / task
     trust_remote_code: bool = False  # required by MiniCPM / Nemotron custom code
 
+    # Performance / throughput (vLLM serve flags). Defaults target high
+    # steady-state throughput on the common single-GPU path; tune per model.
+    # See ``service.build_command`` for how each maps to a flag.
+    gpu_memory_utilization: float | None = None  # fraction of VRAM for weights + KV cache (vLLM default 0.9)
+    enable_prefix_caching: bool = True  # reuse KV for shared prompt prefixes — big win when system/context repeat
+    async_scheduling: bool = True  # overlap CPU request scheduling with GPU compute
+    enforce_eager: bool = False  # skip CUDA-graph capture: faster cold start, lower steady-state throughput
+    max_num_seqs: int | None = None  # cap sequences batched per step (memory vs. throughput)
+    max_num_batched_tokens: int | None = None  # token budget per scheduler step (prefill throughput)
+
     # OpenAI feature parsers (vLLM names; leave None if unsupported on the model)
     reasoning_parser: str | None = None
     tool_call_parser: str | None = None
@@ -82,7 +92,9 @@ class ModelConfig:
     mm_limits: dict[str, int] | None = None  # e.g. {"image": 4, "audio": 2}
 
     # Scaling / lifecycle
-    max_concurrent_inputs: int = 64  # requests multiplexed onto one container
+    max_concurrent_inputs: int = 64  # hard ceiling of requests multiplexed onto one container
+    target_concurrent_inputs: int | None = None  # autoscale target — scale out here, burst up to max; defaults to ~75%
+    buffer_containers: int = 0  # extra idle containers to pre-warm under active load (bursty traffic)
     scaledown_window: int = 15 * 60  # idle seconds before a container stops
     min_containers: int = 0  # keep N warm to remove cold starts (costs $)
     startup_timeout: int = 30 * 60  # weight download + load can be slow
@@ -192,6 +204,9 @@ OPENBMB_MODELS: tuple[ModelConfig, ...] = (
         # Audio/vision preprocessing backends pulled into the image.
         extra_pip=("librosa", "soundfile", "timm"),
         max_concurrent_inputs=16,
+        # Custom omni-modal code path: keep the async scheduler off (conservative
+        # — it's a specialist, not on the default cast). Prefix caching stays on.
+        async_scheduling=False,
     ),
 )
 
@@ -217,6 +232,12 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="gemma4",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=48,
+        # Served via vLLM's Transformers modeling backend (gemma4_unified has no
+        # native vLLM class), which runs eager-only — CUDA-graph capture and the
+        # async scheduler aren't supported on that path, so disable both here.
+        # Prefix caching still applies and stays on (the default).
+        enforce_eager=True,
+        async_scheduling=False,
         # gemma4_unified uses *variable* head dims (256 on sliding-attention layers,
         # 512 on full-attention ones). vLLM <= 0.22.1 (incl. the pinned 0.21.0) sizes
         # the o_proj from a uniform head_dim and dies on the full-attention layers
@@ -241,6 +262,10 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="gemma4",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=64,
+        # Transformers modeling backend (see the 12B above): eager-only, so no
+        # CUDA graphs / async scheduler. Prefix caching stays on by default.
+        enforce_eager=True,
+        async_scheduling=False,
         # Same gemma4_unified fix as the 12B above (nightly vLLM + transformers
         # >= 5.10.2 + FlashInfer sampler off).
         vllm_version="nightly",

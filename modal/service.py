@@ -77,6 +77,15 @@ _BASE_ENV = {
     "HF_HUB_CACHE": HF_CACHE_PATH,
     "HF_XET_HIGH_PERFORMANCE": "1",  # faster weight downloads
     "VLLM_LOG_STATS_INTERVAL": "1",
+    # Pin the V1 engine — better scheduling, prefix caching, and chunked prefill
+    # than V0. Default in recent vLLM; set explicitly so the high-perf path is
+    # never silently lost on a version bump.
+    "VLLM_USE_V1": "1",
+    # Persist torch.compile + CUDA-graph artifacts on the shared vLLM cache
+    # Volume (mounted at VLLM_CACHE_PATH). The first container compiles; every
+    # later cold start replays the cached graphs instead of recompiling, so we
+    # keep CUDA graphs (throughput) without paying their capture cost each boot.
+    "VLLM_CACHE_ROOT": VLLM_CACHE_PATH,
 }
 
 
@@ -127,6 +136,21 @@ def build_command(cfg: ModelConfig) -> list[str]:
         cmd += ["--max-model-len", str(cfg.max_model_len)]
     if cfg.trust_remote_code:
         cmd += ["--trust-remote-code"]
+    # Performance / throughput knobs (all data-driven from ModelConfig).
+    if cfg.gpu_memory_utilization is not None:
+        cmd += ["--gpu-memory-utilization", str(cfg.gpu_memory_utilization)]
+    # Prefix caching reuses the KV cache for shared prompt prefixes. In a
+    # multi-agent cast the system prompt + shared ledger context repeat across
+    # nearly every call, so this is one of the largest single wins here.
+    cmd += ["--enable-prefix-caching"] if cfg.enable_prefix_caching else ["--no-enable-prefix-caching"]
+    if cfg.async_scheduling:
+        cmd += ["--async-scheduling"]
+    if cfg.enforce_eager:
+        cmd += ["--enforce-eager"]
+    if cfg.max_num_seqs:
+        cmd += ["--max-num-seqs", str(cfg.max_num_seqs)]
+    if cfg.max_num_batched_tokens:
+        cmd += ["--max-num-batched-tokens", str(cfg.max_num_batched_tokens)]
     if cfg.reasoning_parser:
         cmd += ["--reasoning-parser", cfg.reasoning_parser]
     if cfg.enable_auto_tool_choice:
@@ -158,7 +182,12 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
         # Exposes VLLM_API_KEY in the container; vLLM then enforces bearer auth.
         secrets.append(modal.Secret.from_name(API_KEY_SECRET_NAME))
 
-    @app.function(
+    # Autoscale at the target, but let a hot container absorb a burst up to the
+    # hard max before another cold-starts (Modal high-perf-inference guidance).
+    # Default the target to ~75% of the ceiling so we scale out before saturating.
+    target_inputs = cfg.target_concurrent_inputs or max(1, (cfg.max_concurrent_inputs * 3) // 4)
+
+    function_kwargs = dict(
         name=cfg.endpoint_name,
         image=image,
         gpu=cfg.gpu,
@@ -169,7 +198,12 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
         timeout=cfg.request_timeout,
         serialized=True,
     )
-    @modal.concurrent(max_inputs=cfg.max_concurrent_inputs)
+    # Pre-warm spare containers under load for bursty traffic (opt-in per model).
+    if cfg.buffer_containers:
+        function_kwargs["buffer_containers"] = cfg.buffer_containers
+
+    @app.function(**function_kwargs)
+    @modal.concurrent(max_inputs=cfg.max_concurrent_inputs, target_inputs=target_inputs)
     @modal.web_server(port=VLLM_PORT, startup_timeout=cfg.startup_timeout)
     def serve():
         import subprocess

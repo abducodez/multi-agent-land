@@ -75,9 +75,16 @@ changes needed:
 | `gpu`                   | Modal GPU spec, e.g. `H200:1`, `H100:2`, `L40S:1`, `L4:1`.     |
 | `tensor_parallel_size`  | Shard across GPUs; set equal to the GPU count in `gpu`.        |
 | `max_model_len`         | Cap context length to fit memory / tune throughput.            |
-| `max_concurrent_inputs` | Requests multiplexed onto one container before scaling out.    |
+| `max_concurrent_inputs` | Hard ceiling of requests multiplexed onto one container.       |
+| `target_concurrent_inputs` | Autoscale target — scale out here, burst to the max (defaults to ~75% of the ceiling). |
+| `buffer_containers`     | Extra idle containers pre-warmed under active load (bursty traffic). |
 | `scaledown_window`      | Idle seconds before a container stops (cold-start vs. cost).   |
 | `min_containers`        | Keep N warm to eliminate cold starts (always-on cost).         |
+| `gpu_memory_utilization` | Fraction of VRAM for weights + KV cache (vLLM default `0.9`); raise for a bigger KV cache. |
+| `enable_prefix_caching` | Reuse the KV cache for shared prompt prefixes (on by default — big win when the system prompt / ledger context repeats across the cast). |
+| `async_scheduling`      | Overlap CPU request scheduling with GPU compute (on by default; off for the Transformers-backend Gemma + omni models). |
+| `enforce_eager`         | Skip CUDA-graph capture — faster cold start, lower steady-state throughput. |
+| `max_num_seqs` / `max_num_batched_tokens` | Batch-size and per-step token budget (memory vs. throughput). |
 | `reasoning_parser` / `tool_call_parser` / `enable_auto_tool_choice` | OpenAI tool/reasoning features. |
 | `multimodal` / `mm_limits` | Image/audio/video inputs and per-prompt caps.               |
 | `trust_remote_code`     | Required by MiniCPM / Nemotron custom modeling code.           |
@@ -91,6 +98,34 @@ changes needed:
 > so one model's bump never touches another provider's app. The Gemma 4 entries set
 > `vllm_version="nightly"` (plus `transformers>=5.10.2` and `VLLM_USE_FLASHINFER_SAMPLER=0`)
 > because the `gemma4_unified` architecture is unservable on the pinned release.
+
+### Performance tuning
+
+The serving path follows Modal's high-performance-LLM-inference guidance, so the
+defaults are already tuned for throughput; the knobs above let you push further
+per model:
+
+- **Prefix caching is on by default.** In a multi-agent cast the system prompt and
+  shared ledger context repeat across nearly every call, so reusing the KV cache
+  for that shared prefix is the single largest win — leave it on.
+- **CUDA graphs are kept, their cost is amortized.** Containers capture CUDA
+  graphs (no `enforce_eager`) for best steady-state throughput, and the compile /
+  graph cache is persisted on the shared `vllm-cache` Volume (`VLLM_CACHE_ROOT`),
+  so only the *first* container compiles — later cold starts replay the cached
+  graphs. Set `enforce_eager=True` on a model only when its backend can't capture
+  graphs (the Transformers-backend Gemma models) or when cold start dominates.
+- **Async scheduling** overlaps CPU request scheduling with GPU compute; on by
+  default for native vLLM models, off where the backend doesn't support it.
+- **Autoscaling** scales out at `target_concurrent_inputs` (≈75% of the ceiling by
+  default) while a hot container bursts up to `max_concurrent_inputs`, so we add
+  capacity before a container saturates rather than after. Use `buffer_containers`
+  to pre-warm spares for bursty traffic, or `min_containers` to remove cold starts
+  entirely (at always-on cost).
+- **The V1 engine is pinned** (`VLLM_USE_V1=1`) for its better scheduler, chunked
+  prefill, and prefix caching.
+
+For memory-bound models, raise `gpu_memory_utilization` (more KV cache → more
+concurrency) and cap `max_num_seqs` / `max_num_batched_tokens` if a step OOMs.
 
 ### Add a model
 

@@ -287,7 +287,7 @@ class Mem0CloudIndex(_Mem0BackendBase):
         )
 
     def _query(self, mem: object, query: str, k: int) -> list[dict]:
-        return _result_items(mem.search(query, user_id=self._NAMESPACE, top_k=k))  # type: ignore[attr-defined]
+        return _result_items(mem.search(query, top_k=k, filters={"user_id": self._NAMESPACE}))  # type: ignore[attr-defined]
 
 
 # ── metadata round-trip (event ⇄ vector entry) ────────────────────────────────

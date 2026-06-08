@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from src.agents.base import ManifestAgent
 from src.core.events import Event
 from src.core.manifest import AgentManifest, MemoryConfig, ScheduleConfig
 from src.core.projections import StageProjection, rebuild_stage
+from src.core.structured import AgentOutputError
 from src.models.router import ModelRouter
 
 
@@ -143,3 +146,40 @@ class TestThoughtFromReasoning:
     def test_falls_back_to_inline_think_tags(self):
         out = ManifestAgent._with_reasoning({"text": "x"}, _Provider(""), "<think>inline plan</think> x", True)
         assert out["thought"] == "inline plan"
+
+
+class _FakeProvider:
+    """A live-style provider: returns canned prose and a reasoning channel."""
+
+    def __init__(self, text: str, reasoning: str = "") -> None:
+        self._text = text
+        self.last_reasoning = reasoning
+        self.last_usage = {"total_tokens": 3}
+
+    def complete(self, role: str, prompt: str) -> str:
+        return self._text
+
+
+class TestProseFallback:
+    """When live structured output fails we ask for a plain line, clean it, and skip
+    the turn if nothing usable survives — never shipping `…`, junk, or a leaked word."""
+
+    def test_returns_clean_clue_and_reasoning_thought(self):
+        agent = _Seedkeeper(_router())
+        out = agent._prose_fallback(
+            "spy-cara", "P", ["agent.spoke"], True, _FakeProvider("A dark brew warms the dawn.", "I am the spy")
+        )
+        assert out == {"kind": "agent.spoke", "text": "A dark brew warms the dawn.", "thought": "I am the spy"}
+
+    def test_skips_on_degenerate_output(self):
+        agent = _Seedkeeper(_router())
+        with pytest.raises(AgentOutputError):
+            agent._prose_fallback("r", "P", ["agent.spoke"], False, _FakeProvider("…"))
+
+    def test_skips_and_never_leaks_the_secret(self):
+        agent = _Seedkeeper(_router())
+        # The model named the secret while reasoning; the cleaned clue is empty → skip.
+        with pytest.raises(AgentOutputError):
+            agent._prose_fallback(
+                "r", "P", ["agent.spoke"], False, _FakeProvider("Secret word is COFFEE. Need to output JSON.")
+            )

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from src.core.structured import extract_reasoning, json_instruction, parse_agent_output
+from src.core.structured import (
+    clean_clue,
+    extract_reasoning,
+    is_usable_line,
+    json_instruction,
+    parse_agent_output,
+)
 
 
 class TestJsonInstruction:
@@ -127,3 +133,40 @@ class TestExtractReasoning:
     def test_trims_to_limit(self):
         long = "x" * 2000
         assert len(extract_reasoning(f"<think>{long}</think>", limit=100)) == 100
+
+
+class TestCleanClue:
+    """The live prose fallback: extract a clean spoken line, never the scratchpad."""
+
+    def test_keeps_a_plain_clue(self):
+        clue, residue = clean_clue("A dark, steaming cup that whispers of bitterness and depth.")
+        assert clue == "A dark, steaming cup that whispers of bitterness and depth."
+        assert residue == ""
+
+    def test_drops_secret_word_sentence(self):
+        # Verbatim shape of the live leak: the model named COFFEE while reasoning.
+        clue, residue = clean_clue(
+            'Also include "thought" and "mood". Secret word is COFFEE. A dark brew warms the dawn.'
+        )
+        assert "COFFEE" not in clue.upper()
+        assert clue == "A dark brew warms the dawn."
+
+    def test_drops_instruction_echo_and_example(self):
+        assert clean_clue("Need to output JSON with kind agent.spoke, text one or two sentences.")[0] == ""
+        assert clean_clue("A brief, evocative response.")[0] == ""
+
+    def test_residue_carries_the_thinking(self):
+        clue, residue = clean_clue("<think>I'm the spy, stay calm</think> A warm cup soothes the morning.")
+        assert clue == "A warm cup soothes the morning."
+        assert "spy" in residue
+
+
+class TestIsUsableLine:
+    def test_rejects_empty_placeholder_and_example(self):
+        assert not is_usable_line("")
+        assert not is_usable_line("…")
+        assert not is_usable_line("  …  ")
+        assert not is_usable_line("A brief, evocative response.")
+
+    def test_accepts_a_real_line(self):
+        assert is_usable_line("A dark brew warms the dawn.")
