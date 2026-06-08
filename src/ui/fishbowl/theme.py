@@ -31,13 +31,15 @@ __all__ = ["FISHBOWL_HEAD", "FishbowlTheme", "load_css"]
 _ASSETS = Path(__file__).parent / "assets"
 
 # ---- palette (mirrors the CSS custom properties in assets/styles.css) ----
+# The ink ramp is calibrated up the lightness axis for readable contrast on the
+# dark tank — same teal phosphor hue family, just legible (see styles.css :root).
 _BG_0 = "#05121a"  # deepest tank
 _BG_1 = "#07181f"
 _BG_2 = "#0a222b"
 _PANEL_SOLID = "#0c2730"
-_INK = "#c4f6ee"
-_INK_MID = "#79c3bb"
-_INK_DIM = "#4d8983"
+_INK = "#d2f7f0"  # primary copy
+_INK_MID = "#9fdcd2"  # secondary copy / block titles
+_INK_DIM = "#7cb6ad"  # labels / subdued (was #4d8983 — too dim to read)
 _CYAN = "#4fe6d2"
 _TEAL = "#2bc4b4"
 
@@ -91,15 +93,18 @@ class FishbowlTheme(gr.themes.Base):
             block_background_fill_dark=_PANEL_SOLID,
             panel_background_fill=_PANEL_SOLID,
             panel_background_fill_dark=_PANEL_SOLID,
-            # text
+            # text — form labels read at the "mid" tier (the old "dim" sank them
+            # below readable); body copy stays at full ink.
             body_text_color=_INK,
             body_text_color_dark=_INK,
             body_text_color_subdued=_INK_MID,
             body_text_color_subdued_dark=_INK_MID,
-            block_label_text_color=_INK_DIM,
-            block_label_text_color_dark=_INK_DIM,
+            block_label_text_color=_INK_MID,
+            block_label_text_color_dark=_INK_MID,
             block_title_text_color=_INK_MID,
             block_title_text_color_dark=_INK_MID,
+            input_background_fill="rgba(5, 18, 26, 0.6)",
+            input_background_fill_dark="rgba(5, 18, 26, 0.6)",
             # borders
             border_color_primary="*neutral_700",
             block_border_color="*neutral_700",

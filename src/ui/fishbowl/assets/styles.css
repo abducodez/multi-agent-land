@@ -17,20 +17,24 @@
   --bg-0: #05121a;          /* deepest tank */
   --bg-1: #07181f;
   --bg-2: #0a222b;
-  --panel: rgba(13, 39, 47, 0.55);
+  /* panels sit on a near-opaque dark field so text contrast is stable no matter
+     what the CRT radial-gradient is doing behind the glass (legibility > glassiness). */
+  --panel: rgba(8, 26, 33, 0.84);
   --panel-solid: #0c2730;
-  --glass: rgba(120, 222, 214, 0.04);
+  --glass: rgba(120, 222, 214, 0.06);
 
-  /* phosphor inks */
-  --ink: #c4f6ee;
-  --ink-mid: #79c3bb;
-  --ink-dim: #4d8983;
-  --ink-faint: #2f6962;
+  /* phosphor inks — one hue family, calibrated up the lightness axis so every
+     tier clears a readable contrast on the tank (the old ramp bottomed out
+     invisibly at ~1.9:1; this ramp keeps the teal vibe and stays legible). */
+  --ink: #d2f7f0;           /* primary copy        ~13:1 */
+  --ink-mid: #9fdcd2;       /* secondary copy      ~9:1  */
+  --ink-dim: #7cb6ad;       /* labels / eyebrows   ~6:1  */
+  --ink-faint: #62a39a;     /* faint tags / notes  ~4.5:1 */
 
-  /* lines + grid */
-  --line: rgba(120, 222, 214, 0.16);
-  --line-soft: rgba(120, 222, 214, 0.08);
-  --line-hot: rgba(120, 222, 214, 0.42);
+  /* lines + grid — a touch stronger so panels read as crisp instruments */
+  --line: rgba(120, 222, 214, 0.22);
+  --line-soft: rgba(120, 222, 214, 0.12);
+  --line-hot: rgba(120, 222, 214, 0.46);
 
   /* accents — shared chroma/lightness, varied hue */
   --cyan: #4fe6d2;
@@ -68,6 +72,136 @@
 /* hide the default Gradio footer ("Use via API", settings, etc.) */
 footer { display: none !important; }
 .gradio-container footer { display: none !important; }
+
+/* ------------------------------------------------------------
+   Gradio-chrome readability — the Lab is built from native Gradio
+   widgets (Radio / Dataframe / Dropdown / Slider / Number). The
+   theme tokens colour them, but Gradio dims disabled fields with
+   opacity, which sinks the phosphor text below readable. Lift the
+   value text to full ink and stop disabled controls from fading the
+   copy (we keep the control visibly "locked" via its border, not by
+   making its text unreadable).
+   ------------------------------------------------------------ */
+.gradio-container label,
+.gradio-container .gr-box label,
+.gradio-container span[data-testid="block-info"],
+.gradio-container .gr-check-radio label {
+  color: var(--ink-mid) !important;
+}
+.gradio-container input,
+.gradio-container textarea,
+.gradio-container .gr-text-input,
+.gradio-container .wrap .single-select,
+.gradio-container table td,
+.gradio-container table th,
+.gradio-container .cell-wrap span {
+  color: var(--ink) !important;
+}
+.gradio-container input::placeholder,
+.gradio-container textarea::placeholder {
+  color: var(--ink-faint) !important;
+  opacity: 1;
+}
+/* Dataframe (the Cast table, §03) ships white header cells + light row fills
+   from Gradio's table palette. Repaint the whole grid dark phosphor. */
+.gradio-container table th,
+.gradio-container table .header-cell,
+.gradio-container table thead,
+.gradio-container .table-wrap thead th {
+  background: var(--bg-2) !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+.gradio-container table td,
+.gradio-container table tbody tr,
+.gradio-container .table-wrap td {
+  background: rgba(5, 18, 26, 0.45) !important;
+  color: var(--ink) !important;
+  border-color: var(--line-soft) !important;
+}
+.gradio-container table tbody tr:nth-child(even) td {
+  background: rgba(10, 34, 43, 0.5) !important;
+}
+.gradio-container table tbody tr:hover td { background: rgba(79, 230, 210, 0.07) !important; }
+.gradio-container .table-wrap, .gradio-container [data-testid="dataframe"] { background: transparent !important; }
+/* the modern dataframe paints rows as virtual divs (row-odd/row-even), not <tr> */
+.gradio-container .virtual-row { background: rgba(5, 18, 26, 0.45) !important; }
+.gradio-container .virtual-row.row-odd { background: rgba(10, 34, 43, 0.5) !important; }
+
+/* secondary buttons ship a light fill ("Surprise me", "Drop it") — darken to a
+   phosphor ghost button so they sit in the tank (primary stays cyan). */
+.gradio-container button.secondary {
+  background: var(--glass) !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--line) !important;
+}
+.gradio-container button.secondary:hover {
+  border-color: var(--line-hot) !important;
+  color: #fff !important;
+}
+/* disabled fields: keep the text legible, signal "locked" via opacity on the
+   chrome rather than washing out the value text itself. */
+.gradio-container input:disabled,
+.gradio-container textarea:disabled,
+.gradio-container [disabled] input,
+.gradio-container [disabled] textarea {
+  -webkit-text-fill-color: var(--ink);
+  color: var(--ink) !important;
+  opacity: 1 !important;
+}
+.gradio-container .gr-box.disabled,
+.gradio-container fieldset:disabled { opacity: 0.96 !important; }
+
+/* Gradio's Group/Form/Styler wrappers default to a light slate-700 fill, which
+   the Scenario group (§01) and others show through as a washed band behind the
+   phosphor text. Repaint the containers transparent so the tank shows through. */
+.gradio-container .gr-group {
+  background: rgba(7, 24, 31, 0.55) !important;
+  border-color: var(--line) !important;
+}
+.gradio-container .styler,
+.gradio-container div.form {
+  background: transparent !important;
+  border-color: var(--line) !important;
+}
+
+/* Checkbox/radio OPTION chips ship a light slate fill (#e2e8f0 selected,
+   #334155 border) from Gradio's default palette — bright-on-bright in the tank.
+   Target by structure (label wrapping a radio/checkbox) rather than version-
+   hashed classes or per-option testids, so every group is covered: the scenario
+   radios (§01), the Tools checkboxes (§05), the Show layout/speed radios, and
+   the single "Read their minds" checkbox. */
+.gradio-container label:has(> input[type="radio"]),
+.gradio-container label:has(> input[type="checkbox"]) {
+  background: rgba(5, 18, 26, 0.55) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink-mid) !important;
+}
+.gradio-container label:has(> input[type="radio"]):hover,
+.gradio-container label:has(> input[type="checkbox"]):hover {
+  border-color: var(--line-hot) !important;
+  color: var(--ink) !important;
+}
+.gradio-container label:has(> input[type="radio"]:checked),
+.gradio-container label:has(> input[type="checkbox"]:checked) {
+  background: rgba(79, 230, 210, 0.14) !important;
+  border-color: var(--cyan) !important;
+  color: var(--cyan) !important;
+}
+.gradio-container label:has(> input[type="radio"]) span,
+.gradio-container label:has(> input[type="checkbox"]) span { color: inherit !important; }
+/* the little box/dot itself: dark well, cyan when ticked, visible rim */
+.gradio-container input[type="checkbox"],
+.gradio-container input[type="radio"] {
+  background-color: rgba(3, 12, 18, 0.9) !important;
+  border: 1px solid var(--ink-dim) !important;
+  accent-color: var(--cyan);
+}
+.gradio-container input[type="checkbox"]:checked,
+.gradio-container input[type="radio"]:checked {
+  background-color: var(--cyan) !important;
+  border-color: var(--cyan) !important;
+}
 
 /* phosphor scrollbars (global — harmless outside the app) */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -126,18 +260,18 @@ footer { display: none !important; }
     to bottom,
     rgba(0, 0, 0, 0) 0px,
     rgba(0, 0, 0, 0) 2px,
-    rgba(0, 0, 0, 0.16) 3px,
-    rgba(0, 0, 0, 0.16) 3px
+    rgba(0, 0, 0, 0.12) 3px,
+    rgba(0, 0, 0, 0.12) 3px
   );
   mix-blend-mode: multiply;
-  opacity: 0.5;
+  opacity: 0.32;
 }
 .crt-vignette {
   position: fixed;
   inset: 0;
   z-index: 61;
   pointer-events: none;
-  box-shadow: inset 0 0 220px rgba(0,0,0,0.7), inset 0 0 60px rgba(0,0,0,0.4);
+  box-shadow: inset 0 0 180px rgba(0,0,0,0.55), inset 0 0 50px rgba(0,0,0,0.3);
 }
 @media (prefers-reduced-motion: no-preference) {
   .crt-flicker { animation: flicker 7s infinite steps(60); }
@@ -171,8 +305,8 @@ footer { display: none !important; }
 .fishbowl .disp { font-family: var(--font-display); }
 .fishbowl .eyebrow {
   font-family: var(--font-display);
-  font-size: 9.5px;
-  letter-spacing: 0.32em;
+  font-size: 10px;
+  letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--ink-dim);
   font-weight: 600;
@@ -557,7 +691,7 @@ footer { display: none !important; }
 .fishbowl .bub-tag { font-family: var(--font-display); font-size: 7.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); display: block; margin-bottom: 5px; }
 .fishbowl .bubble p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); }
 .fishbowl .bubble .muted { color: var(--ink-faint); font-style: italic; }
-.fishbowl .bubble.said { background: rgba(5,18,26,0.55); border: 1px solid var(--line); }
+.fishbowl .bubble.said { background: rgba(3,12,18,0.78); border: 1px solid var(--line); }
 .fishbowl .bubble.thought.open { background: color-mix(in oklab, var(--ac) 9%, rgba(5,18,26,0.4)); border: 1px dashed var(--ac); }
 .fishbowl .bubble.thought.open .bub-tag { color: var(--ac); }
 .fishbowl .think-text { font-style: italic; color: color-mix(in oklab, var(--ac) 70%, var(--ink)) !important; text-shadow: 0 0 8px color-mix(in oklab, var(--ac) 40%, transparent); }
@@ -576,8 +710,8 @@ footer { display: none !important; }
 @keyframes feIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .fishbowl .fe.narr { border-left: 2px solid var(--violet); padding-left: 12px; }
 .fishbowl .narr-voice { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--violet); display: block; margin-bottom: 4px; }
-.fishbowl .fe.narr p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-mid); font-style: italic; }
-.fishbowl .fe.say { background: rgba(5,18,26,0.4); border-left: 2px solid var(--ac); border-radius: 0 var(--r) var(--r) 0; padding: 8px 11px; }
+.fishbowl .fe.narr p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink); opacity: 0.92; font-style: italic; }
+.fishbowl .fe.say { background: rgba(3,12,18,0.6); border-left: 2px solid var(--ac); border-radius: 0 var(--r) var(--r) 0; padding: 8px 11px; }
 .fishbowl .say-line { font-size: 12.5px; line-height: 1.45; }
 .fishbowl .say-line b { color: var(--ac); margin-right: 7px; letter-spacing: 0.04em; }
 .fishbowl .say-line span { color: var(--ink); }
