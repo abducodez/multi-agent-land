@@ -53,13 +53,16 @@ def build_show() -> dict[str, object]:
             )
 
         # ---- BODY : the projection panels (filled by Unit 9's callbacks) --
+        # The stage gets the lion's share of the width (≈ the design's `1fr 384px`
+        # split) so the MindCards have room to breathe; the narrator rail is fixed.
         with gr.Row(elem_classes=["show-body"]):
-            handles["stage_html"] = gr.HTML(
-                value="<div class='stage' aria-label='stage'></div>",
-                elem_id="stage-html",
-                elem_classes=["stage-panel"],
-            )
-            with gr.Column(elem_classes=["rail"]):
+            with gr.Column(scale=3, min_width=420, elem_classes=["stage-wrap"]):
+                handles["stage_html"] = gr.HTML(
+                    value="<div class='stage' aria-label='stage'></div>",
+                    elem_id="stage-html",
+                    elem_classes=["stage-panel"],
+                )
+            with gr.Column(scale=2, min_width=300, elem_classes=["rail"]):
                 handles["feed_html"] = gr.HTML(
                     value="<div class='feed scroll' aria-label='narrator feed'></div>",
                     elem_id="feed-html",

@@ -787,3 +787,174 @@ footer { display: none !important; }
 /* ---- saga toast ---- */
 .fishbowl .saga-toast { position: absolute; bottom: 130px; left: 50%; transform: translateX(-50%); z-index: 45; padding: 16px 22px; max-width: 520px; text-align: center; border-color: var(--lime); box-shadow: 0 0 30px rgba(155,232,107,0.25); animation: vbDrop 0.4s ease; }
 .fishbowl .saga-head { font-size: 15px; color: var(--lime); margin: 8px 0 0; line-height: 1.4; }
+
+/* ============================================================
+   ✦ ENHANCEMENTS — polish layer (additive; overrides by source order)
+   ------------------------------------------------------------
+   The theater markup is delivered through Gradio gr.HTML islands, each wrapped
+   in a `.fishbowl fb-<role>` scope root by app.py.  The base rules above port
+   the prototype faithfully; this layer makes the *Gradio-shaped* stage actually
+   sing — the constellation re-flows fluidly instead of clipping at the narrow
+   pane width, the meters read as instruments, and the cast cards gain depth,
+   entrance motion, and hover life.  Inspired by ui/raw, tuned for the live app.
+   ============================================================ */
+
+/* Gradio caps the content column at 1024px; the theater wants more room so the
+   constellation can hold two columns of MindCards and the stage can breathe. */
+.gradio-container .main,
+.gradio-container .main.fillable { max-width: 1240px !important; }
+
+/* pane scope roots are plain blocks; let the inner stage own the layout */
+.fishbowl.fb-stage,
+.fishbowl.fb-feed,
+.fishbowl.fb-meters,
+.fishbowl.fb-verdict { display: block; }
+
+/* ---- topbar: branded bar with a status cluster on the right ---- */
+.fishbowl .topbar { justify-content: space-between; gap: 16px; box-shadow: 0 1px 0 var(--line-soft), 0 8px 28px -22px rgba(79,230,210,0.5); }
+.fishbowl .brand .logo { font-size: 21px; }
+.fishbowl .topbar-status { display: flex; align-items: center; gap: 14px; flex: none; }
+.fishbowl .topbar-tag { color: var(--ink-faint); white-space: nowrap; }
+.fishbowl .chip.live { color: var(--lime); border-color: rgba(155,232,107,0.34); background: rgba(155,232,107,0.08); }
+.fishbowl .chip.live .live-dot { width: 6px; height: 6px; }
+@media (max-width: 760px) { .fishbowl .topbar-tag { display: none; } }
+
+/* ---- meters: stack each stat so its label & value never collide ---- */
+.fishbowl .meters.panel { background: linear-gradient(180deg, rgba(10,34,43,0.6), rgba(6,20,27,0.55)); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.fishbowl .meter-stats { gap: 18px; padding-top: 2px; }
+.fishbowl .stat { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.fishbowl .stat .eyebrow { font-size: 8px; letter-spacing: 0.2em; }
+.fishbowl .stat .disp { font-size: 13px; line-height: 1.1; }
+.fishbowl .meters .bar { height: 6px; box-shadow: inset 0 0 0 1px var(--line-soft); }
+
+/* ============================================================
+   CONSTELLATION — fluid, never-clipping grid of MindCards.
+   The prototype's rigid 3×3 grid-area placement assumes a wide square stage;
+   the Gradio pane is narrower, so we re-flow the cards into a centered wrap and
+   float the scene "core" as an ambient marquee + radial glow behind them.
+   ============================================================ */
+.fishbowl.fb-constellation .constellation { position: relative; height: 100%; }
+.fishbowl.fb-constellation .stage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+  align-content: flex-start;
+  grid-template-columns: none;
+  grid-template-rows: none;
+  padding: 16px 18px 26px;
+  min-height: 380px;
+  overflow: visible;
+  position: relative;
+}
+/* the energy at the heart of the bowl — a soft radial breath behind the cast */
+.fishbowl.fb-constellation .stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(60% 55% at 50% 46%, rgba(79,230,210,0.10), transparent 70%);
+  z-index: 0;
+}
+.fishbowl.fb-constellation .ring { display: contents; }
+.fishbowl.fb-constellation .ring-slot {
+  display: block;
+  grid-area: auto !important;
+  z-index: 2;
+  flex: 1 1 260px;
+  max-width: 330px;
+  min-width: 250px;
+}
+.fishbowl.fb-constellation .mind { width: 100%; perspective: 1400px; }
+.fishbowl.fb-constellation .mind-stage { width: 100%; }
+
+/* the scene core, re-cast as a centered marquee above the cast (no overlap) */
+.fishbowl.fb-constellation .core {
+  position: static;
+  transform: none;
+  order: -1;
+  flex: 1 1 100%;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 12px;
+  padding: 4px 0 10px;
+  z-index: 1;
+}
+.fishbowl.fb-constellation .core-glyph { font-size: 30px; }
+.fishbowl.fb-constellation .core-title { font-size: 15px; letter-spacing: 0.14em; }
+.fishbowl.fb-constellation .core-round { color: var(--ink-faint); }
+
+/* ---- MindCard depth + life: entrance, hover lift, richer speaking glow ---- */
+@keyframes mindIn { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .fishbowl.fb-constellation .ring-slot { animation: mindIn 0.5s cubic-bezier(0.2,0.7,0.2,1) both; }
+  .fishbowl.fb-constellation .ring-slot:nth-child(1) { animation-delay: 0.04s; }
+  .fishbowl.fb-constellation .ring-slot:nth-child(2) { animation-delay: 0.10s; }
+  .fishbowl.fb-constellation .ring-slot:nth-child(3) { animation-delay: 0.16s; }
+  .fishbowl.fb-constellation .ring-slot:nth-child(4) { animation-delay: 0.22s; }
+  .fishbowl.fb-constellation .ring-slot:nth-child(5) { animation-delay: 0.28s; }
+  .fishbowl.fb-constellation .ring-slot:nth-child(6) { animation-delay: 0.34s; }
+}
+.fishbowl .mind-front {
+  transition: border-color 0.22s ease, box-shadow 0.22s ease, transform 0.22s ease;
+  box-shadow: 0 10px 30px -20px rgba(0,0,0,0.9);
+}
+.fishbowl.fb-constellation .mind:hover .mind-front {
+  transform: translateY(-3px);
+  border-color: var(--line-hot);
+  box-shadow: 0 16px 40px -24px rgba(0,0,0,0.9), var(--glow);
+}
+/* a speaking mind pulses its accent ring so the eye follows the live voice */
+@media (prefers-reduced-motion: no-preference) {
+  .fishbowl .mind.speaking .mind-front { animation: speakGlow 1.8s ease-in-out infinite; }
+}
+@keyframes speakGlow {
+  0%, 100% { box-shadow: 0 0 18px color-mix(in oklab, var(--ac) 32%, transparent); }
+  50% { box-shadow: 0 0 30px color-mix(in oklab, var(--ac) 55%, transparent); }
+}
+/* tighten the head so name + model never feel cramped at card width */
+.fishbowl .mind-name { line-height: 1.2; }
+.fishbowl .mind-arch { margin-top: 2px; }
+.fishbowl .bubble.said { box-shadow: inset 0 0 0 1px var(--line-soft); }
+
+/* ---- SPLIT (Lab Readout): let the omniscient table flow full-width ---- */
+.fishbowl.fb-split .stage { display: block; padding: 18px; min-height: 0; overflow: visible; }
+.fishbowl.fb-split .core { position: static; transform: none; display: block; width: 100%; text-align: left; pointer-events: auto; }
+.fishbowl.fb-split .splitview { padding: 6px 0 0; max-width: 100%; }
+
+/* ---- FEED pane: read like a live transcript, comfortable scroll ---- */
+.fishbowl.fb-feed .feed { padding: 4px 4px 8px; max-height: 70vh; }
+.fishbowl .fe.narr p { font-size: 13px; }
+
+/* ---- NARRATOR feed entrance is already animated (feIn); add a hover tint ---- */
+.fishbowl .fe.say { transition: border-color 0.18s ease, background 0.18s ease; }
+.fishbowl .fe.say:hover { border-left-color: color-mix(in oklab, var(--ac) 90%, white); background: rgba(79,230,210,0.05); }
+
+/* ============================================================
+   LAB polish — the composer is native Gradio chrome; lift the panels to
+   crisp lab instruments and make the headline + Summon button carry weight.
+   (Scoped to .gradio-container so it rides on top of the theme, not .fishbowl.)
+   ============================================================ */
+.gradio-container .gr-group {
+  border-radius: var(--r-lg) !important;
+  box-shadow: inset 0 1px 0 rgba(120,222,214,0.06), 0 18px 40px -34px rgba(0,0,0,0.9) !important;
+}
+/* the Lab section headers ("01 · Scenario & Goal") read as eyebrowed dividers */
+.gradio-container .gr-group h1,
+.gradio-container .gr-group h2,
+.gradio-container .gr-group h3,
+.gradio-container .gr-group h4,
+.gradio-container .gr-group p strong:first-child {
+  color: var(--ink) !important;
+}
+/* Summon button — the primary call to action gets the full phosphor glow */
+.gradio-container button.primary {
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  box-shadow: 0 0 18px rgba(79,230,210,0.35) !important;
+  transition: box-shadow 0.18s ease, transform 0.12s ease !important;
+}
+.gradio-container button.primary:hover { box-shadow: 0 0 28px rgba(79,230,210,0.6) !important; }
+.gradio-container button.primary:active { transform: translateY(1px) !important; }

@@ -75,7 +75,8 @@ except Exception:  # pragma: no cover
 
 
 try:
-    from src.ui.fishbowl.render.constellation import render_constellation
+    # render_constellation lives in render.stage alongside render_split.
+    from src.ui.fishbowl.render.stage import render_constellation
 except Exception:  # pragma: no cover
 
     def render_constellation(vm, cards_html_by_id) -> str:
@@ -84,7 +85,7 @@ except Exception:  # pragma: no cover
 
 
 try:
-    from src.ui.fishbowl.render.split import render_split
+    from src.ui.fishbowl.render.stage import render_split
 except Exception:  # pragma: no cover
 
     def render_split(vm) -> str:
@@ -135,7 +136,8 @@ except Exception:  # pragma: no cover
 
 
 try:
-    from src.ui.fishbowl.render.verdict import render_verdict
+    # render_verdict lives in render.meters alongside render_meters.
+    from src.ui.fishbowl.render.meters import render_verdict
 except Exception:  # pragma: no cover
 
     def render_verdict(vm) -> str:
@@ -252,13 +254,27 @@ def _empty_vm() -> dict:
 # ── HTML composition (this worker owns this) ────────────────────────────────────
 
 
+def _fishbowl(inner: str, *, role: str) -> str:
+    """Wrap a rendered pane in the ``.fishbowl`` scope root.
+
+    Every theater rule in ``assets/styles.css`` is scoped under ``.fishbowl`` so it wins
+    over Gradio's own cascade; the ``gr.HTML`` islands have no such ancestor on their own,
+    so without this wrapper the MindCards/feed/meters render as unstyled stacked text.  The
+    ``role`` adds a stable hook (e.g. ``fb-stage``) for layout rules that target a pane.
+    """
+    if not inner:
+        return ""
+    return f'<div class="fishbowl {role}">{inner}</div>'
+
+
 def render_show_html(
     vm: dict, *, layout: str = "constellation", mind_reader: bool = False
 ) -> tuple[str, str, str, str]:
     """Compose the Show's four HTML panes from a view-model snapshot.
 
     Returns ``(stage, feed, meters, verdict)``.  The stage honours the layout radio:
-    *constellation* (MindCards), *split* (omniscient table), or *feed* (feed-only)."""
+    *constellation* (MindCards), *split* (omniscient table), or *feed* (feed-only).  Each
+    pane is wrapped in a ``.fishbowl`` scope root so the theater stylesheet applies."""
     cards_html_by_id: dict[str, str] = {}
     for card in vm.get("cast", []):
         cards_html_by_id[card.get("id", card.get("name", ""))] = render_mindcard(card, mind_reader=mind_reader)
@@ -273,7 +289,12 @@ def render_show_html(
     feed = render_feed(vm, mind_reader=mind_reader)
     meters = render_meters(vm)
     verdict = render_verdict(vm)
-    return stage, feed, meters, verdict
+    return (
+        _fishbowl(stage, role=f"fb-stage fb-{layout}"),
+        _fishbowl(feed, role="fb-feed"),
+        _fishbowl(meters, role="fb-meters"),
+        _fishbowl(verdict, role="fb-verdict"),
+    )
 
 
 def _render_at(session: FishbowlSession | None, k: int, *, layout: str, mind_reader: bool) -> tuple[str, str, str, str]:
@@ -285,9 +306,17 @@ def _render_at(session: FishbowlSession | None, k: int, *, layout: str, mind_rea
 # ── CRT theater chrome ──────────────────────────────────────────────────────────
 
 _TOPBAR_HTML = """
-<div class="fishbowl-topbar topbar">
-  <span class="logo">◉ FISHBOWL</span>
-  <span class="sub">a fishbowl of minds you can read</span>
+<div class="fishbowl">
+  <div class="topbar">
+    <div class="brand">
+      <span class="logo">&#9673; FISHBOWL</span>
+      <span class="sub">a fishbowl of minds you can read</span>
+    </div>
+    <div class="topbar-status">
+      <span class="chip live"><span class="live-dot"></span>OFFLINE-FIRST</span>
+      <span class="topbar-tag eyebrow">small minds &middot; one ledger &middot; &le; 32B</span>
+    </div>
+  </div>
 </div>
 """
 
