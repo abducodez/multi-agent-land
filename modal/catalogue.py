@@ -60,6 +60,14 @@ class ModelConfig:
     gpu: str = "L40S:1"  # Modal GPU spec, e.g. "H200:1", "H100:2", "L4:1"
     tensor_parallel_size: int = 1  # set to GPU count for multi-GPU sharding
 
+    # Inference-stack override (escape hatch). ``None`` uses the serving layer's
+    # pinned ``VLLM_VERSION`` (the reproducible default). ``"nightly"`` installs the
+    # latest vLLM nightly wheel; any other string is a pinned version (e.g.
+    # ``"0.23.0"``). Use only when a model needs a build the default pin can't serve
+    # — e.g. Gemma 4's ``gemma4_unified`` arch, unservable on 0.21.0. Scoped per
+    # model, so one model's bump never touches another provider's app.
+    vllm_version: str | None = None
+
     # Inference shape
     max_model_len: int | None = None  # cap context to fit memory / task
     trust_remote_code: bool = False  # required by MiniCPM / Nemotron custom code
@@ -191,7 +199,14 @@ OPENBMB_MODELS: tuple[ModelConfig, ...] = (
 
 GOOGLE_MODELS: tuple[ModelConfig, ...] = (
     ModelConfig(
-        name="google/gemma-4-12B",
+        # Instruction-tuned repo — the right checkpoint for a balanced agent (the
+        # base ``google/gemma-4-12B`` is pretrained-only). Both repos share the
+        # ``gemma4_unified`` architecture, which vLLM 0.21.0 has no dedicated class
+        # for, so it runs via the Transformers modeling backend either way.
+        name="google/gemma-4-12B-it",
+        # Keep the client-facing id stable (engine/tests/docs already use it); vLLM
+        # serves the -it weights under this alias via --served-model-name.
+        served_model_name="google/gemma-4-12B",
         endpoint_name="gemma-4-12b",
         profile="balanced",
         params_b=12,
@@ -202,6 +217,16 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="gemma4",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=48,
+        # gemma4_unified uses *variable* head dims (256 on sliding-attention layers,
+        # 512 on full-attention ones). vLLM <= 0.22.1 (incl. the pinned 0.21.0) sizes
+        # the o_proj from a uniform head_dim and dies on the full-attention layers
+        # with "mat1 and mat2 shapes cannot be multiplied". Only a vLLM nightly serves
+        # gemma4_unified, paired with transformers >= 5.10.2 (which adds the arch) and
+        # the FlashInfer sampler off (its JIT path breaks on these builds). All three
+        # are scoped to this model, so NVIDIA/OpenBMB stay on the reproducible pin.
+        vllm_version="nightly",
+        extra_pip=("transformers>=5.10.2",),
+        env={"VLLM_USE_FLASHINFER_SAMPLER": "0"},
     ),
     ModelConfig(
         name="google/gemma-4-26B-A4B-it",
@@ -216,6 +241,11 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="gemma4",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=64,
+        # Same gemma4_unified fix as the 12B above (nightly vLLM + transformers
+        # >= 5.10.2 + FlashInfer sampler off).
+        vllm_version="nightly",
+        extra_pip=("transformers>=5.10.2",),
+        env={"VLLM_USE_FLASHINFER_SAMPLER": "0"},
     ),
 )
 
