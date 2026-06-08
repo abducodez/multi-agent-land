@@ -25,16 +25,21 @@ profiles:
   tiny:
     endpoint: nemotron-3-nano-4b     # NVIDIA Nemotron 3 Nano 4B (≤4B, Tiny Titan)
     temperature: 0.7
-    max_tokens: 160
+    max_tokens: 192
   fast:
     endpoint: minicpm-4-1-8b         # OpenBMB MiniCPM4.1-8B
     temperature: 0.9
-    max_tokens: 220
-  balanced:
-    endpoint: gemma-4-12b            # Google Gemma 4 12B
-    temperature: 0.8
     max_tokens: 320
+  # balanced/strong are served WITH a reasoning parser (modal/catalogue.py:
+  # reasoning_parser="gemma4") — they THINK before answering, and that thinking
+  # counts against max_tokens. Budget too low → the model is truncated mid-thought
+  # and emits an EMPTY answer (the "agents stopped working / just …" symptom). Give
+  # the reasoning room; the thinking is captured separately as the mind-reader thought.
+  balanced:
+    endpoint: gemma-4-12b            # Google Gemma 4 12B (reasoning)
+    temperature: 0.8
+    max_tokens: 768
   strong:
-    endpoint: gemma-4-26b            # Google Gemma 4 26B-A4B-it (MoE, ~4B active)
+    endpoint: gemma-4-26b            # Google Gemma 4 26B-A4B-it (MoE, ~4B active; reasoning)
     temperature: 0.6
-    max_tokens: 480
+    max_tokens: 1024

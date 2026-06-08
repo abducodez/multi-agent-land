@@ -27,7 +27,15 @@ from src.core.events import Event
 from src.core.manifest import AgentManifest
 from src.core.memory import EpisodicMemory, ReflectionTracker, SalienceMemory
 from src.core.projections import StageProjection
-from src.core.structured import build_output_model, json_instruction, parse_agent_output
+from src.core.structured import (
+    AgentOutputError,
+    build_output_model,
+    clean_clue,
+    extract_reasoning,
+    is_usable_line,
+    json_instruction,
+    parse_agent_output,
+)
 from src.models.router import ModelRouter
 
 if TYPE_CHECKING:
@@ -39,6 +47,15 @@ _ctx = ContextBuilder()
 # System-level memory event every reflecting agent may emit, independent of its
 # domain `may_emit` grant — reflection compacts memory, it is not a world action.
 _REFLECTION_KIND = "agent.reflected"
+
+# Live fallback when structured output fails: ask for a plain spoken line, NOT JSON.
+# Weak/reasoning models echo a JSON schema (and its example) and leak their reasoning;
+# asking for prose gives a clean line we can strip and ship.
+_PROSE_FALLBACK = (
+    "\n\nNow say your line aloud — one or two vivid, in-character sentences and nothing else. "
+    "No JSON, no labels, no analysis, no quotation marks. "
+    "Never name or spell the secret word you were given; only describe it."
+)
 
 
 # ── minimal interface ─────────────────────────────────────────────────────────
@@ -163,29 +180,69 @@ class ManifestAgent(Agent):
     ) -> dict:
         """Produce a validated ``{kind, text, …}`` payload for *role*.
 
-        Live path: if the routed provider supports structured output, ask it for
-        a Pydantic model whose ``kind`` is constrained to *allowed* and return
-        its fields — validated by construction, no ``_raw_fallback``.  Offline
-        path (deterministic stub, no ``complete_structured``): append the JSON
-        instruction and run the tolerant parser as before.  Token/cost usage is
-        recorded from the provider in both paths.
+        Live path: ask the provider for a Pydantic model whose ``kind`` is
+        constrained to *allowed* — validated by construction.  When that fails (a
+        small or reasoning model that won't emit clean JSON), DON'T re-prompt with
+        the schema: weak models echo the instruction, copy the example, and leak
+        their reasoning (and the secret word) into the line.  Instead ask for a
+        PLAIN-PROSE line, strip the thinking, and — if nothing usable survives —
+        raise so the conductor skips the turn rather than ship ``…`` or junk.
+
+        Offline path (deterministic stub, no ``complete_structured``): append the
+        JSON instruction and run the tolerant parser as before.  Token/cost usage
+        is recorded from the provider in every path.
         """
+        wants_thought = bool(extra_fields and "thought" in extra_fields)
         provider = self.router.for_profile(self._route_key)
         if hasattr(provider, "complete_structured"):
             model = build_output_model(allowed, extra_fields)
             try:
                 result = provider.complete_structured(role, prompt, model)
                 self.last_usage = dict(provider.last_usage)
-                return result.model_dump()
+                payload = self._with_reasoning(result.model_dump(), provider, "", wants_thought)
+                if is_usable_line(payload.get("text", "")):
+                    return payload
             except Exception:
-                # Live structured call failed (validation/transport); fall back to
-                # the tolerant parser below so a turn still produces an event.
-                pass
+                pass  # structured failed — fall through to the prose fallback
+            return self._prose_fallback(role, prompt, allowed, wants_thought, provider)
 
         instruction = json_instruction(allowed, extra_fields=extra_fields)
         raw = provider.complete(role, f"{prompt}\n{instruction}")
         self.last_usage = dict(provider.last_usage)
-        return parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
+        parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
+        return self._with_reasoning(parsed, provider, raw, wants_thought)
+
+    def _prose_fallback(self, role, prompt, allowed, wants_thought, provider) -> dict:
+        """Re-prompt for a plain spoken line and clean it; skip the turn if it's junk."""
+        raw = provider.complete(role, prompt + _PROSE_FALLBACK)
+        self.last_usage = dict(provider.last_usage)
+        clue, residue = clean_clue(raw)
+        if not is_usable_line(clue):
+            raise AgentOutputError(f"{getattr(self, 'name', role)}: no usable line from prose fallback")
+        payload: dict = {"kind": allowed[0], "text": clue}
+        if wants_thought:
+            thought = (getattr(provider, "last_reasoning", "") or "").strip() or extract_reasoning(raw) or residue
+            if thought:
+                payload["thought"] = thought[:600]
+        return payload
+
+    @staticmethod
+    def _with_reasoning(payload: dict, provider, raw: str, wants_thought: bool) -> dict:
+        """Surface the model's *thinking* as the ``thought`` when it gave none.
+
+        Reasoning models return their chain-of-thought separately
+        (``provider.last_reasoning``, from vLLM's reasoning parser) or inline in
+        ``<think>`` tags.  When the agent wants a ``thought`` and the structured
+        field was empty (the fallback path), we fill it from that reasoning so the
+        UI's mind-reader has something real to show.  It rides only on this event's
+        payload — the blackboard and memory share ``text`` alone, so a peer never
+        reads another mind's thinking."""
+        if not wants_thought or payload.get("thought"):
+            return payload
+        reasoning = (getattr(provider, "last_reasoning", "") or "").strip() or extract_reasoning(raw)
+        if reasoning:
+            payload["thought"] = reasoning
+        return payload
 
     def _complete(self, role: str, prompt: str) -> str:
         """Route to the provider for this agent's profile and record token usage."""

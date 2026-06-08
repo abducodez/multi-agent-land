@@ -30,6 +30,7 @@ raw completion exactly as :meth:`complete` does.  ``instructor`` is likewise
 lazy-imported, so the offline path needs neither it nor ``litellm``.  See
 ADR-0016.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -61,6 +62,7 @@ class LiteLLMProvider(ModelProvider):
     """Validation retries for :meth:`complete_structured` (live structured output)."""
     _last_usage: dict = field(default_factory=dict, init=False, repr=False)
     _last_cost: float = field(default=0.0, init=False, repr=False)
+    _last_reasoning: str = field(default="", init=False, repr=False)
 
     def complete(self, role: str, prompt: str) -> str:
         litellm = self._litellm()
@@ -105,8 +107,7 @@ class LiteLLMProvider(ModelProvider):
             import instructor
         except ImportError as exc:  # pragma: no cover - exercised only when unset
             raise ImportError(
-                "instructor package is required for complete_structured(). "
-                "Install it with: uv pip install instructor"
+                "instructor package is required for complete_structured(). Install it with: uv pip install instructor"
             ) from exc
 
         client = instructor.from_litellm(litellm.completion)
@@ -129,6 +130,16 @@ class LiteLLMProvider(ModelProvider):
             raise
 
     @property
+    def last_reasoning(self) -> str:
+        """The model's separated thinking from the most recent call, or "".
+
+        Reasoning models served on vLLM (e.g. the gemma4 / qwen3 reasoning parsers)
+        return their chain-of-thought in ``message.reasoning_content``, leaving
+        ``content`` for the answer. We surface it so the UI can show it under the
+        mind-reader toggle — it is never fed back into any agent's prompt."""
+        return self._last_reasoning
+
+    @property
     def last_cost(self) -> float:
         """Metered USD cost of the most recent call (0.0 offline)."""
         return self._last_cost
@@ -142,8 +153,7 @@ class LiteLLMProvider(ModelProvider):
             import litellm
         except ImportError as exc:  # pragma: no cover - exercised only when unset
             raise ImportError(
-                "litellm package is required for LiteLLMProvider. "
-                "Install it with: uv pip install litellm"
+                "litellm package is required for LiteLLMProvider. Install it with: uv pip install litellm"
             ) from exc
         return litellm
 
@@ -167,14 +177,13 @@ class LiteLLMProvider(ModelProvider):
         if usage is not None:
             prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
             completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
-            total_tokens = int(getattr(usage, "total_tokens", 0) or 0) or (
-                prompt_tokens + completion_tokens
-            )
+            total_tokens = int(getattr(usage, "total_tokens", 0) or 0) or (prompt_tokens + completion_tokens)
         else:
             prompt_tokens, completion_tokens = estimate_tokens(prompt), estimate_tokens(text)
             total_tokens = prompt_tokens + completion_tokens
         cost = self._extract_cost(litellm, response)
         self._last_cost = cost
+        self._last_reasoning = self._extract_reasoning(response)
         self._last_usage = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -184,12 +193,33 @@ class LiteLLMProvider(ModelProvider):
 
     def _zero_usage(self) -> None:
         self._last_cost = 0.0
+        self._last_reasoning = ""
         self._last_usage = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
             "cost_usd": 0.0,
         }
+
+    @staticmethod
+    def _extract_reasoning(response) -> str:
+        """Pull the model's separated thinking from *response*, or "".
+
+        vLLM reasoning parsers surface it as ``message.reasoning_content`` (some
+        providers as ``reasoning`` or under ``provider_specific_fields``). All
+        access is defensive — a non-reasoning model simply yields ""."""
+        try:
+            message = response.choices[0].message
+        except (AttributeError, IndexError, TypeError):
+            return ""
+        candidates = [getattr(message, "reasoning_content", None), getattr(message, "reasoning", None)]
+        psf = getattr(message, "provider_specific_fields", None)
+        if isinstance(psf, dict):
+            candidates += [psf.get("reasoning_content"), psf.get("reasoning")]
+        for value in candidates:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
 
     @staticmethod
     def _extract_cost(litellm, response) -> float:

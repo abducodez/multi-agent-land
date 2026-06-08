@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.core.structured import json_instruction, parse_agent_output
+from src.core.structured import extract_reasoning, json_instruction, parse_agent_output
 
 
 class TestJsonInstruction:
@@ -63,3 +63,67 @@ class TestParseAgentOutput:
         raw = "plain prose"
         result = parse_agent_output(raw, ["judge.verdict", "agent.spoke"], "judge.verdict")
         assert result["kind"] == "judge.verdict"
+
+
+class TestParserHardening:
+    """The leak we saw live: a reasoning model dumps its chain-of-thought (which
+    names the secret word) and the old parser shipped it as the spoken line."""
+
+    def test_strips_think_block_and_parses_json(self):
+        raw = '<think>the word is COFFEE, stay vague</think>\n{"kind":"agent.spoke","text":"Fuel for the morning."}'
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "Fuel for the morning."
+        assert "COFFEE" not in str(r).upper()
+
+    def test_strips_code_fences(self):
+        raw = '```json\n{"kind":"agent.spoke","text":"fenced line"}\n```'
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "fenced line"
+
+    def test_prefers_last_balanced_object(self):
+        # A model that plans in a draft object then emits the real one puts it last.
+        raw = 'draft {"kind":"agent.spoke","text":"junk"} final {"kind":"agent.spoke","text":"the real line"}'
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "the real line"
+
+    def test_handles_braces_inside_string_values(self):
+        # The old flat \\{[^{}]+\\} regex truncated on inner braces; the scan is string-aware.
+        raw = '{"kind":"agent.spoke","text":"a set {of} braces inside"}'
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "a set {of} braces inside"
+
+    def test_salvages_quoted_text_from_scratchpad(self):
+        raw = 'We need JSON. Thought: I think the word is COFFEE. Text: "A dark, steaming brew." Done.'
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "A dark, steaming brew."
+        assert "COFFEE" not in r["text"].upper()
+        assert r.get("_raw_fallback") is True
+
+    def test_pure_scratchpad_degrades_to_safe_placeholder(self):
+        raw = "We need to output JSON. Thought: I think the word is COFFEE. We"
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert "COFFEE" not in r["text"].upper()
+        assert "JSON" not in r["text"].upper()
+
+    def test_salvages_trailing_unterminated_quote(self):
+        # Verbatim from the live ledger: a reasoning model started drafting the clue.
+        raw = 'But must be one or two sentences. "A dark brew steams from a chipped mug'
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "A dark brew steams from a chipped mug"
+
+    def test_drops_meta_commentary_sentences(self):
+        raw = "I should keep it vague. A dark brew warms the morning."
+        r = parse_agent_output(raw, ["agent.spoke"], "agent.spoke")
+        assert r["text"] == "A dark brew warms the morning."
+
+
+class TestExtractReasoning:
+    def test_pulls_inline_think_block(self):
+        assert extract_reasoning("<think>plan: be vague</think> the clue") == "plan: be vague"
+
+    def test_empty_when_no_tags(self):
+        assert extract_reasoning("just an answer, no tags") == ""
+
+    def test_trims_to_limit(self):
+        long = "x" * 2000
+        assert len(extract_reasoning(f"<think>{long}</think>", limit=100)) == 100

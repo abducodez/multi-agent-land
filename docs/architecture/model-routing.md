@@ -99,8 +99,10 @@ profiles:
   tiny:
     endpoint: nemotron-3-nano-4b   # catalogue key (modal/catalogue.py)
     temperature: 0.7
-    max_tokens: 160
-  # fast / balanced / strong follow the same shape (see the file)
+    max_tokens: 192
+  # fast / balanced / strong follow the same shape (see the file). Note the
+  # balanced/strong tiers are reasoning models (gemma4 reasoning parser) and carry
+  # a much larger max_tokens so their thinking + answer fit (ADR-0023).
 ```
 
 `Registry.from_dir()` resolves each `endpoint:` against the catalogue (via

@@ -20,6 +20,7 @@ Both paths are model/provider-agnostic: the live constraint rides on the same
 ``{kind, text, …}`` contract the parser produces, so downstream
 (``Event`` construction, conductor, ledger) is identical either way.
 """
+
 from __future__ import annotations
 
 import json
@@ -32,11 +33,13 @@ if TYPE_CHECKING:
 
 # ── output schema ─────────────────────────────────────────────────────────────
 
+
 class AgentOutputError(ValueError):
     """Raised when output cannot be normalised to a valid event payload."""
 
 
 # ── validated output model (live path) ─────────────────────────────────────────
+
 
 def build_output_model(
     allowed_kinds: list[str],
@@ -79,6 +82,7 @@ def build_output_model(
 
 # ── prompt instruction ────────────────────────────────────────────────────────
 
+
 def json_instruction(allowed_kinds: list[str], extra_fields: list[str] | None = None) -> str:
     """Return the JSON constraint block appended to every agent prompt.
 
@@ -90,16 +94,93 @@ def json_instruction(allowed_kinds: list[str], extra_fields: list[str] | None = 
     kinds_str = " | ".join(allowed_kinds)
     return (
         "\n\nOUTPUT FORMAT\n"
-        "Reply with a single JSON object and nothing else — no prose before or after.\n"
+        "Reply with a single JSON object and NOTHING else. No analysis, no reasoning, "
+        "no <think> blocks, no markdown fences, no text before or after the JSON.\n"
         f'Schema: {{"{field_list}": "..."}}\n'
         f"kind must be one of: {kinds_str}\n"
-        "text must be one or two sentences, vivid and specific.\n"
+        "text must be one or two sentences, vivid and specific — your line, never your reasoning.\n"
+        "If you were given a secret word, never spell or quote it; describe it only.\n"
         "Example: "
         '{"kind": "' + allowed_kinds[0] + '", "text": "A brief, evocative response."}'
     )
 
 
 # ── parser ────────────────────────────────────────────────────────────────────
+
+# Reasoning models (and chat models told to "think") often wrap their scratchpad
+# in tagged blocks or fence the JSON.  We strip those before parsing so a stray
+# chain-of-thought never reaches the ledger as the spoken line — the leak we saw
+# live, where "…I think the word is COFFEE…" was emitted as an agent's clue.
+_REASONING_BLOCK = re.compile(
+    r"<\s*(think|thinking|reason|reasoning|analysis|scratchpad|monologue)\s*>(.*?)<\s*/\s*\1\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_CODE_FENCE = re.compile(r"```[a-zA-Z]*\n?|\n?```")
+# Sentences/lines that are obviously scratchpad or meta-commentary about the task —
+# used only when salvaging a fallback line, so a "thinking out loud" model's notes
+# ("But it must be one or two sentences…") don't become the spoken clue.
+_SCRATCHPAD_LINE = re.compile(
+    r"^\s*(we (?:need|must|should|are|have)|the (?:schema|text|clue|answer|response|user)|"
+    r"thought\s*:|mood\s*:|json\s*:|output\b|let'?s|but\b|must\b|i (?:need|should|must|will|think|am|'ll)|"
+    r"(?:one|two) sentences?|remember\b|note\b|so\b|okay\b|ok\b|first\b|now\b)",
+    re.IGNORECASE,
+)
+# A quoted text value — from a partial JSON (``"text": "…"``) or a prose label (``Text: "…"``).
+_TEXT_VALUE = re.compile(r'(?:"text"|text)\s*:\s*"([^"]{3,})"', re.IGNORECASE)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _strip_reasoning(raw: str) -> str:
+    """Remove tagged reasoning blocks and code fences from *raw*."""
+    raw = _REASONING_BLOCK.sub(" ", raw or "")
+    raw = _CODE_FENCE.sub("", raw)
+    return raw.strip()
+
+
+def extract_reasoning(raw: str, limit: int = 600) -> str:
+    """Return inline ``<think>…</think>`` reasoning from *raw* (joined, trimmed).
+
+    Empty when the model emitted no tagged reasoning — e.g. when vLLM already split
+    it into ``reasoning_content`` (the provider captures that separately). Used to
+    populate the mind-reader ``thought``; never fed back into any agent's prompt."""
+    blocks = [m.group(2).strip() for m in _REASONING_BLOCK.finditer(raw or "")]
+    joined = " ".join(b for b in blocks if b)
+    return joined[:limit].strip()
+
+
+def _balanced_objects(text: str) -> list[str]:
+    """Return every top-level ``{...}`` substring in *text*, in order.
+
+    A string-aware brace scan, so nested objects and braces inside string values
+    don't truncate the match the way a flat ``\\{[^{}]+\\}`` regex would.
+    """
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objects.append(text[start : i + 1])
+                start = -1
+    return objects
+
 
 def parse_agent_output(
     raw: str,
@@ -109,30 +190,99 @@ def parse_agent_output(
     """Parse raw model output into a validated event payload dict.
 
     Strategy:
-      1. Try strict JSON parse.
-      2. Try extracting the first {...} block from mixed prose+JSON output.
-      3. Fall back to wrapping raw text in the fallback kind.
+      1. Strip tagged reasoning blocks and code fences.
+      2. Parse the LAST balanced ``{...}`` object — a reasoning model that emits
+         scratchpad before its answer puts the real payload last.
+      3. Fall back to *salvaging* a safe line (never the raw chain-of-thought).
 
-    Returns a dict with at least {"kind": str, "text": str}.
-    The caller is responsible for constructing the Event from this dict.
+    Returns a dict with at least ``{"kind": str, "text": str}``.  The caller
+    constructs the Event from this dict.
     """
-    raw = raw.strip()
+    cleaned = _strip_reasoning(raw)
 
-    # --- attempt 1: direct JSON parse
-    if raw.startswith("{"):
-        result = _try_parse(raw, allowed_kinds, fallback_kind)
+    for candidate in reversed(_balanced_objects(cleaned)):
+        result = _try_parse(candidate, allowed_kinds, fallback_kind)
         if result is not None:
             return result
 
-    # --- attempt 2: extract first {...} block (model added prose)
-    match = re.search(r"\{[^{}]+\}", raw, re.DOTALL)
-    if match:
-        result = _try_parse(match.group(), allowed_kinds, fallback_kind)
-        if result is not None:
-            return result
+    # No parseable object — salvage a clean line, never the scratchpad.
+    return {"kind": fallback_kind, **_salvage_text(cleaned), "_raw_fallback": True}
 
-    # --- fallback: wrap raw text
-    return {"kind": fallback_kind, "text": raw[:512], "_raw_fallback": True}
+
+def _salvage_text(cleaned: str) -> dict[str, str]:
+    """Recover a safe spoken line from unparseable output.
+
+    In order: the quoted value the model intended (closed ``"text": "…"`` /
+    ``Text: "…"``); the tail after a lone opening quote (a clue the model began
+    drafting before it was cut off); then the substantive sentences with
+    scratchpad/meta dropped.  Only a neutral placeholder if nothing survives — so a
+    "thinking out loud" monologue never becomes the spoken line.
+    """
+    m = _TEXT_VALUE.search(cleaned)
+    if m:
+        return {"text": m.group(1).strip()}
+    # A lone (unterminated) opening quote — the model started drafting the clue.
+    if cleaned.count('"') % 2 == 1:
+        tail = cleaned.rsplit('"', 1)[-1].strip()
+        if len(tail) >= 8 and not _SCRATCHPAD_LINE.match(tail):
+            return {"text": tail[:280]}
+    kept = [
+        s.strip(" \"'")
+        for s in _SENTENCE_SPLIT.split(cleaned)
+        if len(s.strip()) >= 5 and not s.lstrip().startswith("{") and not _SCRATCHPAD_LINE.match(s.strip())
+    ]
+    if kept:
+        return {"text": " ".join(kept)[:280]}
+    return {"text": "…"}
+
+
+# Meta-commentary / instruction-echo a weak model leaks when asked for JSON: drop any
+# sentence matching this so the model's scratchpad — or the secret word it names while
+# reasoning ("Secret word is COFFEE…") — never becomes the spoken line.
+_META = re.compile(
+    r"secret word|the word is|my word|need to|have to|also include|must (?:be|include|output|name|provide)|"
+    r"\bjson\b|\bschema\b|\bmood\b|\bthought\b|one or two sentence|vivid and specific|"
+    r"\bagent\.\w+|brief,? evocative|output format|\bfield\b",
+    re.IGNORECASE,
+)
+_EXAMPLE_ECHO = "a brief, evocative response"
+
+
+def clean_clue(raw: str) -> tuple[str, str]:
+    """Extract a clean spoken line from PROSE output, plus the residue.
+
+    Used on the live fallback when a model ignores the JSON schema and just talks
+    (often a small or reasoning model).  Returns ``(clue, residue)``: *clue* is the
+    spoken line with reasoning blocks and meta-commentary sentences stripped (``""``
+    when nothing usable survives — the caller then skips the turn rather than ship
+    junk); *residue* is the stripped thinking, usable as the private mind-reader
+    thought (never shown to other agents)."""
+    residue: list[str] = [m.group(2).strip() for m in _REASONING_BLOCK.finditer(raw or "")]
+    cleaned = _strip_reasoning(raw)
+
+    m = _TEXT_VALUE.search(cleaned)
+    if m:
+        return m.group(1).strip(), " ".join(p for p in residue if p)[:600].strip()
+
+    if cleaned.count('"') % 2 == 1:
+        tail = cleaned.rsplit('"', 1)[-1].strip()
+        if len(tail) >= 8 and not _META.search(tail):
+            cleaned = tail
+
+    kept: list[str] = []
+    for s in _SENTENCE_SPLIT.split(cleaned):
+        sentence = s.strip()
+        if len(sentence) < 6 or sentence.startswith("{"):
+            continue
+        (residue if _META.search(sentence) else kept).append(sentence.strip(" \"'"))
+
+    return " ".join(kept)[:300].strip(), " ".join(p for p in residue if p)[:600].strip()
+
+
+def is_usable_line(text: str) -> bool:
+    """True when *text* is a real spoken line — not empty, a ``…`` placeholder, or the example."""
+    normalized = (text or "").strip().lower().strip(" .…\"'")
+    return len(normalized) >= 6 and normalized != _EXAMPLE_ECHO
 
 
 def _try_parse(s: str, allowed_kinds: list[str], fallback_kind: str) -> dict[str, Any] | None:

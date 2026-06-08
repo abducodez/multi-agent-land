@@ -56,3 +56,45 @@ class TestEpisodicMemory:
         mem = EpisodicMemory("x")
         result = mem.format_for_prompt(())
         assert "no prior" in result.lower() or result
+
+    def test_run_started_renders_goal_not_raw_payload(self):
+        # run.started carries {seed, goal} and is globally visible; the old formatter
+        # dumped str(payload) — leaking the raw seed into every prompt. Now it renders
+        # the shared goal only, never the seed dict.
+        events = (
+            Event(
+                run_id="r",
+                turn=0,
+                kind="run.started",
+                actor="conductor",
+                payload={"seed": "s3cr3t-seed", "goal": "catch the spy"},  # type: ignore[arg-type]
+            ),
+            Event(run_id="r", turn=1, kind="agent.spoke", actor="x", payload={"text": "hello"}),  # type: ignore[arg-type]
+        )
+        out = EpisodicMemory("x").format_for_prompt(events)
+        assert "s3cr3t-seed" not in out
+        assert "catch the spy" in out
+        assert "hello" in out
+
+
+class _RaisingIndex:
+    """A memory index whose backend is down — every call throws."""
+
+    def index(self, events):
+        raise RuntimeError("backend down")
+
+    def search(self, query, k):
+        raise RuntimeError("backend down")
+
+
+class TestSalienceIndexResilience:
+    def test_index_failure_degrades_to_keyword(self):
+        # ADR-0018: the index is a derived, rebuildable lens, never load-bearing.
+        # A flaky backend must degrade to keyword relevance, not crash the turn —
+        # this is what kept the salience-using spy agents silent on the live path.
+        from src.core.memory import SalienceMemory
+
+        events = (Event(run_id="r", turn=1, kind="agent.spoke", actor="a", payload={"text": "warm fuel"}),)  # type: ignore[arg-type]
+        mem = SalienceMemory("a", top_k=3, index=_RaisingIndex())
+        out = mem.format_for_prompt(events, current_turn=1, query="warm")  # must not raise
+        assert "warm fuel" in out

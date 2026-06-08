@@ -289,11 +289,13 @@ kind can read that kind — `gossip` builds on the rumour, the chain actually
 converges, and your custom kinds are first-class. (Optionally add a scenario-level
 `shared_kinds: [...]` so a whole cast can see a working kind without subscribing.)
 
-Either way, also note (review finding #2) that peer content lives in
-`projection.agent_notes` but is *not* injected into the prompt — only
-`current_scene`, the agent's own memory, and visitor lines are
-(`src/core/context.py:58`). For a chain that reasons over peers, route a "what your
-peers just did" block into the prompt alongside the visibility fix.
+Peer content is now injected (this was review finding #2, fixed in ADR-0023):
+`ContextBuilder` surfaces `projection.agent_notes` as a **WHAT'S BEEN SAID** block
+alongside `current_scene`, the agent's own memory, and visitor lines
+(`src/core/context.py`). So within a round the cast already reasons over what its
+peers just said — the gap that made small models loop on one line. The `subscribes_to`
+visibility fix above still matters for cross-*round* recall via memory; the blackboard
+covers the live table.
 
 ### Step 7 — Rendering: free for text, custom for shapes
 

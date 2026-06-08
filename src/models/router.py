@@ -28,12 +28,14 @@ from src.models.openai_compat import has_live_credentials
 from src.models.provider import DeterministicTinyModel, ModelProvider
 
 # Decoding defaults per profile.  Smaller models stay cooler and shorter; the
-# strong judge/reflector tier gets more room.  Override per-profile via config.
+# balanced/strong tiers are reasoning models (they think before answering, and the
+# thinking counts against max_tokens), so they get real room or they truncate
+# mid-thought and emit an empty answer.  Override per-profile via config/models.yaml.
 _PROFILE_DECODING: dict[str, dict[str, float | int]] = {
-    "tiny": {"temperature": 0.7, "max_tokens": 160},
-    "fast": {"temperature": 0.9, "max_tokens": 220},
-    "balanced": {"temperature": 0.8, "max_tokens": 320},
-    "strong": {"temperature": 0.6, "max_tokens": 480},
+    "tiny": {"temperature": 0.7, "max_tokens": 192},
+    "fast": {"temperature": 0.9, "max_tokens": 320},
+    "balanced": {"temperature": 0.8, "max_tokens": 768},
+    "strong": {"temperature": 0.6, "max_tokens": 1024},
 }
 
 

@@ -117,3 +117,29 @@ class TestManifestAgentReflection:
         agent = _Reflector(_router())
         assert "agent.reflected" not in agent._content_kinds()
         assert agent._content_kinds() == ["world.observed"]
+
+
+class _Provider:
+    def __init__(self, reasoning: str = "") -> None:
+        self.last_reasoning = reasoning
+
+
+class TestThoughtFromReasoning:
+    """The mind-reader ``thought`` is filled from the model's reasoning only when the
+    agent wants a thought and the model gave none (the fallback path)."""
+
+    def test_fills_thought_from_provider_reasoning(self):
+        out = ManifestAgent._with_reasoning({"text": "clue"}, _Provider("the real thinking"), "", True)
+        assert out["thought"] == "the real thinking"
+
+    def test_does_not_override_an_explicit_thought(self):
+        out = ManifestAgent._with_reasoning({"text": "clue", "thought": "given"}, _Provider("other"), "", True)
+        assert out["thought"] == "given"
+
+    def test_skips_when_agent_wants_no_thought(self):
+        out = ManifestAgent._with_reasoning({"text": "clue"}, _Provider("ignored"), "", False)
+        assert "thought" not in out
+
+    def test_falls_back_to_inline_think_tags(self):
+        out = ManifestAgent._with_reasoning({"text": "x"}, _Provider(""), "<think>inline plan</think> x", True)
+        assert out["thought"] == "inline plan"

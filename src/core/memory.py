@@ -27,8 +27,10 @@ and used only to score the relevance term over events the visibility filter
 already admits.  Wipe it and it rebuilds from the ledger; with it unattached
 (the offline default) relevance is keyword overlap, exactly as below.
 """
+
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -37,6 +39,20 @@ from src.core.events import Event
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.core.memory_index import MemoryIndex
+
+logger = logging.getLogger(__name__)
+
+
+def _displayable(event: Event) -> str:
+    """A safe one-line rendering of an event for a prompt.
+
+    Prefers ``text``/``summary``; falls back to the shared ``goal`` carried by
+    ``run.started``.  Never ``str(payload)`` — that dumped whole payload dicts
+    (e.g. the run seed) into every agent's context, which is both noise and, for a
+    hidden-word game, a leak vector."""
+    payload = event.payload
+    return payload.get("text") or payload.get("summary") or payload.get("goal") or ""
+
 
 # ── importance weights by event kind ─────────────────────────────────────────
 
@@ -47,7 +63,7 @@ _KIND_IMPORTANCE: dict[str, float] = {
     "agent.thought": 0.4,
     "agent.reflected": 0.85,  # reflections are high-value compact memories
     "judge.verdict": 0.9,
-    "user.injected": 0.95,    # visitor events are always salient
+    "user.injected": 0.95,  # visitor events are always salient
     "hypothesis.proposed": 0.75,
     "clue.found": 0.8,
     "verdict.final": 1.0,
@@ -58,6 +74,7 @@ _GLOBALLY_VISIBLE: frozenset[str] = frozenset(
 )
 
 # ── layer 1: episodic memory ─────────────────────────────────────────────────
+
 
 @dataclass
 class EpisodicMemory:
@@ -71,24 +88,17 @@ class EpisodicMemory:
     max_recent: int = 8
 
     def visible(self, events: tuple[Event, ...]) -> list[Event]:
-        result = [
-            e for e in events
-            if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE
-        ]
-        return result[-self.max_recent:]
+        result = [e for e in events if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE]
+        return result[-self.max_recent :]
 
     def format_for_prompt(self, events: tuple[Event, ...]) -> str:
         recalled = self.visible(events)
-        if not recalled:
-            return "(no prior memory)"
-        lines = []
-        for e in recalled:
-            text = e.payload.get("text") or e.payload.get("summary") or str(e.payload)
-            lines.append(f"[turn {e.turn:03d}][{e.kind}] {text}")
-        return "\n".join(lines)
+        lines = [f"[turn {e.turn:03d}][{e.kind}] {text}" for e in recalled if (text := _displayable(e))]
+        return "\n".join(lines) if lines else "(no prior memory)"
 
 
 # ── layer 2: salience-scored memory ──────────────────────────────────────────
+
 
 @dataclass
 class SalienceMemory:
@@ -138,24 +148,15 @@ class SalienceMemory:
         importance = _KIND_IMPORTANCE.get(event.kind, 0.5)
         if relevance is None:
             relevance = self._keyword_relevance(event, query)
-        return (
-            self.w_relevance * relevance
-            + self.w_recency * recency
-            + self.w_importance * importance
-        )
+        return self.w_relevance * relevance + self.w_recency * recency + self.w_importance * importance
 
     def _candidates(self, events: tuple[Event, ...]) -> list[Event]:
         """Ledger-derived visibility filter — unchanged whether or not an index
         is attached: an agent only ever recalls its own events plus globally
         visible kinds."""
-        return [
-            e for e in events
-            if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE
-        ]
+        return [e for e in events if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE]
 
-    def _relevance_map(
-        self, candidates: list[Event], query: str
-    ) -> dict[str, float] | None:
+    def _relevance_map(self, candidates: list[Event], query: str) -> dict[str, float] | None:
         """When an index is attached, derive a semantic relevance score per
         candidate event (id → score in [0,1] by descending rank); else ``None``
         so :meth:`score` uses keyword overlap.
@@ -166,8 +167,15 @@ class SalienceMemory:
         """
         if self.index is None or not query or not candidates:
             return None
-        self.index.index(tuple(candidates))
-        hits = self.index.search(query, k=len(candidates))
+        # The index is a derived, rebuildable lens (ADR-0018) — never load-bearing.
+        # If it hiccups (a flaky hosted backend, a transient mem0 error), degrade to
+        # keyword relevance rather than let one agent's recall crash its whole turn.
+        try:
+            self.index.index(tuple(candidates))
+            hits = self.index.search(query, k=len(candidates))
+        except Exception as exc:  # noqa: BLE001 — relevance is best-effort, never fatal
+            logger.warning("memory index unavailable, using keyword relevance: %s", exc)
+            return None
         eligible = {e.id for e in candidates}
         ranked = [h.id for h in hits if h.id in eligible]
         if not ranked:
@@ -192,9 +200,7 @@ class SalienceMemory:
         top = scored[: self.top_k]
         return sorted(top, key=lambda e: e.turn)
 
-    def format_for_prompt(
-        self, events: tuple[Event, ...], current_turn: int, query: str
-    ) -> str:
+    def format_for_prompt(self, events: tuple[Event, ...], current_turn: int, query: str) -> str:
         candidates = self._candidates(events)
         relevance = self._relevance_map(candidates, query)
 
@@ -204,16 +210,14 @@ class SalienceMemory:
 
         top = sorted(candidates, key=_score, reverse=True)[: self.top_k]
         recalled = sorted(top, key=lambda e: e.turn)
-        if not recalled:
-            return "(no salient memories)"
-        lines = []
-        for e in recalled:
-            text = e.payload.get("text") or e.payload.get("summary") or str(e.payload)
-            lines.append(f"[turn {e.turn:03d}][{e.kind}][sal={_score(e):.2f}] {text}")
-        return "\n".join(lines)
+        lines = [
+            f"[turn {e.turn:03d}][{e.kind}][sal={_score(e):.2f}] {text}" for e in recalled if (text := _displayable(e))
+        ]
+        return "\n".join(lines) if lines else "(no salient memories)"
 
 
 # ── layer 3: reflection trigger ───────────────────────────────────────────────
+
 
 @dataclass
 class ReflectionTracker:
@@ -231,14 +235,7 @@ class ReflectionTracker:
 
     def observe(self, events: tuple[Event, ...]) -> bool:
         """Return True when a reflection should be emitted this turn."""
-        visible_count = sum(
-            1 for e in events
-            if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE
-        )
-        due = (
-            visible_count > 0
-            and visible_count != self._seen_count
-            and visible_count % self.threshold == 0
-        )
+        visible_count = sum(1 for e in events if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE)
+        due = visible_count > 0 and visible_count != self._seen_count and visible_count % self.threshold == 0
         self._seen_count = visible_count
         return due

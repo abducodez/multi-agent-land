@@ -68,7 +68,7 @@ class TestModelRouterOnline:
         router = ModelRouter(offline=False)
         provider = router.for_profile("balanced")
         assert provider.model == "mixtral-8x7b"
-        assert provider.max_tokens == 320  # _PROFILE_DECODING["balanced"]
+        assert provider.max_tokens == 768  # _PROFILE_DECODING["balanced"] (reasoning headroom)
 
 
 class TestModelRouterCatalogueEndpoint:
@@ -92,7 +92,7 @@ class TestModelRouterCatalogueEndpoint:
         assert isinstance(provider, LiteLLMProvider)
         assert provider.model == "openai/google/gemma-4-12B"
         assert "gemma-4-12b" in provider.api_base
-        assert provider.max_tokens == 320  # balanced tier decoding
+        assert provider.max_tokens == 768  # balanced tier decoding (reasoning headroom)
 
     def test_unbound_specialist_uses_balanced_decoding(self, monkeypatch):
         # nemotron-cascade-14b-thinking has profile=None → balanced decoding defaults.
@@ -100,14 +100,14 @@ class TestModelRouterCatalogueEndpoint:
         router = ModelRouter(offline=False)
         provider = router.for_profile("nemotron-cascade-14b-thinking")
         assert isinstance(provider, LiteLLMProvider)
-        assert provider.max_tokens == 320
+        assert provider.max_tokens == 768  # balanced tier decoding
 
     def test_unknown_key_degrades_to_fast_tier(self, monkeypatch):
         monkeypatch.setenv("MODEL_FAST", "fallback-model")
         router = ModelRouter(offline=False)
         provider = router.for_profile("not-a-real-endpoint")
         assert provider.model == "fallback-model"
-        assert provider.max_tokens == 220  # fast tier decoding
+        assert provider.max_tokens == 320  # fast tier decoding
 
 
 class TestFromEnv:

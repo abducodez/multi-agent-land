@@ -28,15 +28,17 @@ Long-running support (ADR-0013):
 The observer is decoupled: the conductor notifies it after every append but
 the observer never participates in cognition.
 """
+
 from __future__ import annotations
 
+import logging
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src.core.events import Event
-from src.core.governor import Governor
+from src.core.governor import BudgetExceeded, Governor
 from src.core.ledger import Ledger
 from src.core.projections import StageProjection, rebuild_stage
 from src.scenarios.base import Scenario
@@ -44,6 +46,8 @@ from src.scenarios.base import Scenario
 if TYPE_CHECKING:
     from src.agents.base import Agent
     from src.core.observer import Observer
+
+logger = logging.getLogger(__name__)
 
 
 class Conductor:
@@ -65,6 +69,10 @@ class Conductor:
         self.run_id = str(uuid4())
         self.turn = 0
         self._trigger_queue: deque[tuple["Agent", Event]] = deque()
+        # Agents that failed to act this run, newest last — a single agent's crash
+        # is isolated (the rest of the cast still acts) and recorded here for the UI
+        # and tests, never swallowed silently (ADR-0023).
+        self.agent_errors: list[dict[str, str]] = []
 
     # ── projection ────────────────────────────────────────────────────────────
 
@@ -79,6 +87,7 @@ class Conductor:
         if self.observer:
             self.observer.reset()
         self._trigger_queue.clear()
+        self.agent_errors.clear()
         self.run_id = str(uuid4())
         self.turn = 0
         self.governor.reset()
@@ -157,18 +166,34 @@ class Conductor:
 
     def _run_agent(self, agent: "Agent", projection: StageProjection) -> None:
         self.governor.check(self.turn)
-        event = agent.act(
-            run_id=self.run_id,
-            turn=self.turn,
-            projection=projection,
-            recent_events=self.ledger.events,
-        )
+        try:
+            event = agent.act(
+                run_id=self.run_id,
+                turn=self.turn,
+                projection=projection,
+                recent_events=self.ledger.events,
+            )
+        except BudgetExceeded:
+            raise  # an intentional stop from the governor — never swallow it
+        except Exception as exc:  # noqa: BLE001 — one agent's crash must not silence the cast
+            self._note_agent_error(agent, exc)
+            return
         usage = getattr(agent, "last_usage", {})
         tokens = int(usage.get("total_tokens", 0) or 0)
         cost_usd = float(usage.get("cost_usd", 0.0) or 0.0)
         self.governor.record_call(tokens=tokens, cost_usd=cost_usd)
         self._append(event)
         projection.apply(event)
+
+    def _note_agent_error(self, agent: "Agent", exc: Exception) -> None:
+        """Record (and log) an agent's failed turn without aborting the tick.
+
+        Resilience over silence: if one mind throws (a flaky model call, a memory
+        index hiccup), the others still get their turn this round, and the failure
+        is visible on ``agent_errors`` rather than crashing the whole loop."""
+        name = getattr(agent, "name", agent.__class__.__name__)
+        self.agent_errors.append({"turn": str(self.turn), "agent": name, "error": str(exc)})
+        logger.warning("agent %s failed on turn %d: %s", name, self.turn, exc, exc_info=exc)
 
     def _maybe_snapshot(self) -> None:
         if not self.snapshot_every or not self.snapshot_path:

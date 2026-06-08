@@ -130,3 +130,57 @@ class TestConductorCostMetering:
         c.reset("seed")
         c.step()
         assert c.governor.stats["spend_usd"] == 0.0
+
+
+class _ExplodingAgent:
+    """An agent whose turn always raises — stands in for a flaky live model call
+    or a memory-index hiccup (the live failure that silenced the whole spy cast)."""
+
+    name = "boom"
+    manifest = AgentManifest(name="boom", persona="p", may_emit=["agent.spoke"], schedule=ScheduleConfig(tick_every=1))
+
+    def __init__(self) -> None:
+        self.last_usage: dict = {}
+
+    def act(self, run_id, turn, projection, recent_events) -> Event:
+        raise RuntimeError("kaboom")
+
+
+class _SpeakingAgent:
+    name = "speaker"
+    manifest = AgentManifest(
+        name="speaker", persona="p", may_emit=["agent.spoke"], schedule=ScheduleConfig(tick_every=1)
+    )
+
+    def __init__(self) -> None:
+        self.last_usage: dict = {}
+
+    def act(self, run_id, turn, projection, recent_events) -> Event:
+        return Event(run_id=run_id, turn=turn, kind="agent.spoke", actor="speaker", payload={"text": "hi"})
+
+
+class TestConductorResilience:
+    def test_one_agent_crash_does_not_silence_the_cast(self):
+        # boom is scheduled FIRST: the old loop aborted the tick after it raised,
+        # so every later agent went silent (the "only spy-cara talks" symptom).
+        scenario = Scenario(name="s", default_seed="seed", agents=(_ExplodingAgent(), _SpeakingAgent()))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")
+        c.step()
+        spoke = [e for e in c.ledger.events if e.kind == "agent.spoke"]
+        assert any(e.actor == "speaker" for e in spoke), "the rest of the cast must still act"
+        assert c.agent_errors and c.agent_errors[-1]["agent"] == "boom"
+
+    def test_budget_exceeded_still_propagates(self):
+        # Resilience must not swallow the governor's intentional stop: with a
+        # per-turn cap of 1, the SECOND agent trips BudgetExceeded inside
+        # _run_agent — exactly the branch resilience must re-raise, not absorb.
+        import pytest
+
+        from src.core.governor import BudgetExceeded
+
+        scenario = Scenario(name="s", default_seed="seed", agents=(_SpeakingAgent(), _SpeakingAgent()))
+        c = Conductor(scenario=scenario, governor=Governor(max_calls_per_turn=1))
+        c.reset("seed")
+        with pytest.raises(BudgetExceeded):
+            c.step()

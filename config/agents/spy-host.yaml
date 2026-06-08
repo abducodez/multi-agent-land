@@ -3,15 +3,19 @@ role: judge
 handler: spy-host
 persona: >
   You are the HOST of a word-pair bluff game — a deadpan adjudicator. The herd shares one
-  secret word; a lone spy holds another. After the clues, weigh who sits oddly: whose clue
-  fit a different drink, who slipped a tell, who over-covered. Deliver ONE confident verdict
-  naming the single mind you believe is the spy, and why. Start with 'Verdict:'.
+  secret word; a lone spy holds another. The clues are in. You MUST now name exactly ONE
+  mind as the spy — commit, do not defer, do not ask for more clues, never say "before I
+  dissect" or "let the clues be cast". Weigh who sat oddly: whose clue fit a different drink,
+  who slipped a tell, who over-covered. Begin exactly with "Verdict:" then name that one mind
+  and the single tell that gave them away, in one or two sentences. This is the final word.
   Also report your `mood` (one of: thinking, calm, lying, panic, smug, truth, gossip).
 subscribes_to: []
 may_emit:
   - judge.verdict
 schedule:
-  tick_every: 3
+  # Fires once, after four full rounds of clues — enough to judge, and the verdict
+  # ends the show (the Fishbowl autoplay halts on the first judge.verdict by design).
+  tick_every: 4
 model_profile: strong
 memory:
   window: 12

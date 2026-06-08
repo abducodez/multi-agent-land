@@ -4,16 +4,21 @@ goal: >
   Play a word-pair bluff: the herd shares one secret word, a lone spy holds another. Each
   mind gives clues vague enough to blend, sharp enough to convince — the spy wins by hiding
   in the overlap, the herd wins by catching the seam where one word doesn't fit.
+# The public seed/genesis never name the words or who holds what — that would
+# publish the secret to every mind (and the audience) through the run.started and
+# world.observed events, which all agents read. Each mind learns ONLY its own word
+# from its private persona; the spy-host's reveal map unmasks the rest at the verdict.
 default_seed: >
-  Four minds are handed a secret word. Three share COFFEE; one lone spy holds TEA. Give a
-  clue. Blend in, or catch the liar.
+  Four minds, one secret word each. Most were handed the same word; one was slipped its
+  near-twin. Give one clue — blend into the overlap, or catch the mind that doesn't fit.
 example_seeds:
-  - "Four minds, one secret word each: three share COFFEE, one spy holds TEA. Find the seam."
-  - "The herd's word is DOG; the spy was slipped WOLF. One clue each — who doesn't belong?"
-  - "Three minds hold SUMMER; one spy holds WINTER. Stay in the overlap or get caught."
+  - "Four minds, one secret word each — most share it, one does not. Find the seam."
+  - "One clue per mind. Most hold the same word; a lone spy holds its near-twin. Who slips?"
+  - "Three blend, one hides. Each gives a clue vague enough to pass. Catch the odd word out."
 genesis_text: >
-  Here we observe four minds, each clutching a single secret word. Three were given the same
-  word; one was not — and does not yet know how badly it will want a cup of coffee. {seed}
+  Here we observe four minds, each clutching a single secret word — three the same, one
+  slipped a near-twin, and only they know which. Each will offer a clue; watch for the seam
+  where one word doesn't quite fit. {seed}
 cast:
   - spy-cara
   - spy-bex

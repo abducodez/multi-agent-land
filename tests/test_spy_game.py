@@ -57,6 +57,17 @@ def test_secret_words_never_leak_into_public_lines() -> None:
             assert "COFFEE" not in said and "TEA" not in said
 
 
+def test_public_setup_never_names_the_words() -> None:
+    # The seed/goal (run.started) and the narrator's opening (world.observed) are
+    # globally visible — every mind reads them. They must set up the game without
+    # publishing the answer; the words live only in each persona + the host reveal.
+    cond = _run()
+    for e in cond.ledger.events:
+        if e.kind in ("run.started", "world.observed"):
+            blob = str(e.payload).upper()
+            assert "COFFEE" not in blob and "TEA" not in blob
+
+
 def test_host_verdict_unmasks_the_spy() -> None:
     cond = _run()
     verdicts = [e for e in cond.ledger.events if e.kind == "judge.verdict"]

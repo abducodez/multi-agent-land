@@ -5,6 +5,7 @@ response with ``.usage`` and a cost hook) is injected so we can assert the
 provider returns the text and captures tokens + real cost, and that the router
 builds a :class:`LiteLLMProvider` when live and the deterministic stub offline.
 """
+
 from __future__ import annotations
 
 import sys
@@ -87,9 +88,7 @@ class TestLiteLLMProviderComplete:
 
     def test_prefers_hidden_params_cost(self, monkeypatch):
         # When LiteLLM already attached a cost, use it without re-pricing.
-        _install_fake_litellm(
-            monkeypatch, response=_FakeResponse("hi", hidden_cost=0.05), cost_value=999.0
-        )
+        _install_fake_litellm(monkeypatch, response=_FakeResponse("hi", hidden_cost=0.05), cost_value=999.0)
         provider = LiteLLMProvider(model="openai/some/model", api_base="https://x/v1")
         provider.complete("echo", "drop a pebble")
         assert provider.last_usage["cost_usd"] == pytest.approx(0.05)
@@ -162,3 +161,30 @@ class TestRouterBuildsGateway:
         provider = router.for_profile("tiny")
         provider.complete("scene-whisperer", "grow")
         assert "cost_usd" not in provider.last_usage
+
+
+class _Msg:
+    def __init__(self, content, **extra):
+        self.content = content
+        for k, v in extra.items():
+            setattr(self, k, v)
+
+
+def _resp(msg):
+    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+
+
+class TestReasoningCapture:
+    """vLLM reasoning parsers (gemma4/qwen3) split the model's thinking into
+    ``reasoning_content``; we capture it for the mind-reader, never re-prompt with it."""
+
+    def test_extracts_reasoning_content(self):
+        resp = _resp(_Msg("A dark brew warms the morning.", reasoning_content="I am the spy, stay vague"))
+        assert LiteLLMProvider._extract_reasoning(resp) == "I am the spy, stay vague"
+
+    def test_falls_back_to_provider_specific_fields(self):
+        resp = _resp(_Msg("answer", provider_specific_fields={"reasoning": "hidden thinking"}))
+        assert LiteLLMProvider._extract_reasoning(resp) == "hidden thinking"
+
+    def test_empty_for_non_reasoning_model(self):
+        assert LiteLLMProvider._extract_reasoning(_resp(_Msg("just an answer"))) == ""
