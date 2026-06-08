@@ -90,3 +90,86 @@ class TestGovernorTokensAndCost:
         assert g.stats["spend_usd"] == 0.0
         assert g.max_turns == 7  # limits survive reset
         assert g.max_total_tokens == 999
+
+
+class TestBudgetExceededReason:
+    def test_reason_is_max_turns(self):
+        g = Governor(max_turns=5)
+        with pytest.raises(BudgetExceeded) as excinfo:
+            g.check(6)
+        assert excinfo.value.reason == "max_turns"
+
+    def test_reason_is_max_total_calls(self):
+        # Per-turn cap kept high so only the total-calls bound trips.
+        g = Governor(max_total_calls=2, max_calls_per_turn=100)
+        g.begin_turn(1)
+        g.record_call()
+        g.record_call()
+        with pytest.raises(BudgetExceeded) as excinfo:
+            g.check(1)
+        assert excinfo.value.reason == "max_total_calls"
+
+    def test_reason_is_max_calls_per_turn(self):
+        # Total-calls cap kept high so only the per-turn bound trips.
+        g = Governor(max_calls_per_turn=2, max_total_calls=100)
+        g.begin_turn(1)
+        g.record_call()
+        g.record_call()
+        with pytest.raises(BudgetExceeded) as excinfo:
+            g.check(1)
+        assert excinfo.value.reason == "max_calls_per_turn"
+
+    def test_reason_is_max_total_tokens(self):
+        g = Governor(max_total_tokens=100)
+        g.begin_turn(1)
+        g.record_call(tokens=150)
+        with pytest.raises(BudgetExceeded) as excinfo:
+            g.check(1)
+        assert excinfo.value.reason == "max_total_tokens"
+
+    def test_reason_is_hourly_budget_usd(self):
+        g = Governor(hourly_budget_usd=0.01)
+        g.begin_turn(1)
+        g.record_call(cost_usd=0.05)
+        with pytest.raises(BudgetExceeded) as excinfo:
+            g.check(1)
+        assert excinfo.value.reason == "hourly_budget_usd"
+
+    def test_remains_runtime_error_subclass(self):
+        # The sibling UI unit catches generically; type hierarchy must not change.
+        assert issubclass(BudgetExceeded, RuntimeError)
+        g = Governor(max_turns=1)
+        with pytest.raises(RuntimeError):
+            g.check(2)
+
+    def test_message_stays_human_readable(self):
+        g = Governor(max_turns=5)
+        with pytest.raises(BudgetExceeded) as excinfo:
+            g.check(6)
+        assert "Turn cap 5 reached" in str(excinfo.value)
+
+    def test_reason_defaults_to_none_when_constructed_directly(self):
+        exc = BudgetExceeded("manual raise")
+        assert exc.reason is None
+        assert str(exc) == "manual raise"
+
+
+class TestGovernorSnapshot:
+    def test_snapshot_includes_counters_and_limits(self):
+        g = Governor(max_turns=7, max_total_calls=50, max_total_tokens=999, hourly_budget_usd=1.5)
+        g.begin_turn(2)
+        g.record_call(tokens=40, cost_usd=0.25)
+        snap = g.snapshot
+        assert snap["total_calls"] == 1
+        assert snap["total_tokens"] == 40
+        assert snap["current_turn"] == 2
+        assert snap["max_turns"] == 7
+        assert snap["max_total_calls"] == 50
+        assert snap["max_total_tokens"] == 999
+        assert snap["hourly_budget_usd"] == 1.5
+
+    def test_snapshot_optional_limits_default_none(self):
+        g = Governor()
+        snap = g.snapshot
+        assert snap["max_total_tokens"] is None
+        assert snap["hourly_budget_usd"] is None
