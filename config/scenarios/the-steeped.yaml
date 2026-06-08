@@ -1,0 +1,26 @@
+name: the-steeped
+title: "🕵 The Steeped"
+goal: >
+  Play a word-pair bluff: the herd shares one secret word, a lone spy holds another. Each
+  mind gives clues vague enough to blend, sharp enough to convince — the spy wins by hiding
+  in the overlap, the herd wins by catching the seam where one word doesn't fit.
+default_seed: >
+  Four minds are handed a secret word. Three share COFFEE; one lone spy holds TEA. Give a
+  clue. Blend in, or catch the liar.
+example_seeds:
+  - "Four minds, one secret word each: three share COFFEE, one spy holds TEA. Find the seam."
+  - "The herd's word is DOG; the spy was slipped WOLF. One clue each — who doesn't belong?"
+  - "Three minds hold SUMMER; one spy holds WINTER. Stay in the overlap or get caught."
+genesis_text: >
+  Here we observe four minds, each clutching a single secret word. Three were given the same
+  word; one was not — and does not yet know how badly it will want a cup of coffee. {seed}
+cast:
+  - spy-cara
+  - spy-bex
+  - spy-nil
+  - spy-ovo
+  - spy-host
+governor:
+  max_turns: 2000
+  max_calls_per_turn: 16
+  max_total_calls: 20000

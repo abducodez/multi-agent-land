@@ -46,6 +46,7 @@ VOICES: dict[str, tuple[str, str]] = {
 # A sensible default narrator per shipped scenario; the Lab may override it.
 _SCENARIO_VOICE: dict[str, str] = {
     "thousand-token-wood": "bard",
+    "the-steeped": "doc",
     "mystery-roots": "noir",
     "oracle-grove": "doc",
 }

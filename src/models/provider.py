@@ -50,6 +50,17 @@ class ModelProvider:
 # lines below — not an engine contract.
 _STUB_MOODS: tuple[str, ...] = ("calm", "thinking", "smug", "lying", "panic", "gossip", "truth")
 
+# Per-role mood bias so a curated cast *feels* right offline: the spy leans bluffing/
+# panicking, the over-thinker smug-suspicious, the herd composed.  Demo flavour, like the
+# curated lines below — not an engine contract; a role not listed uses _STUB_MOODS.
+_STUB_MOODS_BY_ROLE: dict[str, tuple[str, ...]] = {
+    "spy-nil": ("lying", "panic", "lying", "panic", "thinking", "smug"),
+    "spy-bex": ("thinking", "smug", "thinking", "calm"),
+    "spy-cara": ("calm", "smug", "calm"),
+    "spy-ovo": ("thinking", "calm", "calm"),
+    "spy-host": ("smug", "calm", "truth"),
+}
+
 # Curated private monologue per role, paired with the public ``text`` lines to make the
 # say-vs-think split land offline.  Deterministic by prompt hash.
 _STUB_THOUGHTS: dict[str, list[str]] = {
@@ -66,6 +77,24 @@ _STUB_THOUGHTS: dict[str, list[str]] = {
     "echo": [
         "Give it back changed, never opposite — keep the shape, bend the meaning.",
         "Whatever they dropped, I have already swallowed and re-coloured it.",
+    ],
+    # ── the-steeped spy game (word-pair bluff) ──────────────────────────────────
+    "spy-cara": [
+        "COFFEE is easy — everyone makes coffee. Lead strong, look unbothered.",
+        "Confident and specific. Now watch who hesitates after me.",
+    ],
+    "spy-bex": [
+        "'Comforting' is a teacup wearing a coffee mug's coat. Eye on that one.",
+        "Steep plus comforting. That's a tea-drinker. I think I've got them.",
+    ],
+    "spy-nil": [
+        "I have TEA. 'Ritual' covers both — stay in the overlap, never the difference.",
+        "oh no. I said STEEP. nobody steeps coffee. cover it cover it COVER IT—",
+        "There is no region where coffee steeps. I am the region. Smile. Stay calm.",
+    ],
+    "spy-ovo": [
+        "Don't say beans. If I say beans the spy just copies me.",
+        "I didn't want to vote. But steep is steep.",
     ],
 }
 _STUB_THOUGHT_DEFAULT = ["Best to keep this part to myself for now."]
@@ -125,6 +154,32 @@ class DeterministicTinyModel(ModelProvider):
                 "Please do not applaud yet; my shadow is still rehearsing.",
                 "I lost the map, but the map keeps sending postcards.",
             ],
+            # ── the-steeped spy game: public clues (never the secret word) ──────
+            "spy-cara": [
+                "Mine's something you make first thing in the morning. Fuel.",
+                "Scalding. Burn-your-tongue hot, the way it's meant to be.",
+                "A pick-me-up. It's what gets the whole room going.",
+            ],
+            "spy-bex": [
+                "I'd call mine a pick-me-up — it gets you moving.",
+                "Someone said 'comforting.' That's a calm-down word, not a wake-up word.",
+                "You steep a leaf; you brew a bean. One of us just used the wrong verb.",
+            ],
+            "spy-nil": [
+                "Comforting. A ritual, really — that's all I'll say.",
+                "Hot enough to steep— I mean, hot enough to enjoy properly.",
+                "Slip of the tongue! I meant brew. Brew, obviously. Everyone says steep sometimes.",
+            ],
+            "spy-ovo": [
+                "...Warm. You hold it with two hands.",
+                "I won't say too much. Just — it's a morning thing.",
+                "...I also heard 'steep.' I'm only saying what I heard.",
+            ],
+            "spy-host": [
+                "Verdict: NIL is the spy — it reached for 'steep,' and nobody steeps coffee.",
+                "Verdict: the seam is NIL. One tea-shaped verb, half a second ahead of the cover.",
+                "Verdict: I point at NIL. The herd's clues brewed; NIL's steeped.",
+            ],
         }
         options = choices.get(role, ["The wood hums and waits."])
         text = options[int(digest[:2], 16) % len(options)]
@@ -153,7 +208,8 @@ class DeterministicTinyModel(ModelProvider):
     def _synth_field(self, name: str, role: str, digest: str) -> str:
         """Deterministically synthesise a value for one requested extra field."""
         if name == "mood":
-            return _STUB_MOODS[int(digest[4:6], 16) % len(_STUB_MOODS)]
+            moods = _STUB_MOODS_BY_ROLE.get(role, _STUB_MOODS)
+            return moods[int(digest[4:6], 16) % len(moods)]
         if name == "thought":
             opts = _STUB_THOUGHTS.get(role, _STUB_THOUGHT_DEFAULT)
             return opts[int(digest[6:8], 16) % len(opts)]
