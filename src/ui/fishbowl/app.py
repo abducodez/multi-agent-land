@@ -26,6 +26,7 @@ from src.core.conductor import Conductor
 from src.core.ledger_factory import make_ledger
 from src.core.registry import default_registry
 from src.tools.builtins import default_tool_registry
+from src.ui.fishbowl.adapter import scenario_voice
 from src.ui.fishbowl.view_model import view_model_at
 
 # ── defensive imports of sibling units ─────────────────────────────────────────
@@ -226,7 +227,7 @@ except Exception:  # pragma: no cover
 _registry = default_registry()
 _tools = default_tool_registry()
 
-_PREFERRED = ["thousand-token-wood", "mystery-roots", "oracle-grove"]
+_PREFERRED = ["thousand-token-wood", "the-steeped", "mystery-roots", "oracle-grove"]
 _names = [n for n in _PREFERRED if n in _registry.scenarios] + [
     n for n in sorted(_registry.scenarios) if n not in _PREFERRED
 ]
@@ -403,18 +404,20 @@ def _wire(
     verdict_out = _h(show_handles, "verdict", "verdict_html")
     show_outs = [c for c in (stage_out, feed_out, meters_out, verdict_out) if c is not None]
 
-    # Show transport controls.
+    # Show transport controls.  Lookups list every name a leaf unit might use; the
+    # shipped show.py keys (step_slider / fwd_btn / back_btn / poke_btns) are included
+    # so the scrubber, ⏭/⏮ transport, and preset poke buttons are actually wired.
     timer = _h(show_handles, "timer")
-    scrubber = _h(show_handles, "scrubber", "slider", "scrub")
+    scrubber = _h(show_handles, "scrubber", "slider", "scrub", "step_slider")
     play_btn = _h(show_handles, "play", "play_btn")
-    step_btn = _h(show_handles, "step", "step_btn", "next", "advance")
-    back_btn = _h(show_handles, "rewind", "back", "to_start", "first")
+    step_btn = _h(show_handles, "step", "step_btn", "next", "advance", "fwd_btn")
+    back_btn = _h(show_handles, "rewind", "back", "to_start", "first", "back_btn")
     speed_radio = _h(show_handles, "speed", "speed_radio")
     layout_radio = _h(show_handles, "layout", "layout_radio")
     mind_toggle = _h(show_handles, "mind_reader", "read_minds", "minds")
     poke_send = _h(show_handles, "poke_send", "poke_btn", "poke")
     poke_text = _h(show_handles, "poke_text", "poke_input")
-    poke_buttons = show_handles.get("poke_buttons") or []
+    poke_buttons = show_handles.get("poke_buttons") or show_handles.get("poke_btns") or []
 
     # Lab controls.
     summon_btn = _h(lab_handles, "summon", "summon_btn", "launch", "start")
@@ -430,6 +433,18 @@ def _wire(
                 return title
         return _DEFAULT_TITLE
 
+    # Scrubber sync: the step slider is a *timeline*, so its maximum must track the
+    # ledger head as the run grows (it ships fixed at 0..1).  Handlers that move the
+    # head append a slider update via these helpers; the scrubber's own change handler
+    # does not (it is the input, not an output, so there is no feedback loop).
+    scrub_outs = [scrubber] if scrubber is not None else []
+
+    def _scrub(values: tuple, session, k) -> tuple:
+        if scrubber is None:
+            return values
+        head = session.head if session is not None else 0
+        return (*values, gr.update(maximum=max(1, head), value=int(k)))
+
     # ── Summon: build a fresh session, reset, jump to the Show, render head ──────
     def on_summon(scenario_value, seed_value, layout, mind_reader):
         title = _scenario_title(scenario_value)
@@ -441,7 +456,7 @@ def _wire(
         else:
             k = 0
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (session, k, title, gr.update(selected="show"), *_pad_values(out, show_outs))
+        return _scrub((session, k, title, gr.update(selected="show"), *_pad_values(out, show_outs)), session, k)
 
     if summon_btn is not None:
         summon_inputs = [
@@ -453,7 +468,44 @@ def _wire(
         summon_btn.click(
             on_summon,
             inputs=summon_inputs,
-            outputs=[session_state, k_state, scenario_state, tabs, *show_outs],
+            outputs=[session_state, k_state, scenario_state, tabs, *show_outs, *scrub_outs],
+        )
+
+    # ── Scenario picked → re-seed the dependent Lab fields from the registry ─────
+    # Without this, switching to a new world (e.g. the spy game) leaves the premise,
+    # seed, cast table, and narrator showing the previous scenario — and Summon would
+    # genesis with the wrong seed.  Refreshing them makes "compose a spy game" one click.
+    _scenario_fields = [
+        (_h(lab_handles, "premise"), "premise"),
+        (seed_in, "seed"),
+        (_h(lab_handles, "world"), "world"),
+        (_h(lab_handles, "cast"), "cast"),
+        (_h(lab_handles, "narrator"), "narrator"),
+    ]
+    _present_fields = [(handle, key) for handle, key in _scenario_fields if handle is not None]
+
+    if scenario_in is not None and _present_fields:
+
+        def on_scenario_change(scenario_value):
+            from src.ui.fishbowl.lab import _cast_rows_for
+
+            cfg = _registry.scenarios.get(SCENARIOS.get(_scenario_title(scenario_value), ""))
+            if cfg is None:
+                return tuple(gr.update() for _ in _present_fields)
+            seeds = list(cfg.example_seeds) or [cfg.default_seed]
+            updates = {
+                "premise": gr.update(value=cfg.goal),
+                "seed": gr.update(choices=seeds, value=cfg.default_seed),
+                "world": gr.update(value=cfg.genesis_text or ""),
+                "cast": gr.update(value=_cast_rows_for(cfg)),
+                "narrator": gr.update(value=scenario_voice(cfg.name)),
+            }
+            return tuple(updates[key] for _handle, key in _present_fields)
+
+        scenario_in.change(
+            on_scenario_change,
+            inputs=[scenario_in],
+            outputs=[handle for handle, _key in _present_fields],
         )
 
     # ── ⏭ / ▶ at head → step (generate) then render at the new head ─────────────
@@ -464,13 +516,13 @@ def _wire(
         else:
             k = 0
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs))
+        return _scrub((k, *_pad_values(out, show_outs)), session, k)
 
     if step_btn is not None and show_outs:
         step_btn.click(
             step_at_head,
             inputs=[session_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *scrub_outs],
         )
 
     # ── scrubber / ⏮ → pure prefix view (no stepping) ───────────────────────────
@@ -488,13 +540,13 @@ def _wire(
 
     def to_start(session, layout, mind_reader):
         out = _render_at(session, 0, layout=layout, mind_reader=mind_reader)
-        return (0, *_pad_values(out, show_outs))
+        return _scrub((0, *_pad_values(out, show_outs)), session, 0)
 
     if back_btn is not None and show_outs:
         back_btn.click(
             to_start,
             inputs=[session_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *scrub_outs],
         )
 
     # ── gr.Timer.tick → hybrid: advance k (replay) below head, else step ────────
@@ -502,20 +554,20 @@ def _wire(
         k = int(k or 0)
         if session is None:
             out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
-            return (0, *_pad_values(out, show_outs))
+            return _scrub((0, *_pad_values(out, show_outs)), None, 0)
         if k < session.head:
             k += 1  # replay forward through the existing prefix
         else:
             session.step()  # at the head → generate
             k = session.head
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs))
+        return _scrub((k, *_pad_values(out, show_outs)), session, k)
 
     if timer is not None and show_outs:
         timer.tick(
             on_tick,
             inputs=[session_state, k_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *scrub_outs],
         )
 
     # ── speed radio → timer interval; play/pause → timer.active ──────────────────
@@ -569,7 +621,7 @@ def _wire(
         else:
             k = 0
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs))
+        return _scrub((k, *_pad_values(out, show_outs)), session, k)
 
     if poke_send is not None and poke_text is not None and show_outs:
         # Free-text poke: the textbox supplies the text; a neutral label.
@@ -579,7 +631,7 @@ def _wire(
         poke_send.click(
             on_poke_send,
             inputs=[session_state, poke_text, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *scrub_outs],
         )
 
     for btn in poke_buttons:
@@ -598,7 +650,7 @@ def _wire(
         btn.click(
             make_preset(label),
             inputs=[session_state, layout_state, mind_reader_state],
-            outputs=[k_state, *show_outs],
+            outputs=[k_state, *show_outs, *scrub_outs],
         )
 
 

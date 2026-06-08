@@ -349,6 +349,37 @@ the small models you deploy.
 
 ---
 
+## Pattern: hidden-role games (🕵 The Steeped)
+
+A fourth shape worth calling out — **social deduction**, where each mind holds
+*secret* information and the drama is who can hide it. `config/scenarios/the-steeped.yaml`
+is the shipped example: a word-pair bluff where the herd shares a word (COFFEE) and a
+lone spy holds another (TEA). It's built entirely on the patterns above, plus two small
+techniques:
+
+- **Secret info rides the persona.** The manifest's `persona` is injected verbatim into
+  every prompt — and *only* that agent's prompt — so it's the natural home for private
+  state: `spy-nil`'s persona says "you alone hold TEA — never use a tea-only tell like
+  *steep*," while the herd's personas hold COFFEE. No engine field, no shared leak: the
+  secret lives where only that mind can read it. The say-vs-think split
+  (`output_extra_fields: [thought, mood]`) then lets the mind-reader watch the spy
+  *think* about hiding while it *says* something bland.
+
+- **The reveal is a structured verdict payload.** The unmasking is just a
+  `judge.verdict` whose payload carries a `reveal: [{agent, secret, role}]` list — the
+  exact shape the Fishbowl verdict banner renders (`view_model` → `render_verdict`).
+  `spy-host` uses a handler (`@register_handler("spy-host")` in `src/agents/handlers.py`)
+  that runs the generic judge turn for the verdict *text*, then attaches the `reveal` —
+  the same "decorate the emitted event" move `FortuneTeller` uses for `omen`. Riding the
+  real ledger, the reveal scrubs and replays like any other event.
+
+Offline, curated lines + a per-role mood bias in `src/models/provider.py` (`_STUB_*`,
+keyed by agent name) give the bluff a coherent arc with no API key; live, a real small
+model improvises from the personas. Either way the cast never calls each other — they
+only post to the shared log, and the seam shows.
+
+---
+
 ## Extension-point cheat sheet
 
 > "I want to add a scenario where…"
@@ -356,6 +387,7 @@ the small models you deploy.
 | …the goal is | You write | Engine edit? |
 |---|---|---|
 | a new cast on existing patterns | agent + scenario YAML | none |
+| a hidden-role / secret-info game | secret in each `persona`; reveal via a verdict `handler` | none (handler in `agents/`) |
 | a new event kind | just use it in `may_emit` | none |
 | an agent that calls an existing tool | a `handler` + `tools:` grant | none (handler in `agents/`) |
 | an agent that calls a *new* tool | register it in `builtins.py` + grant it | tool registration only |

@@ -171,6 +171,9 @@ def build_lab() -> dict[str, gr.components.Component]:
             headers=CAST_COLUMNS,
             datatype=["str", "str", "str", "number"],
             column_count=len(CAST_COLUMNS),
+            # The grid re-seeds (name/archetype/model) when the scenario changes; it shows
+            # the player roster — a scenario's judge/host is configured under §04, mirroring
+            # the prototype's 4-player spy cast (ui/raw/data.js).
             row_count=len(first.cast),
             interactive=True,
             label="Cast",
