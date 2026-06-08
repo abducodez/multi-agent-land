@@ -59,7 +59,9 @@ def test_advance_surfaces_budget_reason_at_head() -> None:
     session.conductor.governor.max_total_calls = 0
     k, ticks, stop_reason = advance_one_tick(session, session.head, 0)
     assert stop_reason is not None
-    assert "cap" in stop_reason.lower()  # the governor's own message, not the tick backstop
+    # The governor's own structured reason names the tripped bound — not the tick backstop.
+    assert "max_total_calls" in stop_reason.lower()
+    assert "tick cap" not in stop_reason.lower()
     assert ticks == 0  # nothing generated
 
 
