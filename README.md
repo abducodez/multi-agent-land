@@ -30,6 +30,17 @@ in [`modal/`](modal/README.md) and set `MODAL_WORKSPACE` in `.env`; every agent 
 binds to its model by *catalogue key* (`modal/catalogue.py`). There is no generic
 cloud key — live inference is always against models you deploy yourself.
 
+### Run it live
+
+By default the app runs fully offline on the deterministic stub. To use real
+small-model inference — Modal-served models, a persistent Neon/Postgres ledger,
+and the optional mem0 memory index — copy `.env.example` to `.env` and set the
+relevant variables. A live run stays bounded by the Governor and the UI auto-stops
+autoplay at budget/verdict, so it won't loop forever.
+
+See [docs/runbook-live-mode.md](docs/runbook-live-mode.md) for the step-by-step
+runbook and the safety story.
+
 ### Run tests
 
 ```bash
