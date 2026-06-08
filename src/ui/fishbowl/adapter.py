@@ -91,6 +91,16 @@ def scenario_voice(scenario_name: str) -> str:
     return _SCENARIO_VOICE.get(scenario_name, "doc")
 
 
+# ── live / offline pill (the meters' run-mode indicator) ─────────────────────────
+# Lime + filled bullet when bound to a live inference backend; dim + hollow when the
+# deterministic offline stub is driving the show.
+def live_pill(offline: bool) -> tuple[str, str]:
+    """``(label, css_color)`` for the meters' LIVE/OFFLINE pill."""
+    if offline:
+        return ("○ OFFLINE · STUB", "var(--ink-mid)")
+    return ("● LIVE", "var(--lime)")
+
+
 # ── feed vocabulary (say / narrate / poke / verdict) ────────────────────────────
 
 

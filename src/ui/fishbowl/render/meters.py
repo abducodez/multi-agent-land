@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import html
 
+from src.ui.fishbowl.adapter import live_pill
+
 # The bar turns from cyan to coral once usage crosses this fraction of the ceiling.
 _WARN_FRACTION = 0.85
 
@@ -59,9 +61,24 @@ def render_meters(vm: dict) -> str:
     status_label = "BUDGET OUT" if out_of_budget else "RUNNING"
     status_color = "var(--coral)" if out_of_budget else "var(--cyan)"
 
+    # Run-mode pill: lime "● LIVE" when bound to a live backend, dim "○ OFFLINE · STUB"
+    # otherwise. A missing "offline" key (older/hand-built snapshots) reads as offline.
+    pill_label, pill_color = live_pill(bool(vm.get("offline", True)))
+    pill = (
+        '<div class="meter-h">'
+        '<span class="eyebrow">Mode</span>'
+        f'<span class="tnum" style="color:{pill_color}">{html.escape(pill_label)}</span>'
+        "</div>"
+    )
+
+    # Spend pill: only shown once the run has cost something (live calls accrue cost).
+    spend_usd = float(vm.get("spend_usd") or 0.0)
+    spend_stat = _stat("Spend", f"${spend_usd:.4f}", "var(--lime)") if spend_usd > 0 else ""
+
     return (
         '<div class="meters panel">'
         '<div class="meter">'
+        f"{pill}"
         '<div class="meter-h">'
         '<span class="eyebrow">Token budget</span>'
         f'<span class="tnum" style="color:{accent}">{html.escape(tokens_value)}</span>'
@@ -70,6 +87,7 @@ def render_meters(vm: dict) -> str:
         "</div>"
         '<div class="meter-stats">'
         f"{_stat('Tokens', tokens_value, accent)}"
+        f"{spend_stat}"
         f"{_stat('Round', rounds_value, 'var(--cyan)')}"
         f"{_stat('Status', status_label, status_color)}"
         "</div>"
