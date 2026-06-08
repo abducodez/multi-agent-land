@@ -43,7 +43,7 @@ class TestDefaultRegistry:
         reg = default_registry()
         gov = reg.governor_for("thousand-token-wood")
         assert isinstance(gov, Governor)
-        assert gov.max_turns == 2000  # from scenario YAML
+        assert gov.max_turns == 60  # live-safe cap from scenario YAML
 
     def test_unknown_agent_raises(self):
         reg = default_registry()

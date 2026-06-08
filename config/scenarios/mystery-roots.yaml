@@ -15,6 +15,8 @@ cast:
   - devils-advocate
   - mystery-judge
 governor:
-  max_turns: 2000
+  max_turns: 60
   max_calls_per_turn: 16
-  max_total_calls: 20000
+  max_total_calls: 600
+  max_total_tokens: 60000
+  hourly_budget_usd: 5.0
