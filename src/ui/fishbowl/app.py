@@ -237,6 +237,59 @@ except Exception:  # pragma: no cover
         return {}
 
 
+def build_telemetry() -> None:
+    """The Telemetry tab: structured log feed + metric charts + per-trace timeline.
+
+    Reads live from the in-memory telemetry store (ADR-0024); a manual Refresh, a
+    3s auto-tick, and the filter dropdowns all repaint it. Clicking a span in the
+    timeline reveals the prompt + memory that agent saw.
+    """
+    try:
+        from src.ui.fishbowl.render import telemetry as t
+    except Exception:  # pragma: no cover - degrade to a friendly placeholder
+        gr.HTML("<div class='fishbowl-placeholder'>Telemetry panel unavailable.</div>")
+        return
+
+    gr.HTML(f"<style>{t.TELEMETRY_CSS}</style>")
+    kpi = gr.Markdown(t.kpi_markdown())
+    with gr.Row():
+        level_dd = gr.Dropdown(t.LEVELS, value="all", label="Level", scale=1)
+        layer_dd = gr.Dropdown(t.LAYERS, value="all", label="Layer", scale=1)
+        refresh = gr.Button("⟳ Refresh", scale=1)
+    with gr.Row():
+        calls_plot = gr.BarPlot(t.calls_frame(), x="metric", y="count", title="Activity", scale=1)
+        tokens_plot = gr.BarPlot(t.tokens_frame(), x="kind", y="tokens", title="Tokens", scale=1)
+        latency_plot = gr.LinePlot(
+            t.latency_frame(), x="n", y="seconds", color="agent", title="Agent-turn latency (s)", scale=1
+        )
+    feed = gr.Dataframe(
+        headers=["time", "level", "agent/turn", "event", "detail"],
+        value=t.log_rows(),
+        wrap=True,
+        label="Structured log feed",
+        row_count=(12, "dynamic"),
+        column_count=(5, "fixed"),
+    )
+    traces = gr.HTML(t.traces_html())
+    timer = gr.Timer(3.0)
+
+    def _refresh(level, layer):
+        return (
+            t.kpi_markdown(),
+            t.log_rows(level, layer),
+            t.calls_frame(),
+            t.tokens_frame(),
+            t.latency_frame(),
+            t.traces_html(),
+        )
+
+    outs = [kpi, feed, calls_plot, tokens_plot, latency_plot, traces]
+    refresh.click(_refresh, [level_dd, layer_dd], outs)
+    timer.tick(_refresh, [level_dd, layer_dd], outs)
+    level_dd.change(_refresh, [level_dd, layer_dd], outs)
+    layer_dd.change(_refresh, [level_dd, layer_dd], outs)
+
+
 # ── scenario registry (assembled from config/, not hardcoded) ───────────────────
 
 _registry = default_registry()
@@ -428,6 +481,8 @@ def build_app() -> gr.Blocks:
                 lab_handles = build_lab()
             with gr.Tab("The Show", id="show"):
                 show_handles = build_show()
+            with gr.Tab("Telemetry", id="telemetry"):
+                build_telemetry()
 
         # CRT foreground layers (scanlines + vignette, above content, click-through).
         gr.HTML(_CRT_FG_HTML)
