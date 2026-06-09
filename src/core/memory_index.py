@@ -35,8 +35,10 @@ duplicates) — this is what makes the index rebuildable rather than authoritati
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from src import observability as obs
 from src.core.events import Event
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -162,13 +164,31 @@ class _Mem0BackendBase:
         """Semantic search; map hits back to :class:`Event` via stored metadata."""
         if not query or k <= 0:
             return []
-        mem = self._memory()
-        events: list[Event] = []
-        for hit in self._query(mem, query, k):
-            event = _event_from_metadata(hit.get("metadata"))
-            if event is not None:
-                events.append(event)
-        return events
+        with obs.span(
+            "memory.index.search",
+            **{"memory.query": query, "memory.k": k, "memory.backend": type(self).__name__},
+        ):
+            started = time.perf_counter()
+            mem = self._memory()
+            events: list[Event] = []
+            for hit in self._query(mem, query, k):
+                event = _event_from_metadata(hit.get("metadata"))
+                if event is not None:
+                    events.append(event)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            obs.add_span_attrs(**{"memory.hits": len(events), "memory.latency_ms": round(elapsed_ms, 2)})
+            obs.observe("memory.index.hits", len(events))
+            obs.observe("memory.index.latency_ms", elapsed_ms)
+            obs.log(
+                "memory.index.search",
+                level="debug",
+                backend=type(self).__name__,
+                query=query,
+                k=k,
+                hits=len(events),
+                latency_ms=round(elapsed_ms, 2),
+            )
+            return events
 
 
 # ── local (off-the-grid) backend ──────────────────────────────────────────────

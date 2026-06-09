@@ -32,11 +32,13 @@ the observer never participates in cognition.
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from src import observability as obs
 from src.core.events import Event
 from src.core.governor import BudgetExceeded, Governor
 from src.core.ledger import Ledger
@@ -96,6 +98,8 @@ class Conductor:
         self.run_id = str(uuid4())
         self.turn = 0
         self.governor.reset()
+        obs.set_context(run_id=self.run_id, turn=self.turn)
+        obs.log("run.started", run_id=self.run_id, seed=seed, goal=getattr(self.scenario, "goal", ""))
         genesis_start = Event(
             run_id=self.run_id,
             turn=self.turn,
@@ -158,6 +162,7 @@ class Conductor:
             self.turn += 1
             self.governor.begin_turn(self.turn)
             self.governor.check(self.turn)
+            obs.set_context(turn=self.turn)
             self._pending.extend(agent for agent, _ in self._trigger_queue)
             self._trigger_queue.clear()
             self._pending.extend(self._tick_scheduled_agents())
@@ -195,38 +200,45 @@ class Conductor:
         self.turn += 1
         self.governor.begin_turn(self.turn)
         self.governor.check(self.turn)
+        obs.set_context(turn=self.turn)
 
         projection = self.projection
 
-        # ── phase 1: event-triggered (subscription) agents ────────────────────
-        while self._trigger_queue:
-            agent, _trigger = self._trigger_queue.popleft()
-            self._run_agent(agent, projection)
+        with obs.span("turn", **{"mal.turn": self.turn}):
+            # ── phase 1: event-triggered (subscription) agents ────────────────
+            while self._trigger_queue:
+                agent, _trigger = self._trigger_queue.popleft()
+                self._run_agent(agent, projection)
 
-        # ── phase 2: tick-based scheduled agents ──────────────────────────────
-        for agent in self._tick_scheduled_agents():
-            self._run_agent(agent, projection)
+            # ── phase 2: tick-based scheduled agents ──────────────────────────
+            for agent in self._tick_scheduled_agents():
+                self._run_agent(agent, projection)
 
     def _run_agent(self, agent: "Agent", projection: StageProjection) -> None:
-        self.governor.check(self.turn)
-        try:
-            event = agent.act(
-                run_id=self.run_id,
-                turn=self.turn,
-                projection=projection,
-                recent_events=self.ledger.events,
-            )
-        except BudgetExceeded:
-            raise  # an intentional stop from the governor — never swallow it
-        except Exception as exc:  # noqa: BLE001 — one agent's crash must not silence the cast
-            self._note_agent_error(agent, exc)
-            return
-        usage = getattr(agent, "last_usage", {})
-        tokens = int(usage.get("total_tokens", 0) or 0)
-        cost_usd = float(usage.get("cost_usd", 0.0) or 0.0)
-        self.governor.record_call(tokens=tokens, cost_usd=cost_usd)
-        self._append(event)
-        projection.apply(event)
+        self.governor.check(self.turn)  # before the span: a budget stop is not an agent turn
+        name = getattr(agent, "name", agent.__class__.__name__)
+        start = time.perf_counter()
+        with obs.bind(agent=name), obs.span("agent.turn", **{"mal.agent": name, "mal.turn": self.turn}):
+            try:
+                event = agent.act(
+                    run_id=self.run_id,
+                    turn=self.turn,
+                    projection=projection,
+                    recent_events=self.ledger.events,
+                )
+            except BudgetExceeded:
+                raise  # an intentional stop from the governor — never swallow it
+            except Exception as exc:  # noqa: BLE001 — one agent's crash must not silence the cast
+                self._note_agent_error(agent, exc)
+                return
+            usage = getattr(agent, "last_usage", {})
+            tokens = int(usage.get("total_tokens", 0) or 0)
+            cost_usd = float(usage.get("cost_usd", 0.0) or 0.0)
+            obs.add_span_attrs(**{"event.kind": event.kind, "mal.tokens": tokens, "mal.cost_usd": cost_usd})
+            self.governor.record_call(tokens=tokens, cost_usd=cost_usd)
+            self._append(event)
+            projection.apply(event)
+        obs.record_agent_turn(name, time.perf_counter() - start)
 
     def _note_agent_error(self, agent: "Agent", exc: Exception) -> None:
         """Record (and log) an agent's failed turn without aborting the tick.
@@ -237,6 +249,7 @@ class Conductor:
         name = getattr(agent, "name", agent.__class__.__name__)
         self.agent_errors.append({"turn": str(self.turn), "agent": name, "error": str(exc)})
         logger.warning("agent %s failed on turn %d: %s", name, self.turn, exc, exc_info=exc)
+        obs.log("agent.error", level="warning", agent=name, turn=self.turn, error=str(exc))
 
     def _maybe_snapshot(self) -> None:
         if not self.snapshot_every or not self.snapshot_path:
@@ -249,6 +262,9 @@ class Conductor:
 
     def _append(self, event: Event) -> Event:
         appended = self.ledger.append(event)
+        obs.log(
+            "event.append", level="debug", id=appended.id, kind=appended.kind, actor=appended.actor, turn=appended.turn
+        )
         if self.observer:
             self.observer.consume(appended)
         self._notify_subscribers(appended)

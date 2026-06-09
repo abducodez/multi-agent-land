@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src import observability as obs
 from src.core.events import Event
 
 
@@ -15,6 +16,7 @@ class StageProjection:
     user_artifacts: list[str] = field(default_factory=list)
 
     def apply(self, event: Event) -> None:
+        obs.log("projection.apply", level="debug", kind=event.kind, actor=event.actor, turn=event.turn)
         if event.kind == "run.started":
             self.seed = str(event.payload["seed"])
             self.goal = str(event.payload.get("goal", "")) or self.goal

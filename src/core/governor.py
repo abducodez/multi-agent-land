@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src import observability as obs
+
 
 @dataclass
 class Governor:
@@ -35,18 +37,29 @@ class Governor:
 
     def check(self, turn: int) -> None:
         if turn > self.max_turns:
-            raise BudgetExceeded(f"Turn cap {self.max_turns} reached", reason="max_turns")
+            self._trip("max_turns", f"Turn cap {self.max_turns} reached")
         if self._total_calls >= self.max_total_calls:
-            raise BudgetExceeded(f"Total call cap {self.max_total_calls} reached", reason="max_total_calls")
+            self._trip("max_total_calls", f"Total call cap {self.max_total_calls} reached")
         if self._calls_this_turn >= self.max_calls_per_turn:
-            raise BudgetExceeded(
-                f"Per-turn call cap {self.max_calls_per_turn} reached on turn {turn}",
-                reason="max_calls_per_turn",
-            )
+            self._trip("max_calls_per_turn", f"Per-turn call cap {self.max_calls_per_turn} reached on turn {turn}")
         if self.max_total_tokens is not None and self._total_tokens >= self.max_total_tokens:
-            raise BudgetExceeded(f"Total token cap {self.max_total_tokens} reached", reason="max_total_tokens")
+            self._trip("max_total_tokens", f"Total token cap {self.max_total_tokens} reached")
         if self.hourly_budget_usd is not None and self._spend_usd >= self.hourly_budget_usd:
-            raise BudgetExceeded(f"Spend cap ${self.hourly_budget_usd:.2f} reached", reason="hourly_budget_usd")
+            self._trip("hourly_budget_usd", f"Spend cap ${self.hourly_budget_usd:.2f} reached")
+
+    def _trip(self, reason: str, message: str) -> None:
+        """Record the budget trip as a metric + log, then raise the stop."""
+        obs.record_governor_trip(reason)
+        obs.log(
+            "governor.trip",
+            level="warning",
+            reason=reason,
+            message=message,
+            total_calls=self._total_calls,
+            total_tokens=self._total_tokens,
+            spend_usd=round(self._spend_usd, 4),
+        )
+        raise BudgetExceeded(message, reason=reason)
 
     def record_call(self, tokens: int = 0, cost_usd: float = 0.0) -> None:
         self._calls_this_turn += 1

@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src import observability as obs
+
 # ── event kinds ───────────────────────────────────────────────────────────────
 #
 # `kind` is an OPEN, format-validated string — NOT a closed enum.  This is the
@@ -58,6 +60,7 @@ class Event(BaseModel):
     @classmethod
     def _validate_kind(cls, value: str) -> str:
         if not is_valid_kind(value):
+            obs.log("event.invalid", level="warning", kind=value)
             raise ValueError(
                 f"invalid event kind {value!r}: must be a lowercase, dot-namespaced "
                 "identifier such as 'agent.spoke' or 'clue.found'"
