@@ -168,7 +168,12 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
     ),
     ModelConfig(
         name="nvidia/Nemotron-Cascade-14B-Thinking",
-        endpoint_name="nemotron-cascade-14b-thinking",
+        # Keep the slug short: the public URL is one DNS label
+        # (<workspace>--<app>-<endpoint_name>.modal.run) capped at 63 chars, and a
+        # longer "...-thinking" slug pushed it to 65 on a normal workspace, so the
+        # host failed to resolve. The thinking-only nature is documented below, not
+        # in the slug. See endpoint_url() and tests/test_modal_endpoint_urls.py.
+        endpoint_name="nemotron-cascade-14b",
         # Dense 14B reasoning model built on Qwen3-14B Base; thinking-only. BF16
         # weights (~28GB) plus KV cache fit a single 48GB L40S. A specialist
         # model — left unbound so it can be cast explicitly at a reasoning-heavy

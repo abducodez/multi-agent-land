@@ -95,10 +95,10 @@ class TestModelRouterCatalogueEndpoint:
         assert provider.max_tokens == 768  # balanced tier decoding (reasoning headroom)
 
     def test_unbound_specialist_uses_balanced_decoding(self, monkeypatch):
-        # nemotron-cascade-14b-thinking has profile=None → balanced decoding defaults.
+        # nemotron-cascade-14b has profile=None → balanced decoding defaults.
         monkeypatch.setenv("MODAL_WORKSPACE", "demo-ws")
         router = ModelRouter(offline=False)
-        provider = router.for_profile("nemotron-cascade-14b-thinking")
+        provider = router.for_profile("nemotron-cascade-14b")
         assert isinstance(provider, LiteLLMProvider)
         assert provider.max_tokens == 768  # balanced tier decoding
 
