@@ -66,6 +66,28 @@ recorded from the provider in every branch, so the conductor's
 `pyproject.toml`. Lazy imports keep `import src.*` and `import app` working with
 it not installed.
 
+## Refinement: guided decoding, not tool calling (2026-06)
+
+The first cut left Instructor on its default `Mode.TOOLS`, which encodes the
+schema as an OpenAI **function/tool call**. That only validates on a served model
+whose vLLM deployment has tool calling enabled with a *matching* parser. The
+`fast` tier (`minicpm-4-1-8b`, ADR-0022 catalogue) has neither: MiniCPM4.1 emits a
+custom `<|tool_call_start|> … <|tool_call_end|>` format for which vLLM 0.21.0 ships
+no parser, so every structured call returned **`400 Bad Request`** (rejected at
+request validation, ~40 ms, no generation) and degraded to the prose fallback —
+turning the `fast` tier's fast validated-JSON path into a ~7 s prose round-trip
+every turn, and feeding the `clean_clue` over-filter that dropped first-person
+clues (the `spy-bex` "no usable line" failure).
+
+`LiteLLMProvider.structured_mode` now defaults to **`json_schema`** — vLLM
+**guided decoding** via `response_format`, which constrains output to the schema
+*without* a tool-call parser, so it is correct for every served model regardless of
+tool support (Gemma/Nemotron keep validating; MiniCPM now validates instead of
+400ing). It is a per-provider field (an `instructor.Mode` member name): `json`
+(plain `json_object` + schema-in-prompt) is the fallback if a backend rejects
+`json_schema`, and `tools` restores the old behaviour for a model that prefers it.
+No redeploy is needed — the change is entirely client-side on the request shape.
+
 ## Consequences
 
 - On the live path, agent output is schema-valid and kind-constrained by

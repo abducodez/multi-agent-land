@@ -197,6 +197,11 @@ OPENBMB_MODELS: tuple[ModelConfig, ...] = (
         max_model_len=32768,
         trust_remote_code=True,
         max_concurrent_inputs=48,
+        # No tool_call_parser on purpose: MiniCPM4.1 emits a custom
+        # <|tool_call_start|> format vLLM 0.21.0 has no parser for, so tool-call
+        # structured output 400s here. The engine's structured path uses vLLM
+        # guided decoding (response_format json_schema) instead, which is
+        # parser-independent — see ADR-0016. Don't bolt on a mismatched parser.
     ),
     ModelConfig(
         name="openbmb/MiniCPM-o-4_5",

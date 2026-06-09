@@ -105,8 +105,12 @@ class _FakeInstructorClient:
         return result, _FakeRawCompletion(hidden_cost=self._hidden_cost)
 
 
-def _install_fakes(monkeypatch, *, client) -> None:
-    """Inject fake ``instructor`` (from_litellm -> client) and ``litellm`` modules."""
+def _install_fakes(monkeypatch, *, client, from_litellm_kw: dict | None = None) -> None:
+    """Inject fake ``instructor`` (from_litellm -> client) and ``litellm`` modules.
+
+    *from_litellm_kw*, when given, records the kwargs ``complete_structured`` passes to
+    ``instructor.from_litellm`` (e.g. the chosen ``mode``) for assertion.
+    """
     fake_litellm = types.ModuleType("litellm")
     fake_litellm.completion = lambda **kw: None
 
@@ -115,8 +119,16 @@ def _install_fakes(monkeypatch, *, client) -> None:
 
     fake_litellm.completion_cost = _completion_cost
 
+    def _from_litellm(completion, **kw):
+        if from_litellm_kw is not None:
+            from_litellm_kw.update(kw)
+        return client
+
     fake_instructor = types.ModuleType("instructor")
-    fake_instructor.from_litellm = lambda completion, **kw: client
+    fake_instructor.from_litellm = _from_litellm
+    # Mode is an enum on the real package; a name->value stand-in is enough for the
+    # provider's ``getattr(instructor.Mode, structured_mode.upper())`` resolution.
+    fake_instructor.Mode = types.SimpleNamespace(JSON_SCHEMA="json_schema", JSON="json", TOOLS="tools")
 
     monkeypatch.setitem(sys.modules, "litellm", fake_litellm)
     monkeypatch.setitem(sys.modules, "instructor", fake_instructor)
@@ -155,6 +167,22 @@ class TestCompleteStructured:
         assert record["model"] == "openai/m"
         roles = [m["role"] for m in record["messages"]]
         assert roles == ["system", "user"]
+
+    def test_defaults_to_guided_json_schema_mode(self, monkeypatch):
+        # Guided decoding, not tool calling: a model with no tool-call parser (e.g. MiniCPM)
+        # still validates instead of 400ing. The mode rides on from_litellm, not the call.
+        kw: dict = {}
+        _install_fakes(monkeypatch, client=_FakeInstructorClient(), from_litellm_kw=kw)
+        provider = LiteLLMProvider(model="openai/m", api_base="https://x/v1")
+        provider.complete_structured("echo", "x", build_output_model(["agent.spoke"]))
+        assert kw["mode"] == "json_schema"
+
+    def test_structured_mode_override_is_honored(self, monkeypatch):
+        kw: dict = {}
+        _install_fakes(monkeypatch, client=_FakeInstructorClient(), from_litellm_kw=kw)
+        provider = LiteLLMProvider(model="openai/m", api_base="https://x/v1", structured_mode="tools")
+        provider.complete_structured("echo", "x", build_output_model(["agent.spoke"]))
+        assert kw["mode"] == "tools"
 
     def test_error_zeroes_usage_and_reraises(self, monkeypatch):
         _install_fakes(monkeypatch, client=_FakeInstructorClient(raise_exc=RuntimeError("boom")))
