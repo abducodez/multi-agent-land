@@ -8,6 +8,7 @@ used only when you deploy it:
     modal run    modal_app.py        # one-off episode
     modal deploy modal_app.py        # schedule it (hourly by default)
 """
+
 from __future__ import annotations
 
 import modal
@@ -38,12 +39,14 @@ def run_episode(scenario_name: str = DEFAULT_SCENARIO, n_ticks: int = TICKS_PER_
     import os
     from pathlib import Path
 
+    from src import observability as obs
     from src.core.conductor import Conductor
     from src.core.ledger_factory import database_url
     from src.core.registry import default_registry
     from src.core.sqlite_ledger import SQLiteLedger
     from src.tools.builtins import default_tool_registry
 
+    obs.configure()
     db_path = f"/data/{scenario_name}.db"
     reg = default_registry()
     # Durable event store when DATABASE_URL is set (ADR-0014); otherwise the
@@ -62,12 +65,23 @@ def run_episode(scenario_name: str = DEFAULT_SCENARIO, n_ticks: int = TICKS_PER_
         snapshot_path=f"/data/{scenario_name}.snapshot.db",
     )
 
-    if not conductor.restore():
-        conductor.reset(conductor.scenario.default_seed)
-    conductor.step(n_ticks=n_ticks)
-    ledger.close()
-    volume.commit()  # persist the ledger for the next scheduled run
-    return {"scenario": scenario_name, "turn": conductor.turn, "stats": conductor.governor.stats}
+    with obs.span("modal.run_episode", **{"scenario": scenario_name, "modal.n_ticks": n_ticks}):
+        restored = conductor.restore()
+        if not restored:
+            conductor.reset(conductor.scenario.default_seed)
+        obs.log(
+            "modal.episode.start",
+            scenario=scenario_name,
+            n_ticks=n_ticks,
+            restored=restored,
+            durable=bool(database_url()),
+        )
+        conductor.step(n_ticks=n_ticks)
+        ledger.close()
+        volume.commit()  # persist the ledger for the next scheduled run
+        stats = conductor.governor.stats
+        obs.log("modal.episode.done", scenario=scenario_name, turn=conductor.turn, stats=stats)
+        return {"scenario": scenario_name, "turn": conductor.turn, "stats": stats}
 
 
 @app.local_entrypoint()

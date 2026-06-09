@@ -21,6 +21,7 @@ from pathlib import Path
 
 import yaml
 
+from src import observability as obs
 from src.agents.base import Agent, ManifestAgent
 from src.core.config import (
     GovernorConfig,
@@ -103,6 +104,12 @@ def _resolve_model_endpoints(raw_models: dict, env: dict[str, str] | None = None
             cfg.setdefault("model", binding["model"])
         cfg.setdefault("base_url", binding["base_url"])
         cfg.setdefault("api_key", binding["api_key"])
+        obs.log(
+            "registry.model_endpoint",
+            profile=str(profile),
+            model=cfg.get("model", ""),
+            base_url=cfg.get("base_url", ""),
+        )  # never logs api_key
     return raw_models
 
 
@@ -146,6 +153,14 @@ class Registry:
             for path in sorted(agents_dir.glob("*.yaml")):
                 manifest = validate_agent(yaml.safe_load(path.read_text()) or {})
                 agents[manifest.name] = manifest
+                obs.log(
+                    "manifest.loaded",
+                    name=manifest.name,
+                    profile=manifest.model_profile,
+                    endpoint=manifest.model_endpoint or "",
+                    subscribes=len(manifest.subscribes_to),
+                    may_emit=list(manifest.may_emit),
+                )
 
         scenarios: dict[str, ScenarioConfig] = {}
         scenarios_dir = root / "scenarios"
@@ -161,6 +176,7 @@ class Registry:
             raw_models = _resolve_model_endpoints(raw_models)
             models = ModelsConfig.model_validate(raw_models)
 
+        obs.log("config.loaded", config_dir=str(root), agents=len(agents), scenarios=len(scenarios))
         return cls(agents=agents, scenarios=scenarios, models=models)
 
     @classmethod
@@ -214,6 +230,13 @@ class Registry:
 
         memory_index = memory_index_from_env()
         agents = tuple(self.build_agent(agent_name, router, tools, memory_index) for agent_name in cfg.cast)
+        obs.log(
+            "registry.cast_assembled",
+            scenario=cfg.name,
+            cast=list(cfg.cast),
+            count=len(cfg.cast),
+            offline=getattr(router, "offline", None),
+        )
         return Scenario(
             name=cfg.name,
             default_seed=cfg.default_seed,
@@ -227,6 +250,15 @@ class Registry:
         """Build a Governor from a scenario's budget config (or defaults)."""
         cfg = self.scenarios.get(name)
         budget = (cfg.governor if cfg else None) or GovernorConfig()
+        obs.log(
+            "governor.configured",
+            scenario=name,
+            max_turns=budget.max_turns,
+            max_calls_per_turn=budget.max_calls_per_turn,
+            max_total_calls=budget.max_total_calls,
+            max_total_tokens=budget.max_total_tokens,
+            hourly_budget_usd=budget.hourly_budget_usd,
+        )
         return Governor(
             max_turns=budget.max_turns,
             max_calls_per_turn=budget.max_calls_per_turn,
