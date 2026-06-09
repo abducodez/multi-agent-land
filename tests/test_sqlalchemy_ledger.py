@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from src.core.events import Event
-from src.core.ledger import Ledger
 from src.core.ledger_factory import make_ledger
 from src.core.sqlalchemy_ledger import SqlAlchemyLedger
 
@@ -110,14 +109,15 @@ class TestSqlAlchemyLedgerPersistence:
 
 
 class TestLedgerFactory:
-    def test_offline_returns_in_memory_ledger(self, monkeypatch):
+    def test_missing_database_url_raises(self, monkeypatch):
         monkeypatch.delenv("DATABASE_URL", raising=False)
-        ledger = make_ledger()
-        assert type(ledger) is Ledger
+        with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
+            make_ledger()
 
-    def test_empty_database_url_is_offline(self, monkeypatch):
+    def test_empty_database_url_raises(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "")
-        assert type(make_ledger()) is Ledger
+        with pytest.raises(RuntimeError, match="DATABASE_URL is required"):
+            make_ledger()
 
     def test_explicit_url_builds_sqlalchemy_backend(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,17 +1,19 @@
 # Logical model profiles → small models served on Modal.
 #
 # offline:
-#   null  = auto (deterministic stub unless a live binding is configured —
-#           MODAL_WORKSPACE or MODAL_LLM_BASE_URL)
-#   true  = always the deterministic stub (reproducible demos / CI)
-#   false = always live inference
+#   null  = live inference required (default). The build refuses to start if no
+#           backend is configured (MODAL_WORKSPACE / MODAL_LLM_BASE_URL / HF_TOKEN);
+#           there is no silent fallback to the stub.
+#   false = live inference (same as null, stated explicitly).
+#   true  = deterministic stub for every profile — a test/dev seam (the test suite
+#           sets this), NOT a product mode.
 #
 # Each profile binds to a model by its **catalogue key** (`endpoint:`) — the model
 # slug in `modal/catalogue.py`, the single source of truth for what is deployed.
 # The loader (`Registry.from_dir`) expands that key into the concrete binding:
 #   model    = openai/<served_model_id>
 #   base_url = https://${MODAL_WORKSPACE}--<app>-<endpoint>.modal.run/v1
-#              (or $MODAL_LLM_BASE_URL if set; "" when neither → offline stub)
+#              (or $MODAL_LLM_BASE_URL if set; a backend is required to run)
 #   api_key  = $MODAL_LLM_KEY   (a self-served vLLM endpoint accepts any token)
 #
 # So adding/retuning a model is a one-line edit in `modal/catalogue.py`, and

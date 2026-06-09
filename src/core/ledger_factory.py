@@ -1,15 +1,13 @@
-"""Backend selection for the event ledger — env-gated, offline by default.
+"""Backend selection for the event ledger — the durable store is required.
 
 One decision lives here: which ``Ledger`` backend to construct.  The append-only
 ledger is the single source of truth (ADR-0014); this only chooses *where* it is
 durably stored.
 
-  - ``DATABASE_URL`` set  → :class:`SqlAlchemyLedger` (Postgres/Neon or any
-    SQLAlchemy URL), the durable event store.
-  - ``DATABASE_URL`` unset → the in-memory :class:`Ledger`.
-
-With no ``DATABASE_URL`` the system never imports SQLAlchemy or a database driver,
-so the offline path stays import-clean and fully testable without a server.
+A ``DATABASE_URL`` (Postgres/Neon, or any SQLAlchemy URL — e.g. ``sqlite://`` for
+an in-memory store in tests) is **required**: the app persists to a real event
+store and refuses to run without one.  Construction raises when no URL is
+resolved rather than silently degrading to an ephemeral in-memory ledger.
 """
 
 from __future__ import annotations
@@ -29,8 +27,8 @@ def _normalize_db_url(url: str) -> str:
     """Steer a bare Postgres URL to the installed psycopg3 driver.
 
     Neon (and most providers) hand out ``postgresql://`` / ``postgres://``, which
-    SQLAlchemy maps to psycopg2 — but this project ships psycopg3 (the ``store``
-    extra), so a copy-pasted Neon URL would fail with a missing-driver error.
+    SQLAlchemy maps to psycopg2 — but this project ships psycopg3, so a
+    copy-pasted Neon URL would fail with a missing-driver error.
     Rewrite the bare scheme to ``postgresql+psycopg://``; URLs that already name a
     driver (``postgresql+...``) or use another backend (sqlite, …) pass through.
     """
@@ -41,15 +39,19 @@ def _normalize_db_url(url: str) -> str:
 
 
 def make_ledger(url: str | None = None) -> Ledger:
-    """Construct the configured ledger backend.
+    """Construct the durable ledger backend (required — never an in-memory fallback).
 
-    *url* overrides ``DATABASE_URL`` (useful for tests/scripts).  When neither is
-    set, returns the in-memory ``Ledger``.  ``SqlAlchemyLedger`` is imported lazily
-    so the offline path does not require SQLAlchemy to be installed.
+    *url* overrides ``DATABASE_URL`` (useful for tests/scripts — pass ``"sqlite://"``
+    for an ephemeral in-memory store).  Raises :class:`RuntimeError` when neither is
+    set: the app requires a real event store and must not silently run without one.
     """
     resolved = url or database_url()
     if not resolved:
-        return Ledger()
+        raise RuntimeError(
+            "DATABASE_URL is required — the event store is not optional. "
+            "Set DATABASE_URL (e.g. a Neon postgresql:// URL, or sqlite:///runs/events.db for "
+            "a local file), or pass an explicit url to make_ledger()."
+        )
     from src.core.sqlalchemy_ledger import SqlAlchemyLedger
 
     return SqlAlchemyLedger(_normalize_db_url(resolved))

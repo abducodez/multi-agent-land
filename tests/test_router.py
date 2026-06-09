@@ -121,7 +121,7 @@ class TestModelRouterCatalogueEndpoint:
         assert provider.model == "openai/Qwen/Qwen2.5-7B-Instruct"
         assert provider.api_base == "https://router.huggingface.co/v1"
         assert provider.api_key == "hf_secret"
-        assert provider.max_tokens == 220  # fast tier decoding (the model's tier)
+        assert provider.max_tokens == 320  # fast tier decoding (the model's tier)
 
     def test_offline_hf_endpoint_key_serves_distinct_stub(self):
         # Offline, an HF key routes like any profile: the deterministic stub with the
@@ -133,9 +133,9 @@ class TestModelRouterCatalogueEndpoint:
 
 
 class TestFromEnv:
-    def test_offline_without_binding(self, monkeypatch):
-        # No backend configured (no Modal binding, no HF token, no stray cloud key)
-        # → deterministic offline stub.
+    def test_live_without_binding(self, monkeypatch):
+        # No offline auto-detection: from_env always builds the live path, even with
+        # no backend configured (the stub is reachable only via offline=True).
         for var in (
             "MODAL_WORKSPACE",
             "MODAL_LLM_BASE_URL",
@@ -146,8 +146,8 @@ class TestFromEnv:
         ):
             monkeypatch.delenv(var, raising=False)
         router = ModelRouter.from_env()
-        assert router.offline is True
-        assert isinstance(router.for_profile("fast"), DeterministicTinyModel)
+        assert router.offline is False
+        assert not isinstance(router.for_profile("fast"), DeterministicTinyModel)
 
     def test_online_with_modal_workspace(self, monkeypatch):
         # A Modal workspace is the activating signal for the live path.

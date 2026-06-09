@@ -197,17 +197,26 @@ class Registry:
     # ── building ───────────────────────────────────────────────────────────────
 
     def build_router(self) -> ModelRouter:
-        """Construct a ModelRouter honouring the models config (offline/specs)."""
+        """Construct a ModelRouter honouring the models config.
+
+        ``models.offline: true`` forces the deterministic stub (the test/dev seam);
+        ``false`` and the default (``null``) both build the live path.  On the live
+        path live inference is **required**: if no backend is configured the build
+        raises rather than silently degrading to the stub — the app has no offline
+        product mode.
+        """
         specs = {profile: ProfileSpec(**cfg.model_dump()) for profile, cfg in self.models.profiles.items()}
         if self.models.offline is True:
             return ModelRouter(offline=True, specs=specs)
-        if self.models.offline is False:
-            return ModelRouter(offline=False, specs=specs)
-        # auto: detect credentials, but keep explicit specs for the live case
-        router = ModelRouter.from_env()
-        if not router.offline and specs:
-            router.specs = specs
-        return router
+        from src.models.openai_compat import has_live_credentials
+
+        if not has_live_credentials():
+            raise RuntimeError(
+                "No inference backend configured. Set MODAL_WORKSPACE / MODAL_LLM_BASE_URL "
+                "or HF_TOKEN / HF_INFERENCE_BASE_URL to run live, or set models.offline: true "
+                "for the deterministic stub (tests/dev only)."
+            )
+        return ModelRouter(offline=False, specs=specs)
 
     def build_agent(self, name: str, router: ModelRouter, tools=None, memory_index=None) -> Agent:
         if name not in self.agents:

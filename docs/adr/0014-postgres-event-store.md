@@ -35,17 +35,16 @@ is a serial `offset` column (not `created_at`, which is subject to clock skew, n
 exercised in CI against SQLite without a server, and the Neon path is
 code-identical.
 
-**Env-gated, offline by default.** A small factory (`src/core/ledger_factory.py`,
-`make_ledger()`) selects the backend: `DATABASE_URL` set → `SqlAlchemyLedger`;
-unset → the in-memory `Ledger`. With no `DATABASE_URL` the system never imports
-SQLAlchemy or a driver. SQLAlchemy is imported lazily inside the backend, so
-importing `src.core.*` does not require the library to be installed. The store
-deps (`sqlalchemy>=2.0`, `psycopg[binary]>=3` — the Neon driver) are **core
-dependencies** in `pyproject.toml`: the deployed app is configured with a real
-`DATABASE_URL` and must not silently degrade to a local store when the durable
-backend is missing, so the driver always ships rather than hiding behind an
-optional extra. (The lazy import is retained so `src.core.*` stays importable in
-minimal/test contexts even though the driver is now always present.)
+**The durable store is required.** A small factory (`src/core/ledger_factory.py`,
+`make_ledger()`) constructs the backend from `DATABASE_URL` (`SqlAlchemyLedger`).
+There is **no in-memory fallback**: with no URL resolved, `make_ledger()` raises —
+the app persists to a real event store and refuses to run without one (this is
+part of dropping the offline product mode; see ADR-0010). The store deps
+(`sqlalchemy>=2.0`, `psycopg[binary]>=3` — the Neon driver) are therefore **core
+dependencies** in `pyproject.toml`, not an optional extra. SQLAlchemy is still
+imported lazily inside the backend (so `src.core.*` stays importable in minimal
+contexts), but it always ships. Tests pass an explicit ephemeral `sqlite://` URL
+as the mock store — a real `SqlAlchemyLedger` with no server.
 
 **SQLAlchemy-direct, not the `eventsourcing` library.** `eventsourcing` is built
 around DDD aggregates: its `StoredEvent` is keyed on `originator_id` +
@@ -70,8 +69,9 @@ The two are complementary, not competing.
 - A hosted deployment points `DATABASE_URL` at Neon
   (`postgresql+psycopg://USER:PASSWORD@HOST/DB?sslmode=require`) and the durable
   log lives in managed Postgres; everything else is unchanged.
-- The offline path is the default and is import-clean: all existing tests pass
-  with no database and no `store` extra installed.
+- A `DATABASE_URL` is required to run; `make_ledger()` raises without one. Tests
+  pass an ephemeral `sqlite://` URL (a real `SqlAlchemyLedger`, no server) as the
+  mock store, so the suite stays green with no database server and no network.
 - `snapshot_to` is backend-agnostic (it replays the log into a destination
   ledger, default a SQLite file) since Postgres has no portable in-process backup
   API like SQLite's `.backup()`; a Postgres run can be checkpointed to a portable

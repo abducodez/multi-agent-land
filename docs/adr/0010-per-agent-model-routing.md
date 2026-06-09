@@ -24,8 +24,14 @@ inference there.
 The router is config/env driven:
 - `config/models.yaml` binds each profile to a concrete (small) model.
 - `MODEL_TINY` / `MODEL_FAST` / `MODEL_BALANCED` / `MODEL_STRONG` override at runtime.
-- Offline (no API key) it serves a `DeterministicTinyModel` for *every* profile,
-  so demos and tests are reproducible with no inference.
+- With `offline=True` it serves a `DeterministicTinyModel` for *every* profile,
+  so the test suite is reproducible with no inference.
+
+> **Amended:** offline is no longer a *product* mode. The app requires live
+> inference — `Registry.build_router()` raises when no backend is configured
+> instead of serving the stub. The `offline=True` flag and `DeterministicTinyModel`
+> are retained purely as the test/dev seam — the deterministic "mock data" the
+> suite injects via `tests/conftest.py`.
 
 Providers expose `last_usage`; the conductor meters those tokens into the
 Governor (see ADR-0013).
@@ -37,4 +43,5 @@ Governor (see ADR-0013).
 - Swapping a tier to a different small model is a one-line config change; no agent
   code names a model.
 - The `tiny` profile (≤4B) gives a first-class Tiny Titan mode.
-- The deterministic offline path keeps the green, mock-free test suite.
+- The deterministic stub (the `offline=True` test seam) keeps the test suite green
+  and network-free without it being a runtime product mode.

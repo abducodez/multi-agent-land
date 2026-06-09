@@ -14,51 +14,28 @@ dependencies = [
   "opentelemetry-api>=1.20.0",
   "opentelemetry-sdk>=1.20.0",
   "opentelemetry-semantic-conventions>=0.41b0",
-  # Durable event store backend (ADR-0014). Core dependency: the app requires a
-  # real DATABASE_URL and refuses to run without it. psycopg is the Neon driver.
+  # The app requires real infrastructure — a DB and live inference — and refuses to
+  # run without it; there is no offline/stub product mode. Everything the live path
+  # touches is therefore a core dependency rather than an opt-in extra:
+  #   - sqlalchemy + psycopg : durable event store backend (ADR-0014); psycopg is the Neon driver.
+  #   - litellm              : model gateway to the OpenAI-compatible endpoints (ADR-0015).
+  #   - instructor           : validated, schema-constrained structured output (ADR-0016).
+  #   - mcp                  : Model Context Protocol tool transport (ADR-0017).
+  #   - mem0ai + sentence-transformers : semantic memory index over the ledger (ADR-0018).
+  # These are still imported lazily at their call sites, but they always ship.
   "sqlalchemy>=2.0",
   "psycopg[binary]>=3",
+  "litellm>=1.40",
+  "instructor>=1.5",
+  "mcp>=1.0",
+  "mem0ai>=0.1",
+  "sentence-transformers>=3.0",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2.0",
   "ruff>=0.5.0",
-]
-# Model gateway (ADR-0015). Optional: routes live profiles through LiteLLM to the
-# OpenAI-compatible models served on Modal, with real per-call cost metering. The
-# system runs fully offline on the deterministic stub without this installed;
-# litellm is imported lazily so importing src.models.* never requires it.
-litellm = [
-  "litellm>=1.40",
-]
-# Validated structured output (ADR-0016). Optional: wraps the LiteLLM gateway
-# with Instructor so the live path returns schema-valid, kind-constrained event
-# payloads (retried on validation failure) instead of parsing prose. The system
-# runs fully offline on the deterministic stub + tolerant parser without this;
-# instructor is imported lazily so importing src.* never requires it.
-instructor = [
-  "instructor>=1.5",
-]
-# MCP tool transport (ADR-0017). Optional: exposes the built-in tools over a
-# stdio Model Context Protocol server and resolves granted tools over it when the
-# MCP_SERVERS / MCP_ORACLE gate is set. The capability check still runs first, so
-# MCP is transport, not the security boundary. The system runs fully offline on
-# the in-process registry without this; mcp is imported lazily so importing src.*
-# and app never requires it.
-mcp = [
-  "mcp>=1.0",
-]
-# Semantic memory index (ADR-0018). Optional: a derived, rebuildable vector lens
-# over the event ledger that upgrades the salience relevance term from keyword
-# overlap to semantic search when the MEMORY_INDEX gate is set. The ledger stays
-# the single source of truth; the index is repopulated from it. The system runs
-# fully offline on the keyword path without this; mem0 is imported lazily so
-# importing src.* and app never requires it. Embeddings run LOCALLY via
-# sentence-transformers (no API key) — keeping the active index off the grid too.
-memory = [
-  "mem0ai>=0.1",
-  "sentence-transformers>=3.0",
 ]
 
 [tool.ruff]

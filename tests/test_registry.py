@@ -30,14 +30,21 @@ class TestDefaultRegistry:
         assert profiles["pocket-actor"] == "tiny"
         assert profiles["mischief-critic"] == "balanced"
 
-    def test_build_router_offline_without_binding(self, monkeypatch):
-        # No Modal binding configured → the deterministic offline stub.
-        for var in ("MODAL_WORKSPACE", "MODAL_LLM_BASE_URL", "OPENAI_API_KEY"):
+    @pytest.mark.real_infra
+    def test_build_router_requires_live_credentials(self, monkeypatch):
+        # No backend configured → the app refuses to build a router (no offline mode).
+        for var in ("MODAL_WORKSPACE", "MODAL_LLM_BASE_URL", "OPENAI_API_KEY", "HF_TOKEN", "HF_INFERENCE_BASE_URL"):
             monkeypatch.delenv(var, raising=False)
         reg = default_registry()
-        router = reg.build_router()
+        with pytest.raises(RuntimeError, match="No inference backend configured"):
+            reg.build_router()
+
+    @pytest.mark.real_infra
+    def test_build_router_is_live_with_credentials(self, monkeypatch):
+        monkeypatch.setenv("MODAL_WORKSPACE", "demo-workspace")
+        router = default_registry().build_router()
         assert isinstance(router, ModelRouter)
-        assert router.offline is True
+        assert router.offline is False
 
     def test_governor_for_uses_config_budget(self):
         reg = default_registry()

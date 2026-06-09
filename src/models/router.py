@@ -9,9 +9,12 @@ This is the single place per-agent model selection happens, so:
   - a scenario can mix a ``tiny`` worker with a ``strong`` judge for free;
   - the rest of the engine never names a model.
 
-Offline (no API key) the router serves a :class:`DeterministicTinyModel` for
-every profile, so demos and tests run with zero inference and full
-reproducibility.  See ADR-0010.
+The live path is the only product path: profiles resolve to concrete models and
+the router calls them over the gateway.  The ``offline`` flag is a *test seam* —
+when set it serves a :class:`DeterministicTinyModel` for every profile so the
+suite runs with zero inference and full reproducibility (the deterministic
+"mock data").  Production never sets it; ``Registry.build_router`` requires live
+credentials and refuses to construct a stub router.  See ADR-0010.
 
 On the live path the concrete transport is the :class:`LiteLLMProvider` gateway
 (ADR-0015): profiles point at the OpenAI-compatible Modal/vLLM endpoints in
@@ -25,7 +28,6 @@ from dataclasses import dataclass, field
 
 from src import observability as obs
 from src.core.manifest import ModelProfile, resolve_model
-from src.models.openai_compat import has_live_credentials
 from src.models.provider import DeterministicTinyModel, ModelProvider
 
 # Decoding defaults per profile.  Smaller models stay cooler and shorter; the
@@ -62,6 +64,8 @@ class ModelRouter:
     """
 
     specs: dict[str, ProfileSpec] = field(default_factory=dict)
+    # Test seam only: serve the deterministic stub for every profile. Production
+    # never sets this (Registry.build_router requires live credentials).
     offline: bool = False
     _cache: dict[str, ModelProvider] = field(default_factory=dict, init=False, repr=False)
 
@@ -156,10 +160,11 @@ class ModelRouter:
 
     @classmethod
     def from_env(cls) -> "ModelRouter":
-        """Build a router from environment configuration.
+        """Build a live router from environment configuration.
 
-        Offline (deterministic stub for every profile) unless a live API key is
-        present, in which case each profile resolves to its concrete model via
-        ``resolve_model`` plus the per-profile decoding defaults.
+        Each profile resolves to its concrete model via ``resolve_model`` plus the
+        per-profile decoding defaults (``MODEL_TINY`` / … overrides honoured).  This
+        always builds the live path; the deterministic stub is reached only by
+        constructing ``ModelRouter(offline=True)`` explicitly (the test seam).
         """
-        return cls(offline=not has_live_credentials())
+        return cls(offline=False)
