@@ -109,11 +109,41 @@ class TestModelRouterCatalogueEndpoint:
         assert provider.model == "fallback-model"
         assert provider.max_tokens == 320  # fast tier decoding
 
+    def test_online_hf_endpoint_key_resolves_to_hf_router(self, monkeypatch):
+        # A backend-qualified HF key resolves to the HF Inference router binding —
+        # the OpenAI-compatible model string + HF token, no Modal env needed.
+        monkeypatch.setenv("HF_TOKEN", "hf_secret")
+        monkeypatch.delenv("HF_INFERENCE_BASE_URL", raising=False)
+        monkeypatch.delenv("MODEL_FAST", raising=False)
+        router = ModelRouter(offline=False)
+        provider = router.for_profile("hf:Qwen/Qwen2.5-7B-Instruct")
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider.model == "openai/Qwen/Qwen2.5-7B-Instruct"
+        assert provider.api_base == "https://router.huggingface.co/v1"
+        assert provider.api_key == "hf_secret"
+        assert provider.max_tokens == 220  # fast tier decoding (the model's tier)
+
+    def test_offline_hf_endpoint_key_serves_distinct_stub(self):
+        # Offline, an HF key routes like any profile: the deterministic stub with the
+        # key folded into the variant, so the choice still varies output reproducibly.
+        router = ModelRouter(offline=True)
+        provider = router.for_profile("hf:Qwen/Qwen2.5-7B-Instruct")
+        assert isinstance(provider, DeterministicTinyModel)
+        assert "hf:Qwen/Qwen2.5-7B-Instruct" in provider.variant
+
 
 class TestFromEnv:
     def test_offline_without_binding(self, monkeypatch):
-        # No Modal binding (and no stray cloud key) → deterministic offline stub.
-        for var in ("MODAL_WORKSPACE", "MODAL_LLM_BASE_URL", "OPENAI_API_KEY"):
+        # No backend configured (no Modal binding, no HF token, no stray cloud key)
+        # → deterministic offline stub.
+        for var in (
+            "MODAL_WORKSPACE",
+            "MODAL_LLM_BASE_URL",
+            "OPENAI_API_KEY",
+            "HF_TOKEN",
+            "HUGGINGFACEHUB_API_TOKEN",
+            "HF_INFERENCE_BASE_URL",
+        ):
             monkeypatch.delenv(var, raising=False)
         router = ModelRouter.from_env()
         assert router.offline is True

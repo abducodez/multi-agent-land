@@ -26,7 +26,6 @@ from src.core.conductor import Conductor
 from src.core.governor import BudgetExceeded
 from src.core.ledger_factory import make_ledger
 from src.core.registry import default_registry
-from src.models.openai_compat import has_live_credentials
 from src.tools.builtins import default_tool_registry
 from src.ui.fishbowl.adapter import scenario_voice
 from src.ui.fishbowl.view_model import view_model_at
@@ -367,13 +366,19 @@ def _stopped_banner_html(reason: str) -> str:
 
 
 def _live_chip() -> str:
-    """The topbar status chip — computed from the live-credential env gate.
+    """The topbar status chip — computed from the per-backend live-credential gates.
 
-    Shows ``● LIVE · MODAL`` (with the pulsing dot) when a Modal model binding is
-    configured, else ``OFFLINE · STUB`` so the demo is honest about which path is
-    driving the cast.  Offline-first: with no env vars the stub label shows."""
-    if has_live_credentials():
-        return '<span class="chip live"><span class="live-dot"></span>&#9679; LIVE &middot; MODAL</span>'
+    Shows ``● LIVE · MODAL`` / ``● LIVE · HUGGING FACE`` (or ``MODAL+HF`` when both are
+    configured, with the pulsing dot) naming which inference backend(s) can drive the
+    cast, else ``OFFLINE · STUB`` so the demo is honest about which path is live.
+    Offline-first: with no env vars the stub label shows."""
+    from src.models import inference
+
+    configured = inference.configured_backends()
+    if configured:
+        labels = {"modal": "MODAL", "hf": "HUGGING FACE"}
+        name = " + ".join(labels.get(b, b.upper()) for b in configured)
+        return f'<span class="chip live"><span class="live-dot"></span>&#9679; LIVE &middot; {name}</span>'
     return '<span class="chip live"><span class="live-dot"></span>OFFLINE &middot; STUB</span>'
 
 
@@ -534,6 +539,7 @@ def _wire(
     # all looked up defensively so the shell still runs if the Lab omits a widget.
     premise_in = _h(lab_handles, "premise")
     cast_models_in = _h(lab_handles, "cast_models")
+    backend_in = _h(lab_handles, "inference_backend", "backend")
     judge_model_in = _h(lab_handles, "judge_model")
     judge_policy_in = _h(lab_handles, "judge_policy")
     judge_strictness_in = _h(lab_handles, "judge_strictness")
@@ -573,6 +579,7 @@ def _wire(
                 tools=knobs.get("tools") if isinstance(knobs.get("tools"), list) else [],
                 tokens=knobs.get("tokens") if isinstance(knobs.get("tokens"), (int, float)) else None,
                 max_rounds=knobs.get("max_rounds") if isinstance(knobs.get("max_rounds"), (int, float)) else None,
+                backend=knobs.get("backend") if isinstance(knobs.get("backend"), str) and knobs.get("backend") else "modal",
             )
             return FishbowlSession(name, registry=Registry.from_world(world), tools=_tools)
         except Exception:
@@ -590,6 +597,7 @@ def _wire(
         tools,
         tokens,
         max_rounds,
+        backend,
         layout,
         mind_reader,
     ):
@@ -607,6 +615,7 @@ def _wire(
                 tools=tools,
                 tokens=tokens,
                 max_rounds=max_rounds,
+                backend=backend,
             )
             if name
             else None
@@ -632,6 +641,7 @@ def _wire(
             tools_in if tools_in is not None else blank_state,
             tokens_in if tokens_in is not None else blank_state,
             max_rounds_in if max_rounds_in is not None else blank_state,
+            backend_in if backend_in is not None else blank_state,
             layout_state,
             mind_reader_state,
         ]
@@ -645,33 +655,29 @@ def _wire(
     # Without this, switching to a new world (e.g. the spy game) leaves the premise,
     # seed, cast table, and narrator showing the previous scenario — and Summon would
     # genesis with the wrong seed.  Refreshing them makes "compose a spy game" one click.
-    # The cast picker re-seeds itself (it is a gr.render over the scenario), so it is not
-    # in this list; we re-seed the static fields plus the Judge's default Modal model.
+    # The cast picker re-seeds itself (it is a gr.render over the scenario + backend), as
+    # does the Judge model picker (the Lab owns both, since they depend on the chosen
+    # backend); we re-seed only the static, backend-independent fields here.
     _scenario_fields = [
         (_h(lab_handles, "premise"), "premise"),
         (seed_in, "seed"),
         (_h(lab_handles, "world"), "world"),
         (_h(lab_handles, "narrator"), "narrator"),
-        (_h(lab_handles, "judge_model"), "judge_model"),
     ]
     _present_fields = [(handle, key) for handle, key in _scenario_fields if handle is not None]
 
     if scenario_in is not None and _present_fields:
 
         def on_scenario_change(scenario_value):
-            from src.ui.fishbowl.lab import _default_model_key, _judge_manifest
-
             cfg = _registry.scenarios.get(SCENARIOS.get(_scenario_title(scenario_value), ""))
             if cfg is None:
                 return tuple(gr.update() for _ in _present_fields)
             seeds = list(cfg.example_seeds) or [cfg.default_seed]
-            judge = _judge_manifest(cfg)
             updates = {
                 "premise": gr.update(value=cfg.goal),
                 "seed": gr.update(choices=seeds, value=cfg.default_seed),
                 "world": gr.update(value=cfg.genesis_text or ""),
                 "narrator": gr.update(value=scenario_voice(cfg.name)),
-                "judge_model": gr.update(value=_default_model_key(judge) if judge else None),
             }
             return tuple(updates[key] for _handle, key in _present_fields)
 

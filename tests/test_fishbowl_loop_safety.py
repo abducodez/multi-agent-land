@@ -151,7 +151,9 @@ def test_stopped_banner_reuses_verdict_chrome() -> None:
 
 def test_topbar_chip_offline_by_default() -> None:
     # With no live credentials configured the topbar shows the OFFLINE/STUB chip.
+    from src.models import inference
+
     chip = fb_app._live_chip()
     assert "OFFLINE" in chip or "LIVE" in chip  # honest either way
-    if not fb_app.has_live_credentials():
+    if not inference.configured_backends():
         assert "OFFLINE" in chip and "STUB" in chip
