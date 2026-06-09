@@ -23,6 +23,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from src import observability as obs
 from src.core.context import ContextBuilder
 from src.core.events import Event
 from src.core.manifest import AgentManifest
@@ -148,6 +149,8 @@ class ManifestAgent(Agent):
         allowed = self._content_kinds()
         extra_fields = self.manifest.output_extra_fields or None
         base_prompt = "\n".join(filter(None, [context, extra, tools_block]))
+        # DEBUG: the FULL prompt this agent will send to its model (a key user ask).
+        obs.log("agent.prompt", level="debug", agent=self.manifest.name, allowed=allowed, prompt=base_prompt)
 
         parsed = self._resolve_payload(self.manifest.name, base_prompt, allowed, extra_fields)
 
@@ -160,8 +163,10 @@ class ManifestAgent(Agent):
             and parsed.get("kind") in _SPEECH_KINDS
             and self._is_repeat(parsed.get("text", ""), recent_events)
         ):
+            obs.log("agent.repeat_skip", agent=self.manifest.name, text=str(parsed.get("text", ""))[:120])
             raise AgentOutputError(f"{self.manifest.name}: repeated a recent line — skipped to keep it moving")
 
+        obs.log("agent.acted", agent=self.manifest.name, kind=parsed["kind"], text=str(parsed.get("text", ""))[:160])
         return Event(
             run_id=run_id,
             turn=turn,
@@ -230,24 +235,28 @@ class ManifestAgent(Agent):
         """
         wants_thought = bool(extra_fields and "thought" in extra_fields)
         provider = self.router.for_profile(self._route_key)
-        if hasattr(provider, "complete_structured"):
-            model = build_output_model(allowed, extra_fields)
-            try:
-                result = provider.complete_structured(role, prompt, model)
-                self.last_usage = dict(provider.last_usage)
-                payload = self._with_reasoning(result.model_dump(), provider, "", wants_thought)
-                if is_usable_line(payload.get("text", "")):
-                    return payload
-            except Exception:
-                pass  # structured failed — fall through to the prose fallback
-            return self._prose_fallback(role, prompt, allowed, wants_thought, provider)
+        with obs.span("agent.resolve", **{"mal.agent": role, "mal.profile": self._route_key}):
+            if hasattr(provider, "complete_structured"):
+                model = build_output_model(allowed, extra_fields)
+                try:
+                    result = provider.complete_structured(role, prompt, model)
+                    self.last_usage = dict(provider.last_usage)
+                    payload = self._with_reasoning(result.model_dump(), provider, "", wants_thought)
+                    if is_usable_line(payload.get("text", "")):
+                        obs.add_span_attrs(**{"resolve.path": "structured", "event.kind": payload.get("kind", "")})
+                        return payload
+                except Exception:
+                    pass  # structured failed — fall through to the prose fallback
+                obs.add_span_attrs(**{"resolve.path": "prose_fallback"})
+                return self._prose_fallback(role, prompt, allowed, wants_thought, provider)
 
-        instruction = json_instruction(allowed, extra_fields=extra_fields)
-        raw = provider.complete(role, f"{prompt}\n{instruction}")
-        self.last_usage = dict(provider.last_usage)
-        self._guard_model_error(role, raw)
-        parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
-        return self._with_reasoning(parsed, provider, raw, wants_thought)
+            instruction = json_instruction(allowed, extra_fields=extra_fields)
+            raw = provider.complete(role, f"{prompt}\n{instruction}")
+            self.last_usage = dict(provider.last_usage)
+            self._guard_model_error(role, raw)
+            parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
+            obs.add_span_attrs(**{"resolve.path": "offline_parse", "event.kind": parsed.get("kind", "")})
+            return self._with_reasoning(parsed, provider, raw, wants_thought)
 
     def _guard_model_error(self, role: str, raw: str) -> None:
         """Raise when *raw* is a provider failure sentinel, not a spoken line.
@@ -262,6 +271,7 @@ class ManifestAgent(Agent):
 
     def _prose_fallback(self, role, prompt, allowed, wants_thought, provider) -> dict:
         """Re-prompt for a plain spoken line and clean it; skip the turn if it's junk."""
+        obs.log("agent.prose_fallback", agent=getattr(self, "name", role))
         raw = provider.complete(role, prompt + _PROSE_FALLBACK)
         self.last_usage = dict(provider.last_usage)
         self._guard_model_error(role, raw)
