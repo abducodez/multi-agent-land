@@ -48,6 +48,12 @@ def _load_dotenv(filename: str = ".env") -> None:
 # under pytest so the test suite stays hermetically offline (no .env bleed into tests).
 if "pytest" not in sys.modules:
     _load_dotenv()
+    # Initialise logging + tracing before the app imports so every layer's logger
+    # and spans are wired from the first import (ADR-0024).  Reads MAL_* env vars;
+    # skipped under pytest so the suite stays hermetic (instrumentation auto-configures).
+    from src import observability as _obs  # noqa: E402
+
+    _obs.configure()
 
 from src.ui.fishbowl.app import demo, launch  # noqa: E402  (must follow _load_dotenv)
 
