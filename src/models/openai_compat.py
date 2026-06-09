@@ -144,18 +144,25 @@ class OpenAICompatProvider(ModelProvider):
 
 
 def has_live_credentials() -> bool:
-    """True when a live model binding is configured (else the offline stub runs).
+    """True when *any* inference backend is configured (else the offline stub runs).
 
     Single source of truth for the online/offline decision, shared by
     :func:`build_from_env` and the :class:`~src.models.router.ModelRouter` so they
-    never disagree. The live path is the small models served on Modal (ADR-0015):
-    either ``MODAL_WORKSPACE`` (the engine templates each profile's endpoint URL
-    from it — see ``config/models.yaml`` + ``modal/catalogue.py``) or
-    ``MODAL_LLM_BASE_URL`` (a single explicit OpenAI-compatible endpoint) is
-    sufficient. There is no generic cloud key — everything routes to models you
-    deploy yourself.
+    never disagree. Two backends can satisfy it (ADR-0015 / ADR-0024):
+
+      * **Modal** — ``MODAL_WORKSPACE`` (the engine templates each profile's endpoint
+        URL from it) or ``MODAL_LLM_BASE_URL`` (a single explicit OpenAI-compatible
+        endpoint), the small models you deploy yourself; or
+      * **Hugging Face** — ``HF_TOKEN`` (the serverless Inference Providers router) or
+        ``HF_INFERENCE_BASE_URL`` (a self-hosted TGI / dedicated endpoint).
+
+    There is no generic cloud key — everything routes to models you host or to HF's
+    inference router. Delegates to :mod:`src.models.inference` so the chip, the router,
+    and this gate agree on what "live" means.
     """
-    return bool(os.getenv("MODAL_WORKSPACE", "").strip() or os.getenv("MODAL_LLM_BASE_URL", "").strip())
+    from src.models import inference
+
+    return bool(inference.configured_backends())
 
 
 def build_from_env() -> ModelProvider:

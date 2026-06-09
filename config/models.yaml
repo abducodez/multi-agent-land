@@ -20,6 +20,13 @@
 # MODEL_BALANCED / MODEL_STRONG still override the model string per profile
 # (highest priority). You may also bind a profile explicitly with `model:` +
 # `base_url:` instead of `endpoint:` (an escape hatch for non-catalogue endpoints).
+#
+# `endpoint:` keys may name a model on EITHER inference backend (ADR-0024): a bare
+# slug is a Modal-served model (as below); a `hf:<repo>` key is a Hugging Face
+# serverless model from `src/models/hf_catalogue.py`, resolved against HF_TOKEN. E.g.
+#   balanced: {endpoint: "hf:google/gemma-2-9b-it", temperature: 0.8, max_tokens: 320}
+# The Fishbowl Lab picks the backend + per-agent model interactively; this file is the
+# headless/default-run binding.
 offline: null
 profiles:
   tiny:

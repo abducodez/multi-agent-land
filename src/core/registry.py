@@ -70,23 +70,23 @@ def _expand_env(value):
 def _resolve_model_endpoints(raw_models: dict, env: dict[str, str] | None = None) -> dict:
     """Expand each profile's ``endpoint:`` catalogue key into a concrete binding.
 
-    A profile may bind to a model by its **catalogue key** (the single source of
-    truth in ``modal/catalogue.py``) instead of spelling out the model string and
-    URL::
+    A profile may bind to a model by its **catalogue key** instead of spelling out
+    the model string and URL.  The key may name a model on either inference backend —
+    a bare Modal endpoint slug, or a backend-qualified key (``hf:<repo>``)::
 
         profiles:
-          tiny: {endpoint: nemotron-3-nano-4b, temperature: 0.7, max_tokens: 160}
+          tiny:    {endpoint: nemotron-3-nano-4b, temperature: 0.7, max_tokens: 160}
+          balanced: {endpoint: "hf:google/gemma-2-9b-it", temperature: 0.8}
 
-    For each such profile this fills ``model`` (``openai/<served_id>``),
-    ``base_url`` (built from ``$MODAL_WORKSPACE`` / ``$MODAL_LLM_BASE_URL``), and
-    ``api_key`` (``$MODAL_LLM_KEY``) from the catalogue, then drops the ``endpoint``
-    key so the result validates against :class:`ModelProfileConfig` (which forbids
-    unknown fields). Precedence: a ``MODEL_<PROFILE>`` env var wins for the model
-    string; otherwise explicit ``model`` / ``base_url`` / ``api_key`` in the YAML
-    win over the derived values. A profile with an explicit ``model`` and no
-    ``endpoint`` passes through untouched.
+    For each such profile this fills ``model`` (``openai/<served_id>``), ``base_url``
+    (Modal workspace URL, or the HF router), and ``api_key`` (the backend's token)
+    from the owning catalogue, then drops the ``endpoint`` key so the result validates
+    against :class:`ModelProfileConfig` (which forbids unknown fields). Precedence: a
+    ``MODEL_<PROFILE>`` env var wins for the model string; otherwise explicit
+    ``model`` / ``base_url`` / ``api_key`` in the YAML win over the derived values. A
+    profile with an explicit ``model`` and no ``endpoint`` passes through untouched.
     """
-    from src.models import modal_catalogue
+    from src.models import inference
 
     source = os.environ if env is None else env
     profiles = raw_models.get("profiles")
@@ -95,7 +95,7 @@ def _resolve_model_endpoints(raw_models: dict, env: dict[str, str] | None = None
     for profile, cfg in profiles.items():
         if not isinstance(cfg, dict) or "endpoint" not in cfg:
             continue
-        binding = modal_catalogue.binding_for(cfg.pop("endpoint"), env=source)
+        binding = inference.binding_for(cfg.pop("endpoint"), env=source)
         override = source.get(f"MODEL_{str(profile).upper()}", "").strip()
         if override:
             cfg["model"] = override  # MODEL_<PROFILE> is the highest-priority override

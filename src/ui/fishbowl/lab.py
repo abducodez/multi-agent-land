@@ -25,7 +25,7 @@ import gradio as gr
 from src.core.config import ScenarioConfig, validate_scenario, validate_world
 from src.core.manifest import AgentManifest
 from src.core.registry import default_registry
-from src.models import modal_catalogue
+from src.models import inference
 from src.ui.fishbowl.adapter import VOICES, scenario_voice
 
 # ── design vocabulary (mirrors ui/raw/lab.jsx) ──────────────────────────────────
@@ -73,34 +73,48 @@ def _scenario_by_title(title: str) -> ScenarioConfig | None:
     return None
 
 
-def model_choices() -> list[tuple[str, str]]:
-    """Dropdown choices for the Modal-hosted catalogue: ``(friendly label, endpoint key)``.
+def backend_choices() -> list[tuple[str, str]]:
+    """Radio choices for the inference backend: ``(friendly label, backend key)``.
 
-    The single source of truth is ``modal/catalogue.py`` (read through the engine's
-    ``modal_catalogue`` view), so the Lab can *only* offer models that are actually
-    deployable — and the list loads offline (the catalogue is a plain stdlib file), so
-    the picker is populated even with no API key.  Empty list → a stripped deployment
-    with no catalogue, in which case the cast falls back to the deterministic stub."""
+    The two ways the cast can think: **Modal** (self-hosted vLLM you deploy) and
+    **Hugging Face** (serverless Inference Providers — many small models, just a token).
+    The selected backend decides which catalogue the cast/judge pickers draw from."""
+    return [(f"{b.label} · {b.blurb}", b.key) for b in inference.backends()]
+
+
+def model_choices(backend: str = inference.DEFAULT_BACKEND) -> list[tuple[str, str]]:
+    """Dropdown choices for *backend*'s model catalogue: ``(friendly label, qualified key)``.
+
+    The catalogue is the single source of truth (``modal/catalogue.py`` for Modal,
+    ``src/models/hf_catalogue.py`` for Hugging Face), read through the unified
+    ``inference`` registry, so the Lab can *only* offer models that backend can actually
+    run.  Both catalogues are plain stdlib data, so the picker is populated offline (no
+    token needed to browse).  Empty list → a stripped deployment with no catalogue, in
+    which case the cast falls back to the deterministic stub.  The stored value is the
+    backend-qualified key (``hf:<repo>`` for HF; a bare slug for Modal)."""
     choices: list[tuple[str, str]] = []
-    for entry in modal_catalogue.entries():
+    for entry in inference.entries(backend):
         served = entry["served_model_id"].split("/")[-1]
         params = f"{entry['params_b']:g}B" if entry.get("params_b") else "?"
         tier = entry["profile"] or "specialist"
-        provider = entry["provider"].title()
+        provider = entry["provider"]
+        if not any(c.isupper() for c in provider):
+            provider = provider.title()  # tidy bare lowercase keys (e.g. "nvidia")
         choices.append((f"{served} · {params} · {tier} · {provider}", entry["key"]))
     return choices
 
 
-def _default_model_key(manifest: AgentManifest) -> str | None:
-    """Catalogue key a cast row defaults to: the manifest's explicit ``model_endpoint``,
-    else the catalogue's default model for its tier, else the first catalogue model (or
-    None when the catalogue is empty)."""
-    if manifest.model_endpoint:
+def _default_model_key(manifest: AgentManifest, backend: str = inference.DEFAULT_BACKEND) -> str | None:
+    """Qualified key a cast row defaults to, on *backend*: the manifest's explicit
+    ``model_endpoint`` (only honoured on its own backend — Modal), else the backend's
+    default model for the manifest's tier, else the first model in that backend's
+    catalogue (or None when it is empty)."""
+    if backend == inference.DEFAULT_BACKEND and manifest.model_endpoint:
         return manifest.model_endpoint
-    tiered = modal_catalogue.default_key_for_profile(manifest.model_profile)
+    tiered = inference.default_key_for_profile(manifest.model_profile, backend)
     if tiered:
         return tiered
-    entries = modal_catalogue.entries()
+    entries = inference.entries(backend)
     return entries[0]["key"] if entries else None
 
 
@@ -114,18 +128,18 @@ def _judge_manifest(scenario: ScenarioConfig) -> AgentManifest | None:
     return None
 
 
-def _cast_defaults(scenario: ScenarioConfig) -> dict[str, str]:
-    """Default model selection for a scenario's *non-judge* cast (name → endpoint key).
+def _cast_defaults(scenario: ScenarioConfig, backend: str = inference.DEFAULT_BACKEND) -> dict[str, str]:
+    """Default model selection for a scenario's *non-judge* cast (name → qualified key).
 
     The Judge is bound under §04, so it is excluded here.  Used to seed (and re-seed on
-    scenario change) the ``cast_models`` state the picker writes into."""
+    scenario *or backend* change) the ``cast_models`` state the picker writes into."""
     registry = default_registry()
     defaults: dict[str, str] = {}
     for agent_name in scenario.cast:
         manifest = registry.agents.get(agent_name)
         if manifest is None or manifest.role == "judge":
             continue
-        key = _default_model_key(manifest)
+        key = _default_model_key(manifest, backend)
         if key:
             defaults[agent_name] = key
     return defaults
@@ -145,10 +159,12 @@ def build_lab() -> dict[str, gr.components.Component]:
     Called inside the caller's ``with gr.Blocks(): gr.Tab("The Lab"):`` block.
     Wires no callbacks and imports no sibling render/show module — the app shell
     (Unit 9) binds ``summon_btn`` to the session.  Returns a dict of every handle a
-    caller needs to read the composed run (keys: ``scenario, premise, seed, world,
-    narrator, cast_models, judge_policy, judge_model, judge_strictness, tools, tokens,
-    max_rounds, seed_num, cadence, summon_btn, surprise_btn``).  ``cast_models`` is a
-    ``gr.State`` holding ``{agent_name: catalogue_endpoint_key}`` for the non-judge cast.
+    caller needs to read the composed run (keys: ``inference_backend, scenario, premise,
+    seed, world, narrator, cast_models, judge_policy, judge_model, judge_strictness,
+    tools, tokens, max_rounds, seed_num, cadence, summon_btn, surprise_btn``).
+    ``inference_backend`` is the backend radio (``"modal"`` / ``"hf"``); ``cast_models``
+    is a ``gr.State`` holding ``{agent_name: qualified_catalogue_key}`` for the non-judge
+    cast (keys carry the backend, e.g. ``"hf:Qwen/Qwen2.5-7B-Instruct"``).
     """
     scenarios = _ordered_scenarios()
     first = scenarios[0]
@@ -161,6 +177,20 @@ def build_lab() -> dict[str, gr.components.Component]:
         "Build a bowl of minds, then let them perform. Every knob feeds one durable "
         "ledger — press **Summon** and the conductor seeds the world."
     )
+
+    # 00 — Inference backend: where the minds run.  This is the headline choice — it
+    # decides which catalogue every model picker below draws from (Modal's self-hosted
+    # vLLM endpoints, or Hugging Face's serverless Inference Providers).  Switching it
+    # re-seeds the cast/judge picks to the new backend's models.
+    with gr.Group():
+        gr.Markdown("**00 · Inference backend** — where the minds think")
+        handles["inference_backend"] = gr.Radio(
+            choices=backend_choices(),
+            value=inference.DEFAULT_BACKEND,
+            label="Backend",
+            info="Modal = vLLM you host · Hugging Face = serverless, many small models.",
+        )
+    backend_radio = handles["inference_backend"]
 
     # 01 — Scenario & Goal
     with gr.Group():
@@ -203,16 +233,19 @@ def build_lab() -> dict[str, gr.components.Component]:
     catalogue = model_choices()
     with gr.Group():
         gr.Markdown(
-            "**03 · The Cast** — bind each mind to a model **hosted on Modal** "
-            "(the only models you can pick); the Judge is set in §04"
+            "**03 · The Cast** — bind each mind to a model from the chosen backend "
+            "(§00); the Judge is set in §04"
         )
 
-        @gr.render(inputs=[handles["scenario"]])
-        def _render_cast(scenario_value, _choices=catalogue):
+        @gr.render(inputs=[handles["scenario"], backend_radio])
+        def _render_cast(scenario_value, backend_value):
             scenario = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
             if scenario is None:
                 gr.Markdown("_No scenario selected._")
                 return
+            backend_value = backend_value or inference.DEFAULT_BACKEND
+            choices = model_choices(backend_value)
+            backend_label = next((b.label for b in inference.backends() if b.key == backend_value), backend_value)
             registry = default_registry()
             shown = 0
             for agent_name in scenario.cast:
@@ -226,10 +259,10 @@ def build_lab() -> dict[str, gr.components.Component]:
                         f"<span style='opacity:.7'>{manifest.archetype or f'the {manifest.role}'}</span>"
                     )
                     picker = gr.Dropdown(
-                        choices=_choices,
-                        value=_default_model_key(manifest),
-                        label="model · Modal",
-                        interactive=bool(_choices),
+                        choices=choices,
+                        value=_default_model_key(manifest, backend_value),
+                        label=f"model · {backend_label}",
+                        interactive=bool(choices),
                         scale=2,
                     )
 
@@ -241,16 +274,19 @@ def build_lab() -> dict[str, gr.components.Component]:
                 picker.change(_set_model, inputs=[picker, cast_models], outputs=[cast_models])
             if not shown:
                 gr.Markdown("_This scenario has no selectable players._")
-            elif not _choices:
-                gr.Markdown("_No Modal models in the catalogue — the cast runs the deterministic stub._")
+            elif not choices:
+                gr.Markdown(f"_No {backend_label} models in the catalogue — the cast runs the deterministic stub._")
 
-    # Switching scenarios re-seeds the model picks to the new cast's defaults so a stale
-    # override from the previous world never leaks into the run.
-    def _reset_cast_models(scenario_value):
+    # Switching scenarios *or backend* re-seeds the model picks to the new cast's defaults
+    # so a stale override (from the previous world, or the other backend) never leaks in.
+    def _reset_cast_models(scenario_value, backend_value):
         scn = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
-        return _cast_defaults(scn) if scn else {}
+        return _cast_defaults(scn, backend_value or inference.DEFAULT_BACKEND) if scn else {}
 
-    handles["scenario"].change(_reset_cast_models, inputs=[handles["scenario"]], outputs=[cast_models])
+    handles["scenario"].change(
+        _reset_cast_models, inputs=[handles["scenario"], backend_radio], outputs=[cast_models]
+    )
+    backend_radio.change(_reset_cast_models, inputs=[handles["scenario"], backend_radio], outputs=[cast_models])
 
     # 04 — The Judge + 05 — Tools (side by side)
     with gr.Row():
@@ -264,8 +300,29 @@ def build_lab() -> dict[str, gr.components.Component]:
             handles["judge_model"] = gr.Dropdown(
                 choices=catalogue,
                 value=_default_model_key(_judge_manifest(first)) if _judge_manifest(first) else None,
-                label="Judge model · Modal",
+                label="Judge model",
                 interactive=bool(catalogue),
+            )
+
+            # The Judge picker repopulates from the chosen backend's catalogue whenever
+            # the scenario (→ a different judge) or the backend changes, so it never
+            # offers a model the selected backend can't run.
+            def _reseed_judge(scenario_value, backend_value):
+                scn = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
+                backend_value = backend_value or inference.DEFAULT_BACKEND
+                judge = _judge_manifest(scn) if scn else None
+                choices = model_choices(backend_value)
+                return gr.update(
+                    choices=choices,
+                    value=_default_model_key(judge, backend_value) if judge else None,
+                    interactive=bool(choices),
+                )
+
+            handles["scenario"].change(
+                _reseed_judge, inputs=[handles["scenario"], backend_radio], outputs=[handles["judge_model"]]
+            )
+            backend_radio.change(
+                _reseed_judge, inputs=[handles["scenario"], backend_radio], outputs=[handles["judge_model"]]
             )
             handles["judge_strictness"] = gr.Slider(
                 minimum=0,
@@ -325,6 +382,7 @@ def collect_world_config(
     tools: list[str],
     tokens: float | int | None,
     max_rounds: float | int | None,
+    backend: str = inference.DEFAULT_BACKEND,
 ):
     """Assemble + validate a per-run world from the Lab's form values.
 
@@ -333,15 +391,16 @@ def collect_world_config(
     from a composed run via :meth:`Registry.from_world`.
 
     The base scenario (selected by its display *title* or internal name) supplies the
-    cast roster and agent manifests.  Model selection binds each mind to a *specific*
-    Modal-hosted model: ``cast_models`` maps ``{agent_name: catalogue_endpoint_key}`` for
-    the players and ``judge_model`` is the Judge's endpoint key (§04).  Each becomes that
-    agent's ``model_endpoint`` (ADR-0022) — non-destructively via ``model_copy``, so the
-    shared registry is untouched.  Only keys that exist in ``modal_catalogue`` are honoured
-    (the picker offers nothing else; we re-check so a stale key can't reach the run); an
-    agent with no/blank/unknown selection keeps its manifest tier.  The premise overrides
-    the scenario goal, ``seed`` becomes its ``default_seed``, and the budget knobs feed the
-    governor.
+    cast roster and agent manifests.  ``backend`` (``"modal"`` / ``"hf"``) selects the
+    inference backend; model selection binds each mind to a *specific* model on it:
+    ``cast_models`` maps ``{agent_name: qualified_catalogue_key}`` for the players and
+    ``judge_model`` is the Judge's key (§04).  Each becomes that agent's ``model_endpoint``
+    (ADR-0022 / ADR-0024) — non-destructively via ``model_copy``, so the shared registry
+    is untouched.  Only keys that exist in the unified ``inference`` registry are honoured
+    (the picker offers nothing else; we re-check so a stale key — including one from the
+    other backend after a switch — can't reach the run); an agent with no/blank/unknown
+    selection keeps its manifest tier.  The premise overrides the scenario goal, ``seed``
+    becomes its ``default_seed``, and the budget knobs feed the governor.
 
     The judge knobs (``judge_policy`` / ``judge_strictness``) and the ``tools`` grant are
     accepted and shape-checked, but the deeper synthesis (policy preset → judge behaviour,
@@ -362,8 +421,11 @@ def collect_world_config(
         raise ValueError(f"unknown scenario {scenario!r} (have: {sorted(registry.scenarios)})")
 
     # Only catalogue-hosted models may be cast: the picker offers nothing else, and we
-    # re-check here so an out-of-band or stale key can never reach the run.
-    valid_keys = {e["key"] for e in modal_catalogue.entries()}
+    # re-check each key against the unified backend registry so an out-of-band or stale
+    # key (including one from the *other* backend after a switch) can never reach the run.
+    def _valid(key: str) -> bool:
+        return bool(key) and inference.entry_by_key(key) is not None
+
     selections = dict(cast_models or {})
     judge_key = (judge_model or "").strip()
 
@@ -379,7 +441,7 @@ def collect_world_config(
         # The Judge's model comes from §04; every other mind from the cast picker.
         chosen = judge_key if manifest.role == "judge" else selections.get(agent_name)
         patch: dict = {}
-        if chosen and chosen in valid_keys:
+        if _valid(chosen):
             patch["model_endpoint"] = chosen
         manifest = manifest.model_copy(update=patch)
         agents.append(manifest.model_dump(mode="python"))
@@ -408,12 +470,20 @@ def collect_world_config(
     # Validate the scenario slice on its own (the per-scenario contract).
     validate_scenario(scenario_dict)
 
-    world_dict = {
+    world_dict: dict = {
         "agents": agents,
         "scenarios": [scenario_dict],
     }
     if governor:
         world_dict["governor"] = governor
+
+    # The chosen backend decides this run's live/offline path: when it has credentials,
+    # force the live path so the cast actually calls that backend's models (the per-agent
+    # ``model_endpoint`` keys already carry the backend, so the router binds correctly).
+    # With no credentials we leave it auto → the deterministic stub, so the offline demo
+    # stays reproducible no matter which backend is selected.
+    if inference.backend_available(backend):
+        world_dict["models"] = {"offline": False}
 
     return validate_world(world_dict)
 

@@ -122,17 +122,19 @@ class ModelRouter:
     def _catalogue_spec(self, key: str) -> ProfileSpec | None:
         """Build a :class:`ProfileSpec` from a catalogue endpoint *key*, or None.
 
-        The model string / endpoint URL / api key come from the catalogue + env
-        (``modal_catalogue.binding_for``); decoding inherits the model's tier default
-        (an unbound specialist model → the balanced tier).  Returns None when the key
-        is not in the catalogue, so the caller can fall back gracefully."""
+        The key may name a model on *either* inference backend — a bare Modal endpoint
+        slug (``gemma-4-12b``) or a backend-qualified key (``hf:Qwen/Qwen2.5-7B-Instruct``).
+        The model string / endpoint URL / api key come from that backend's catalogue +
+        env (``inference.binding_for``); decoding inherits the model's tier default (an
+        unbound specialist model → the balanced tier).  Returns None when the key is in
+        no catalogue, so the caller can fall back gracefully (ADR-0015 / ADR-0024)."""
         try:
-            from src.models import modal_catalogue
+            from src.models import inference
 
-            entry = modal_catalogue.entry_by_key(key)
+            entry = inference.entry_by_key(key)
             if entry is None:
                 return None
-            binding = modal_catalogue.binding_for(key)
+            binding = inference.binding_for(key)
         except Exception:  # pragma: no cover - defensive: catalogue unavailable
             return None
         decoding = _PROFILE_DECODING.get(entry.get("profile") or "balanced", _PROFILE_DECODING["balanced"])

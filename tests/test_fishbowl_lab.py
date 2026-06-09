@@ -14,10 +14,11 @@ import pytest
 
 from src.core.config import WorldConfig
 from src.core.registry import default_registry
-from src.models import modal_catalogue
+from src.models import inference, modal_catalogue
 from src.ui.fishbowl import lab
 
 EXPECTED_HANDLE_KEYS = {
+    "inference_backend",
     "scenario",
     "premise",
     "seed",
@@ -46,6 +47,11 @@ def test_build_lab_returns_expected_handles():
             handles = lab.build_lab()
 
     assert set(handles) == EXPECTED_HANDLE_KEYS
+    # The headline choice: a backend radio offering every registered backend.
+    assert isinstance(handles["inference_backend"], gr.Radio)
+    backend_values = {c[1] for c in handles["inference_backend"].choices}
+    assert backend_values == {b.key for b in inference.backends()}
+    assert handles["inference_backend"].value == inference.DEFAULT_BACKEND
     assert isinstance(handles["scenario"], gr.Radio)
     assert isinstance(handles["seed"], gr.Dropdown)
     assert handles["seed"].allow_custom_value is True
@@ -68,11 +74,50 @@ def test_judge_model_dropdown_offers_only_catalogue_models():
 
 
 def test_model_choices_are_all_catalogue_keys():
-    choices = lab.model_choices()
+    choices = lab.model_choices()  # defaults to the Modal backend (bare keys)
     # Every selectable value is a real catalogue endpoint key — nothing else is offerable.
     assert {key for _label, key in choices} == set(_CATALOGUE_KEYS)
     # Labels are human-readable and name the served model.
     assert all(" · " in label for label, _ in choices)
+
+
+def test_model_choices_hf_backend_offers_qualified_hf_keys():
+    choices = lab.model_choices("hf")
+    keys = {key for _label, key in choices}
+    assert keys, "the HF catalogue should offer at least one model"
+    # Every HF key is backend-qualified and resolves on the HF backend (not Modal).
+    assert all(key.startswith("hf:") for key in keys)
+    assert all(inference.split_key(key)[0] == "hf" for key in keys)
+    assert keys.isdisjoint(set(_CATALOGUE_KEYS))  # disjoint from the Modal keys
+
+
+def test_collect_world_config_pins_hf_models_as_endpoints():
+    registry = default_registry()
+    scenario = registry.scenarios["thousand-token-wood"]
+    worker = next(n for n in scenario.cast if registry.agents[n].role != "judge")
+    judge = next(n for n in scenario.cast if registry.agents[n].role == "judge")
+    hf_choices = lab.model_choices("hf")
+    worker_key, judge_key = hf_choices[0][1], hf_choices[-1][1]
+
+    world = lab.collect_world_config(
+        scenario=scenario.title,
+        premise="A new whimsical premise for the wood.",
+        seed=scenario.default_seed,
+        cast_models={worker: worker_key},
+        judge_policy="Majority Vote",
+        judge_model=judge_key,
+        judge_strictness=60,
+        tools=[],
+        tokens=120_000,
+        max_rounds=25,
+        backend="hf",
+    )
+
+    by_name = {a.name: a for a in world.agents}
+    # The HF-qualified keys are pinned verbatim and resolve to the HF backend.
+    assert by_name[worker].model_endpoint == worker_key
+    assert by_name[judge].model_endpoint == judge_key
+    assert inference.split_key(worker_key)[0] == "hf"
 
 
 def test_cast_defaults_cover_non_judge_cast_with_catalogue_keys():
