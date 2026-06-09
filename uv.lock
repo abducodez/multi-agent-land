@@ -1632,9 +1632,12 @@ dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "opentelemetry-semantic-conventions" },
+    { name = "pandas" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "sqlalchemy" },
 ]
 
 [package.optional-dependencies]
@@ -1655,10 +1658,6 @@ memory = [
     { name = "mem0ai" },
     { name = "sentence-transformers" },
 ]
-store = [
-    { name = "psycopg", extra = ["binary"] },
-    { name = "sqlalchemy" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -1672,16 +1671,17 @@ requires-dist = [
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "opentelemetry-semantic-conventions", specifier = ">=0.41b0" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'store'", specifier = ">=3" },
+    { name = "pandas", specifier = ">=2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
     { name = "sentence-transformers", marker = "extra == 'memory'", specifier = ">=3.0" },
-    { name = "sqlalchemy", marker = "extra == 'store'", specifier = ">=2.0" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "store", "litellm", "instructor", "mcp", "memory"]
+provides-extras = ["dev", "litellm", "instructor", "mcp", "memory"]
 
 [[package]]
 name = "multidict"

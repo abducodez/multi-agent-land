@@ -9,22 +9,21 @@ dependencies = [
   "python-dotenv>=1.0.1",
   "openai>=1.40.0",
   "pyyaml>=6.0",
+  "pandas>=2.0",
   "modal>=1.4.3",
   "opentelemetry-api>=1.20.0",
   "opentelemetry-sdk>=1.20.0",
   "opentelemetry-semantic-conventions>=0.41b0",
+  # Durable event store backend (ADR-0014). Core dependency: the app requires a
+  # real DATABASE_URL and refuses to run without it. psycopg is the Neon driver.
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2.0",
   "ruff>=0.5.0",
-]
-# Durable event store backend (ADR-0014). Optional: the system runs fully
-# offline on the in-memory ledger without these. psycopg is the Neon driver.
-store = [
-  "sqlalchemy>=2.0",
-  "psycopg[binary]>=3",
 ]
 # Model gateway (ADR-0015). Optional: routes live profiles through LiteLLM to the
 # OpenAI-compatible models served on Modal, with real per-call cost metering. The

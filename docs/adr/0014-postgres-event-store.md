@@ -40,8 +40,12 @@ code-identical.
 unset → the in-memory `Ledger`. With no `DATABASE_URL` the system never imports
 SQLAlchemy or a driver. SQLAlchemy is imported lazily inside the backend, so
 importing `src.core.*` does not require the library to be installed. The store
-deps are an optional `store` extra in `pyproject.toml`
-(`sqlalchemy>=2.0`, `psycopg[binary]>=3` — the Neon driver).
+deps (`sqlalchemy>=2.0`, `psycopg[binary]>=3` — the Neon driver) are **core
+dependencies** in `pyproject.toml`: the deployed app is configured with a real
+`DATABASE_URL` and must not silently degrade to a local store when the durable
+backend is missing, so the driver always ships rather than hiding behind an
+optional extra. (The lazy import is retained so `src.core.*` stays importable in
+minimal/test contexts even though the driver is now always present.)
 
 **SQLAlchemy-direct, not the `eventsourcing` library.** `eventsourcing` is built
 around DDD aggregates: its `StoredEvent` is keyed on `originator_id` +
