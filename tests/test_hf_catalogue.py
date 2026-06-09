@@ -31,15 +31,18 @@ def test_every_model_is_within_its_tier_param_cap():
             assert params <= _TIER_CAP[tier], f"{e['key']} ({params}B) exceeds {tier} cap"
 
 
-def test_each_logical_tier_has_a_default():
-    for tier in ("tiny", "fast", "balanced", "strong"):
-        assert hf_catalogue.default_key_for_profile(tier) is not None, f"no default for {tier}"
+def test_catalogue_has_a_tiny_default():
+    # The catalogue is currently scoped to the one chat-capable model live on the
+    # enabled providers (tagged tiny). Tiers without a dedicated model fall back to
+    # it at the UI layer (see lab._default_model_key), so they may return None here.
+    assert hf_catalogue.default_key_for_profile("tiny") == "katanemo/Arch-Router-1.5B"
 
 
 def test_binding_uses_router_url_and_token():
-    key = hf_catalogue.default_key_for_profile("fast")
+    key = hf_catalogue.default_key_for_profile("tiny")
     binding = hf_catalogue.binding_for(key, env={"HF_TOKEN": "hf_xyz"})
-    assert binding["model"] == f"openai/{key}"
+    # The model pins its provider (hf-inference) so routing needs no paid auto-select.
+    assert binding["model"] == f"openai/{key}:hf-inference"
     assert binding["base_url"] == hf_catalogue.DEFAULT_BASE_URL
     assert binding["api_key"] == "hf_xyz"
 

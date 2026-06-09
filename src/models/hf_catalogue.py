@@ -69,21 +69,19 @@ class HFModel:
 # router shifts over time; because this is plain data, retuning is a one-line edit.
 
 HF_MODELS: tuple[HFModel, ...] = (
-    # tiny ≤4B (Tiny-Titan band)
-    HFModel("meta-llama/Llama-3.2-3B-Instruct", profile="tiny", params_b=3, source="Meta Llama"),
-    HFModel("Qwen/Qwen2.5-3B-Instruct", params_b=3, source="Qwen"),
-    HFModel("microsoft/Phi-3.5-mini-instruct", params_b=3.8, source="Microsoft Phi"),
-    HFModel("HuggingFaceTB/SmolLM2-1.7B-Instruct", params_b=1.7, source="SmolLM"),
-    # fast ≤8B
-    HFModel("Qwen/Qwen2.5-7B-Instruct", profile="fast", params_b=7, source="Qwen"),
-    HFModel("mistralai/Mistral-7B-Instruct-v0.3", params_b=7, source="Mistral"),
-    HFModel("meta-llama/Llama-3.1-8B-Instruct", params_b=8, source="Meta Llama"),
-    # balanced ≤13B
-    HFModel("google/gemma-2-9b-it", profile="balanced", params_b=9, source="Google Gemma"),
-    # strong ≤32B
-    HFModel("Qwen/Qwen2.5-32B-Instruct", profile="strong", params_b=32, source="Qwen"),
-    HFModel("mistralai/Mistral-Small-24B-Instruct-2501", params_b=24, source="Mistral"),
-    HFModel("Qwen/Qwen2.5-14B-Instruct", params_b=14, source="Qwen"),
+    # Only chat-capable model currently live on the enabled HF providers (free
+    # `hf-inference`), verified by a real /v1/chat/completions call. Pinned to its
+    # provider so the router does not depend on paid-provider auto-routing. It is
+    # tagged `tiny` (1.5B, ≤4B band) but serves every tier: a tier with no dedicated
+    # HF model falls back to the first catalogue entry (see lab._default_model_key),
+    # so the whole cast routes here while only `hf-inference` is enabled.
+    HFModel("katanemo/Arch-Router-1.5B", profile="tiny", params_b=1.5, source="Katanemo", hf_provider="hf-inference"),
+    # NOTE: to use larger small models (e.g. openai/gpt-oss-20b — 20B, ≤32B, OpenAI
+    # track) enable a provider that serves them (together / nscale / fireworks /
+    # novita / groq) at https://huggingface.co/settings/inference-providers, then add
+    # the model here. `HuggingFaceBio/Carbon-3B` is intentionally NOT listed: the HF
+    # router rejects it as "not a chat model" (it is text-generation only), so it
+    # cannot drive the chat-completions path the engine uses.
 )
 
 

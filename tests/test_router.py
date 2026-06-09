@@ -111,17 +111,18 @@ class TestModelRouterCatalogueEndpoint:
 
     def test_online_hf_endpoint_key_resolves_to_hf_router(self, monkeypatch):
         # A backend-qualified HF key resolves to the HF Inference router binding —
-        # the OpenAI-compatible model string + HF token, no Modal env needed.
+        # the OpenAI-compatible model string + HF token, no Modal env needed. The
+        # model pins its provider (hf-inference) so routing needs no paid auto-select.
         monkeypatch.setenv("HF_TOKEN", "hf_secret")
         monkeypatch.delenv("HF_INFERENCE_BASE_URL", raising=False)
-        monkeypatch.delenv("MODEL_FAST", raising=False)
+        monkeypatch.delenv("MODEL_TINY", raising=False)
         router = ModelRouter(offline=False)
-        provider = router.for_profile("hf:Qwen/Qwen2.5-7B-Instruct")
+        provider = router.for_profile("hf:katanemo/Arch-Router-1.5B")
         assert isinstance(provider, LiteLLMProvider)
-        assert provider.model == "openai/Qwen/Qwen2.5-7B-Instruct"
+        assert provider.model == "openai/katanemo/Arch-Router-1.5B:hf-inference"
         assert provider.api_base == "https://router.huggingface.co/v1"
         assert provider.api_key == "hf_secret"
-        assert provider.max_tokens == 320  # fast tier decoding (the model's tier)
+        assert provider.max_tokens == 192  # tiny tier decoding (the model's tier)
 
     def test_offline_hf_endpoint_key_serves_distinct_stub(self):
         # Offline, an HF key routes like any profile: the deterministic stub with the

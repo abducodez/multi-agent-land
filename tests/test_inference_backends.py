@@ -64,7 +64,9 @@ def test_binding_dispatches_to_the_right_backend():
 
 
 def test_default_key_for_profile_is_backend_scoped():
-    hf_default = inference.default_key_for_profile("strong", "hf")
+    # HF currently tags only the tiny tier (its single live chat model); Modal tags
+    # every tier. The point here is that keys are namespaced per backend.
+    hf_default = inference.default_key_for_profile("tiny", "hf")
     assert hf_default is not None and hf_default.startswith("hf:")
     modal_default = inference.default_key_for_profile("strong", "modal")
     assert modal_default is not None and not modal_default.startswith("hf:")
