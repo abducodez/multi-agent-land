@@ -155,7 +155,7 @@ class Registry:
                 agents[manifest.name] = manifest
                 obs.log(
                     "manifest.loaded",
-                    name=manifest.name,
+                    agent=manifest.name,
                     profile=manifest.model_profile,
                     endpoint=manifest.model_endpoint or "",
                     subscribes=len(manifest.subscribes_to),
