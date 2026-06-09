@@ -45,14 +45,18 @@ def test_log_sanitises_reserved_field_names():
 
 def test_context_binding_stamps_logs():
     _fresh()
+    # `set_context` (used by the conductor for run/turn) persists by design, so the
+    # process context may be non-empty here; capture it and assert bind RESTORES it.
+    before = obs.current_context().get("run_id")
     with obs.bind(run_id="run-7", turn=2, agent="clue-gatherer"):
+        assert obs.current_context()["run_id"] == "run-7"
         obs.log("memory.recall", k=5)
     record = [r for r in obs.telemetry_store().recent_logs() if r.get("event") == "memory.recall"][-1]
     assert record["run_id"] == "run-7"
     assert record["turn"] == 2
     assert record["agent"] == "clue-gatherer"
-    # Binding is scoped — it clears on exit.
-    assert "run_id" not in obs.current_context()
+    # Binding is scoped — run_id returns to whatever it was before the block.
+    assert obs.current_context().get("run_id") == before
 
 
 def test_span_recorded_with_attributes_and_nesting():

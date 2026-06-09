@@ -17,6 +17,7 @@ Changing the prompt strategy for all agents is a one-file edit here.
 
 from __future__ import annotations
 
+from src import observability as obs
 from src.core.events import Event
 from src.core.memory import EpisodicMemory
 from src.core.projections import StageProjection
@@ -53,7 +54,7 @@ class ContextBuilder:
 
         goal_block = f"SHARED GOAL\n{projection.goal}\n\n" if projection.goal else ""
 
-        return (
+        prompt = (
             f"IDENTITY\n{persona}\n\n"
             f"{goal_block}"
             f"CURRENT SCENE\n{projection.current_scene}\n\n"
@@ -61,6 +62,20 @@ class ContextBuilder:
             f"YOUR MEMORY (recent events you witnessed)\n{memory_text}\n\n"
             f"VISITOR DISTURBANCES\n{visitor_lines}"
         )
+        # Structure + size of the assembled context (the full prompt is logged by the
+        # agent layer as ``agent.prompt``; here we record which sections were present).
+        sections = ["IDENTITY", "CURRENT SCENE", "BLACKBOARD", "MEMORY", "VISITOR"]
+        if goal_block:
+            sections.insert(1, "SHARED GOAL")
+        obs.log(
+            "context.build",
+            level="debug",
+            agent=agent_name,
+            sections=sections,
+            prompt_chars=len(prompt),
+            memory_chars=len(memory_text),
+        )
+        return prompt
 
     @staticmethod
     def _blackboard_block(agent_notes: list[str], window: int = 6) -> str:

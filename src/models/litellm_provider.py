@@ -36,6 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src import observability as obs
 from src.models.openai_compat import OpenAICompatProvider
 from src.models.provider import ModelProvider, model_error
 
@@ -64,28 +65,40 @@ class LiteLLMProvider(ModelProvider):
     """Transport retries LiteLLM makes on a transient call failure — a dropped
     connection, a timeout, a 5xx.  Lets a flaky endpoint self-heal mid-demo before the
     call gives up and returns the failure sentinel."""
+    structured_mode: str = "json_schema"
+    """Instructor mode for :meth:`complete_structured` (an ``instructor.Mode`` member name,
+    case-insensitive).  Defaults to ``json_schema`` — vLLM **guided decoding** via
+    ``response_format``, which is parser-independent: it constrains the output to the schema
+    (``kind`` can't be an unauthorised value) without needing a tool-call parser.  This is
+    deliberate: not every served model ships a tool parser (e.g. MiniCPM4.1 emits a custom
+    ``<|tool_call_start|>`` format vLLM 0.21.0 has no parser for), so Instructor's default
+    ``tools`` mode 400s there.  ``json`` (plain ``json_object`` + schema-in-prompt) is the
+    fallback if a backend rejects ``json_schema``; ``tools`` restores the old behaviour."""
     _last_usage: dict = field(default_factory=dict, init=False, repr=False)
     _last_cost: float = field(default=0.0, init=False, repr=False)
     _last_reasoning: str = field(default="", init=False, repr=False)
 
     def complete(self, role: str, prompt: str) -> str:
         litellm = self._litellm()
-        try:
-            response = litellm.completion(
-                model=self.model,
-                api_base=self.api_base,
-                api_key=self._resolved_api_key(),
-                messages=self._messages(role, prompt),
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                num_retries=self.num_retries,
-            )
-            text = (response.choices[0].message.content or "").strip()
-            self._capture_usage(litellm, response, prompt, text)
-            return text
-        except Exception as exc:
-            self._zero_usage()
-            return model_error(exc)
+        with obs.span("llm.call", **self._span_request_attrs(role)):
+            try:
+                response = litellm.completion(
+                    model=self.model,
+                    api_base=self.api_base,
+                    api_key=self._resolved_api_key(),
+                    messages=self._messages(role, prompt),
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    num_retries=self.num_retries,
+                )
+                text = (response.choices[0].message.content or "").strip()
+                self._capture_usage(litellm, response, prompt, text)
+                self._emit_telemetry(role, prompt, text, structured=False)
+                return text
+            except Exception as exc:
+                self._zero_usage()
+                obs.log("llm.error", level="warning", model=self.model, role=role, error=str(exc))
+                return model_error(exc)
 
     def complete_structured(
         self,
@@ -115,25 +128,32 @@ class LiteLLMProvider(ModelProvider):
                 "instructor package is required for complete_structured(). Install it with: uv pip install instructor"
             ) from exc
 
-        client = instructor.from_litellm(litellm.completion)
-        try:
-            result, response = client.create_with_completion(
-                model=self.model,
-                api_base=self.api_base,
-                api_key=self._resolved_api_key(),
-                messages=self._messages(role, prompt),
-                response_model=response_model,
-                max_retries=self.max_retries,
-                num_retries=self.num_retries,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-            text = getattr(result, "text", "") or ""
-            self._capture_usage(litellm, response, prompt, text)
-            return result
-        except Exception:
-            self._zero_usage()
-            raise
+        # Guided-JSON by default (see ``structured_mode``): constrain the output to the
+        # schema via vLLM's ``response_format`` rather than tool calling, so a model with no
+        # tool-call parser still returns a validated payload instead of a 400.
+        mode = getattr(instructor.Mode, self.structured_mode.upper(), instructor.Mode.JSON_SCHEMA)
+        client = instructor.from_litellm(litellm.completion, mode=mode)
+        with obs.span("llm.structured", **{**self._span_request_attrs(role), "llm.mode": self.structured_mode}):
+            try:
+                result, response = client.create_with_completion(
+                    model=self.model,
+                    api_base=self.api_base,
+                    api_key=self._resolved_api_key(),
+                    messages=self._messages(role, prompt),
+                    response_model=response_model,
+                    max_retries=self.max_retries,
+                    num_retries=self.num_retries,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                )
+                text = getattr(result, "text", "") or ""
+                self._capture_usage(litellm, response, prompt, text)
+                self._emit_telemetry(role, prompt, text, structured=True)
+                return result
+            except Exception as exc:
+                self._zero_usage()
+                obs.log("llm.error", level="warning", model=self.model, role=role, structured=True, error=str(exc))
+                raise
 
     @property
     def last_reasoning(self) -> str:
@@ -149,6 +169,65 @@ class LiteLLMProvider(ModelProvider):
     def last_cost(self) -> float:
         """Metered USD cost of the most recent call (0.0 offline)."""
         return self._last_cost
+
+    # ── telemetry (shared by complete / complete_structured) ────────────────────
+
+    def _span_request_attrs(self, role: str) -> dict:
+        """GenAI request attributes for an LLM span — never includes the api key."""
+        return {
+            "gen_ai.system": "litellm",
+            "gen_ai.request.model": self.model,
+            "gen_ai.request.temperature": self.temperature,
+            "gen_ai.request.max_tokens": self.max_tokens,
+            "llm.api_base": self.api_base or "",
+            "mal.role": role,
+        }
+
+    def _emit_telemetry(self, role: str, prompt: str, text: str, *, structured: bool) -> None:
+        """Attach usage/cost/prompt to the active span, count the call, and log it.
+
+        The full prompt + completion + reasoning ride on the span (truncated in the
+        UI store) and on a DEBUG ``llm.exchange`` log, so a reviewer can read exactly
+        what was sent to each model. INFO ``llm.call`` carries the metered summary.
+        """
+        usage = self._last_usage or {}
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        obs.add_span_attrs(
+            **{
+                "gen_ai.usage.input_tokens": prompt_tokens,
+                "gen_ai.usage.output_tokens": completion_tokens,
+                "llm.cost_usd": self._last_cost,
+                "llm.structured": structured,
+                "llm.prompt": prompt,
+                "llm.completion": text,
+                "llm.reasoning": self._last_reasoning or "",
+            }
+        )
+        obs.record_llm_call(
+            self.model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=self._last_cost,
+        )
+        obs.log(
+            "llm.call",
+            role=role,
+            model=self.model,
+            structured=structured,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=round(self._last_cost, 6),
+        )
+        obs.log(
+            "llm.exchange",
+            level="debug",
+            role=role,
+            model=self.model,
+            prompt=prompt,
+            completion=text,
+            reasoning=self._last_reasoning or "",
+        )
 
     # ── call helpers (shared by complete / complete_structured) ─────────────────
 

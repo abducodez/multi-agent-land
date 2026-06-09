@@ -35,6 +35,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src import observability as obs
 from src.core.events import Event
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -92,9 +93,22 @@ class EpisodicMemory:
         return result[-self.max_recent :]
 
     def format_for_prompt(self, events: tuple[Event, ...]) -> str:
-        recalled = self.visible(events)
-        lines = [f"[turn {e.turn:03d}][{e.kind}] {text}" for e in recalled if (text := _displayable(e))]
-        return "\n".join(lines) if lines else "(no prior memory)"
+        with obs.span("memory.recall", **{"mal.agent": self.agent_name, "memory.mode": "episodic"}):
+            recalled = self.visible(events)
+            lines = [f"[turn {e.turn:03d}][{e.kind}] {text}" for e in recalled if (text := _displayable(e))]
+            memory = "\n".join(lines) if lines else "(no prior memory)"
+            obs.add_span_attrs(**{"memory.visible_count": len(recalled)})
+            obs.observe("memory.visible_count", len(recalled), agent=self.agent_name)
+            # DEBUG: the EXACT memory string this agent will receive (what it "sees").
+            obs.log(
+                "memory.recall",
+                level="debug",
+                agent=self.agent_name,
+                mode="episodic",
+                visible_count=len(recalled),
+                memory=memory,
+            )
+            return memory
 
 
 # ── layer 2: salience-scored memory ──────────────────────────────────────────
@@ -175,6 +189,7 @@ class SalienceMemory:
             hits = self.index.search(query, k=len(candidates))
         except Exception as exc:  # noqa: BLE001 — relevance is best-effort, never fatal
             logger.warning("memory index unavailable, using keyword relevance: %s", exc)
+            obs.log("memory.index.fallback", level="warning", agent=self.agent_name, error=str(exc))
             return None
         eligible = {e.id for e in candidates}
         ranked = [h.id for h in hits if h.id in eligible]
@@ -201,19 +216,47 @@ class SalienceMemory:
         return sorted(top, key=lambda e: e.turn)
 
     def format_for_prompt(self, events: tuple[Event, ...], current_turn: int, query: str) -> str:
-        candidates = self._candidates(events)
-        relevance = self._relevance_map(candidates, query)
+        with obs.span(
+            "memory.recall",
+            **{"mal.agent": self.agent_name, "memory.mode": "salience", "memory.top_k": self.top_k},
+        ):
+            candidates = self._candidates(events)
+            relevance = self._relevance_map(candidates, query)
 
-        def _score(e: Event) -> float:
-            rel = None if relevance is None else relevance.get(e.id, 0.0)
-            return self.score(e, current_turn, query, relevance=rel)
+            def _score(e: Event) -> float:
+                rel = None if relevance is None else relevance.get(e.id, 0.0)
+                return self.score(e, current_turn, query, relevance=rel)
 
-        top = sorted(candidates, key=_score, reverse=True)[: self.top_k]
-        recalled = sorted(top, key=lambda e: e.turn)
-        lines = [
-            f"[turn {e.turn:03d}][{e.kind}][sal={_score(e):.2f}] {text}" for e in recalled if (text := _displayable(e))
-        ]
-        return "\n".join(lines) if lines else "(no salient memories)"
+            top = sorted(candidates, key=_score, reverse=True)[: self.top_k]
+            recalled = sorted(top, key=lambda e: e.turn)
+            lines = [
+                f"[turn {e.turn:03d}][{e.kind}][sal={_score(e):.2f}] {text}"
+                for e in recalled
+                if (text := _displayable(e))
+            ]
+            memory = "\n".join(lines) if lines else "(no salient memories)"
+            scores = {e.id: round(_score(e), 3) for e in recalled}
+            obs.add_span_attrs(
+                **{
+                    "memory.visible_count": len(recalled),
+                    "memory.query": query,
+                    "memory.semantic": relevance is not None,
+                }
+            )
+            obs.observe("memory.visible_count", len(recalled), agent=self.agent_name)
+            # DEBUG: the EXACT salience-ranked memory this agent will receive, with scores.
+            obs.log(
+                "memory.recall",
+                level="debug",
+                agent=self.agent_name,
+                mode="salience",
+                query=query,
+                visible_count=len(recalled),
+                semantic=relevance is not None,
+                scores=scores,
+                memory=memory,
+            )
+            return memory
 
 
 # ── layer 3: reflection trigger ───────────────────────────────────────────────

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from src import observability as obs
 from src.models.provider import ModelProvider, model_error
 
 
@@ -72,31 +73,61 @@ class OpenAICompatProvider(ModelProvider):
 
         client = self._get_client()
         system = self._system_for_role(role)
-        try:
-            resp = client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-            )
-            text = resp.choices[0].message.content.strip()
-            usage = getattr(resp, "usage", None)
-            if usage is not None:
-                self._last_usage = {
-                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
-                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
-                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
-                }
-            else:
-                p, c = estimate_tokens(prompt), estimate_tokens(text)
-                self._last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}
-            return text
-        except Exception as exc:
-            self._last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-            return model_error(exc)
+        span_attrs = {
+            "gen_ai.system": "openai-compatible",
+            "gen_ai.request.model": self.model,
+            "llm.api_base": self.base_url or "",
+            "mal.role": role,
+        }
+        with obs.span("llm.call", **span_attrs):
+            try:
+                resp = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                )
+                text = resp.choices[0].message.content.strip()
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    self._last_usage = {
+                        "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                        "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                        "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                    }
+                else:
+                    p, c = estimate_tokens(prompt), estimate_tokens(text)
+                    self._last_usage = {"prompt_tokens": p, "completion_tokens": c, "total_tokens": p + c}
+                obs.add_span_attrs(
+                    **{
+                        "gen_ai.usage.input_tokens": int(self._last_usage["prompt_tokens"]),
+                        "gen_ai.usage.output_tokens": int(self._last_usage["completion_tokens"]),
+                        "llm.prompt": prompt,
+                        "llm.completion": text,
+                    }
+                )
+                obs.record_llm_call(
+                    self.model,
+                    prompt_tokens=int(self._last_usage["prompt_tokens"]),
+                    completion_tokens=int(self._last_usage["completion_tokens"]),
+                )
+                obs.log(
+                    "llm.call",
+                    role=role,
+                    model=self.model,
+                    structured=False,
+                    prompt_tokens=int(self._last_usage["prompt_tokens"]),
+                    completion_tokens=int(self._last_usage["completion_tokens"]),
+                )
+                obs.log("llm.exchange", level="debug", role=role, model=self.model, prompt=prompt, completion=text)
+                return text
+            except Exception as exc:
+                self._last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                obs.log("llm.error", level="warning", model=self.model, role=role, error=str(exc))
+                return model_error(exc)
 
     @staticmethod
     def _system_for_role(role: str) -> str:

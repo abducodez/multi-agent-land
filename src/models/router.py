@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src import observability as obs
 from src.core.manifest import ModelProfile, resolve_model
 from src.models.openai_compat import has_live_credentials
 from src.models.provider import DeterministicTinyModel, ModelProvider
@@ -86,12 +87,15 @@ class ModelRouter:
 
     def _build(self, profile: str) -> ModelProvider:
         if self.offline:
+            obs.log("router.resolve", profile=profile, mode="offline", model=f"stub:{profile}")
             return DeterministicTinyModel(variant=f"stub:{profile}")
         # Live transport is the LiteLLM gateway (ADR-0015).  Lazy-import keeps the
         # offline path free of the dependency.
         from src.models.litellm_provider import LiteLLMProvider
 
         spec = self._spec_for(profile)
+        # Resolution is logged WITHOUT the api key — only the model + endpoint.
+        obs.log("router.resolve", profile=profile, mode="live", model=spec.model, api_base=spec.base_url or "")
         return LiteLLMProvider(
             model=spec.model,
             api_base=spec.base_url,

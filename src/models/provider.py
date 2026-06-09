@@ -5,6 +5,8 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from src import observability as obs
+
 
 def estimate_tokens(text: str) -> int:
     """Rough token estimate (~4 chars/token) for providers without usage data.
@@ -167,6 +169,10 @@ class DeterministicTinyModel(ModelProvider):
     _last_usage: dict[str, int] = field(default_factory=dict, init=False, repr=False)
 
     def complete(self, role: str, prompt: str) -> str:
+        with obs.span("llm.call", **{"gen_ai.system": "stub", "gen_ai.request.model": self.variant, "mal.role": role}):
+            return self._complete(role, prompt)
+
+    def _complete(self, role: str, prompt: str) -> str:
         digest = hashlib.sha256(f"{self.variant}:{role}:{prompt}".encode("utf-8")).hexdigest()
         choices = {
             "scene-whisperer": [
@@ -243,11 +249,33 @@ class DeterministicTinyModel(ModelProvider):
                     obj[name] = self._synth_field(name, role, digest)
                 out = json.dumps(obj, ensure_ascii=False)
 
+        prompt_tokens, completion_tokens = estimate_tokens(prompt), estimate_tokens(out)
         self._last_usage = {
-            "prompt_tokens": estimate_tokens(prompt),
-            "completion_tokens": estimate_tokens(out),
-            "total_tokens": estimate_tokens(prompt) + estimate_tokens(out),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
         }
+        obs.add_span_attrs(
+            **{
+                "gen_ai.usage.input_tokens": prompt_tokens,
+                "gen_ai.usage.output_tokens": completion_tokens,
+                "llm.prompt": prompt,
+                "llm.completion": out,
+            }
+        )
+        obs.record_llm_call(
+            self.variant, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost_usd=0.0
+        )
+        obs.log(
+            "llm.call",
+            role=role,
+            model=self.variant,
+            structured=False,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=0.0,
+        )
+        obs.log("llm.exchange", level="debug", role=role, model=self.variant, prompt=prompt, completion=out)
         return out
 
     def _synth_field(self, name: str, role: str, digest: str) -> str:
