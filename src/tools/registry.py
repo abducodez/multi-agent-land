@@ -10,12 +10,14 @@ returns a JSON-serialisable dict that the calling agent folds into its event.
 In-process callables and MCP-server-backed tools both satisfy this interface, so
 swapping a local stub for a real MCP server is invisible to agents.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from src import observability as obs
 from src.core.manifest import AgentManifest
 
 
@@ -93,13 +95,21 @@ class ToolRegistry:
         precedence; otherwise the call is dispatched to the resolver if one backs
         the tool.  An unknown granted tool raises :class:`KeyError` as before.
         """
-        if tool not in manifest.tools:
-            raise CapabilityViolation(
-                f"{agent_name!r} is not authorised to call tool {tool!r} "
-                f"(granted: {manifest.tools})"
-            )
-        if tool in self._tools:
-            return self._tools[tool].run(**params)
-        if self._resolver is not None and self._resolver.has(tool):
-            return self._resolver.call(tool, params)
-        raise KeyError(f"unknown tool {tool!r} (registered: {sorted(self._tools)})")
+        with obs.span("tool.call", **{"tool": tool, "mal.agent": agent_name, "tool.params": sorted(params)}):
+            if tool not in manifest.tools:
+                obs.log("tool.denied", level="warning", agent=agent_name, tool=tool, granted=list(manifest.tools))
+                raise CapabilityViolation(
+                    f"{agent_name!r} is not authorised to call tool {tool!r} (granted: {manifest.tools})"
+                )
+            obs.incr("tool.calls", 1, tool=tool)
+            if tool in self._tools:
+                result = self._tools[tool].run(**params)
+                obs.log("tool.call", agent=agent_name, tool=tool, transport="in-process")
+                obs.log("tool.result", level="debug", tool=tool, result=result)
+                return result
+            if self._resolver is not None and self._resolver.has(tool):
+                result = self._resolver.call(tool, params)
+                obs.log("tool.call", agent=agent_name, tool=tool, transport="resolver")
+                obs.log("tool.result", level="debug", tool=tool, result=result)
+                return result
+            raise KeyError(f"unknown tool {tool!r} (registered: {sorted(self._tools)})")

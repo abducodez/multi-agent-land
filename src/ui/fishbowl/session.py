@@ -12,6 +12,7 @@ cast, so a session is reproducible on stage.
 
 from __future__ import annotations
 
+from src import observability as obs
 from src.core.conductor import Conductor
 from src.core.ledger_factory import make_ledger
 from src.core.manifest import AgentManifest
@@ -49,21 +50,33 @@ class FishbowlSession:
             governor=self._registry.governor_for(scenario_name),
             ledger=make_ledger(),
         )
+        obs.log(
+            "session.created",
+            scenario=scenario_name,
+            ledger=type(self.conductor.ledger).__name__,
+            cast=len(scenario.agents),
+        )
 
     # ── lifecycle ───────────────────────────────────────────────────────────────
 
     def reset(self, seed: str = "") -> None:
+        obs.log("session.reset", scenario=self._scenario_name, seed=seed or self.scenario.default_seed)
         self.conductor.reset(seed or self.scenario.default_seed)
 
     def step(self, n_ticks: int = 1) -> None:
-        self.conductor.step(n_ticks)
+        with obs.span("session.step", **{"session.n_ticks": n_ticks}):
+            obs.log("session.step", n_ticks=n_ticks)
+            self.conductor.step(n_ticks)
 
     def step_one(self) -> bool:
         """Advance a single agent (streaming): one event per call so the Show reveals
         each mind the moment it responds, not after the whole turn finishes."""
-        return self.conductor.step_one()
+        with obs.span("session.step", **{"session.streaming": True}):
+            return self.conductor.step_one()
 
     def inject(self, text: str, label: str | None = None) -> None:
+        obs.log("session.inject", label=label or "", chars=len(text))
+        obs.log("session.inject.text", level="debug", label=label or "", text=text)
         self.conductor.inject_user_event(text, label=label)
         self.conductor.step()
 
