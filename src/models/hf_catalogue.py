@@ -90,6 +90,24 @@ HF_MODELS: tuple[HFModel, ...] = (
 # --- engine-facing read view (mirrors modal_catalogue's dict shape) ------------------
 
 
+def _build_entry(m: HFModel) -> dict:
+    """One model as a plain dict, shaped like ``modal_catalogue.entries()``."""
+    return {
+        "key": m.key,
+        "provider": m.source,
+        "app": "hf-inference",
+        "endpoint_name": m.repo_id,
+        "served_model_id": m.served_model_id,
+        "profile": m.profile,
+        "params_b": m.params_b,
+    }
+
+
+# Built once at import (the catalogue is static): callers that mutate copy first.
+_ENTRIES: tuple[dict, ...] = tuple(_build_entry(m) for m in HF_MODELS)
+_ENTRY_BY_KEY: dict[str, dict] = {e["key"]: e for e in _ENTRIES}
+
+
 def entries() -> list[dict]:
     """Every HF model as a plain dict, shaped like ``modal_catalogue.entries()``:
 
@@ -97,23 +115,12 @@ def entries() -> list[dict]:
     so the unified registry and the Lab picker treat both backends identically.
     ``provider`` is the friendly source label; ``app`` is the HF router id.
     """
-    return [
-        {
-            "key": m.key,
-            "provider": m.source,
-            "app": "hf-inference",
-            "endpoint_name": m.repo_id,
-            "served_model_id": m.served_model_id,
-            "profile": m.profile,
-            "params_b": m.params_b,
-        }
-        for m in HF_MODELS
-    ]
+    return list(_ENTRIES)
 
 
 def entry_by_key(key: str) -> dict | None:
     """The catalogue entry whose key (the repo id) is *key*, or None."""
-    return next((e for e in entries() if e["key"] == key), None)
+    return _ENTRY_BY_KEY.get(key)
 
 
 def default_key_for_profile(profile: str) -> str | None:

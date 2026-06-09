@@ -73,6 +73,12 @@ def _scenario_by_title(title: str) -> ScenarioConfig | None:
     return None
 
 
+def _resolve_scenario(value: str) -> ScenarioConfig | None:
+    """Resolve a scenario by display *title* or internal name — the two forms the Radio
+    and the app shell may pass — or None.  One lookup rule, used everywhere."""
+    return _scenario_by_title(value) or default_registry().scenarios.get(value)
+
+
 def backend_choices() -> list[tuple[str, str]]:
     """Radio choices for the inference backend: ``(friendly label, backend key)``.
 
@@ -239,13 +245,13 @@ def build_lab() -> dict[str, gr.components.Component]:
 
         @gr.render(inputs=[handles["scenario"], backend_radio])
         def _render_cast(scenario_value, backend_value):
-            scenario = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
+            scenario = _resolve_scenario(scenario_value)
             if scenario is None:
                 gr.Markdown("_No scenario selected._")
                 return
             backend_value = backend_value or inference.DEFAULT_BACKEND
             choices = model_choices(backend_value)
-            backend_label = next((b.label for b in inference.backends() if b.key == backend_value), backend_value)
+            backend_label = inference.backend_label(backend_value)
             registry = default_registry()
             shown = 0
             for agent_name in scenario.cast:
@@ -280,7 +286,7 @@ def build_lab() -> dict[str, gr.components.Component]:
     # Switching scenarios *or backend* re-seeds the model picks to the new cast's defaults
     # so a stale override (from the previous world, or the other backend) never leaks in.
     def _reset_cast_models(scenario_value, backend_value):
-        scn = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
+        scn = _resolve_scenario(scenario_value)
         return _cast_defaults(scn, backend_value or inference.DEFAULT_BACKEND) if scn else {}
 
     handles["scenario"].change(
@@ -308,7 +314,7 @@ def build_lab() -> dict[str, gr.components.Component]:
             # the scenario (→ a different judge) or the backend changes, so it never
             # offers a model the selected backend can't run.
             def _reseed_judge(scenario_value, backend_value):
-                scn = _scenario_by_title(scenario_value) or default_registry().scenarios.get(scenario_value)
+                scn = _resolve_scenario(scenario_value)
                 backend_value = backend_value or inference.DEFAULT_BACKEND
                 judge = _judge_manifest(scn) if scn else None
                 choices = model_choices(backend_value)
@@ -413,10 +419,7 @@ def collect_world_config(
     land in the live path.
     """
     registry = default_registry()
-    base = _scenario_by_title(scenario)
-    if base is None:
-        # Fall back to a name match so callers may pass either title or name.
-        base = registry.scenarios.get(scenario)
+    base = _resolve_scenario(scenario)  # accepts either display title or internal name
     if base is None:
         raise ValueError(f"unknown scenario {scenario!r} (have: {sorted(registry.scenarios)})")
 
