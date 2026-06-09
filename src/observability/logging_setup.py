@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import warnings
 
 from .config import ObservabilitySettings
 from .context import current_context
@@ -138,8 +139,28 @@ class _StoreHandler(logging.Handler):
             self.handleError(record)
 
 
+def _configure_warnings() -> None:
+    """Route Python warnings through logging, minus one un-actionable third party.
+
+    ``captureWarnings(True)`` funnels ``warnings.warn(...)`` into the ``py.warnings``
+    logger, so deprecations surface in the CLI stream (``MAL_LOG_LEVEL``) and the
+    Telemetry panel instead of being printed raw to stderr once and lost.
+
+    The exception is Gradio's queueing layer, which uses pandas'
+    ``future.no_silent_downcasting`` option — deprecated in pandas 4. It's harmless,
+    not fixable from our code, and only adds noise, so we drop that one message.
+    """
+    logging.captureWarnings(True)
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*future\.no_silent_downcasting.*",
+        category=Warning,
+    )
+
+
 def setup_logging(settings: ObservabilitySettings, store: TelemetryStore) -> None:
     """Attach the terminal + store handlers to the root logger (idempotent)."""
+    _configure_warnings()
     root = logging.getLogger()
     for handler in list(root.handlers):
         if getattr(handler, "_mal", False):
