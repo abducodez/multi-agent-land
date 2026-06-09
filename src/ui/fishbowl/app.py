@@ -373,8 +373,7 @@ def _live_chip() -> str:
 
     configured = inference.configured_backends()
     if configured:
-        labels = {"modal": "MODAL", "hf": "HUGGING FACE"}
-        name = " + ".join(labels.get(b, b.upper()) for b in configured)
+        name = " + ".join(inference.backend_label(b).upper() for b in configured)
         return f'<span class="chip live"><span class="live-dot"></span>&#9679; LIVE &middot; {name}</span>'
     return '<span class="chip live"><span class="live-dot"></span>OFFLINE &middot; STUB</span>'
 

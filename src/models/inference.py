@@ -162,19 +162,23 @@ def default_key_for_profile(profile: str, backend: str = DEFAULT_BACKEND) -> str
 # ── credentials / status (per backend) ─────────────────────────────────────────────
 
 
+def backend_label(backend: str) -> str:
+    """The display label for *backend* (its key as a fallback)."""
+    b = _BACKENDS.get(backend)
+    return b.label if b else backend
+
+
 def backend_available(backend: str, env: dict[str, str] | None = None) -> bool:
     """True when *backend* has enough configuration to make a live call.
 
-    Modal: a workspace or an explicit base URL. HF: a token or an explicit base URL.
-    Single source of truth for "can this backend go live", shared by the UI chip and
-    the composed-run offline decision.
+    Each backend's catalogue owns its own credential check (``has_credentials``), so
+    this dispatches without naming any backend — adding a backend to ``_BACKENDS`` makes
+    it work here for free.  Single source of truth for "can this backend go live", shared
+    by the UI chip and the composed-run offline decision.
     """
     source = os.environ if env is None else env
-    if backend == "modal":
-        return bool(source.get("MODAL_WORKSPACE", "").strip() or source.get("MODAL_LLM_BASE_URL", "").strip())
-    if backend == "hf":
-        return hf_catalogue.has_credentials(source)
-    return False
+    b = _BACKENDS.get(backend)
+    return bool(b and b.catalogue.has_credentials(source))
 
 
 def configured_backends(env: dict[str, str] | None = None) -> list[str]:

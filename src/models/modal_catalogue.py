@@ -73,6 +73,17 @@ def available() -> bool:
     return _module() is not None
 
 
+def has_credentials(env: dict[str, str] | None = None) -> bool:
+    """True when the Modal backend is callable — a workspace or an explicit base URL.
+
+    ``MODAL_WORKSPACE`` lets the engine template each endpoint's URL; ``MODAL_LLM_BASE_URL``
+    is a single explicit OpenAI-compatible endpoint. Mirrors ``hf_catalogue.has_credentials``
+    so every backend self-describes its own live-credential check (read uniformly by
+    :func:`src.models.inference.backend_available`)."""
+    source = os.environ if env is None else env
+    return bool(source.get("MODAL_WORKSPACE", "").strip() or source.get("MODAL_LLM_BASE_URL", "").strip())
+
+
 def entries() -> list[dict]:
     """Every catalogue model as a plain dict (so callers don't depend on the
     catalogue's dataclasses):
