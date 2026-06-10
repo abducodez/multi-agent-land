@@ -286,25 +286,42 @@ def build_lab() -> dict[str, gr.components.Component]:
     # at a glance before touching anything.  Reseeded on scenario/roster change below.
     world_summary = gr.HTML(_world_summary_html(first), elem_classes=["lab-ws-wrap"])
 
-    # The one heavier knob worth surfacing up front: the opening beat.  A dropdown of the
-    # scenario's example seeds picks a starting beat; selecting one drops its text into the
-    # editable box below — which is the value Summon actually reads — so you can take a
-    # preset as-is or rewrite it.  (Premise, genesis, roster and budget live under Director's
-    # cut.)  The app shell reseeds the box's value on scenario change; the preset list is
-    # reseeded just below.
-    seed_presets = gr.Dropdown(
-        choices=first.example_seeds or [first.default_seed],
-        value=first.default_seed,
-        label="Seed — pick an opening beat",
-        filterable=False,
-        info="Choose a starting beat; it drops into the box below to keep or rewrite.",
-    )
+    # The one heavier knob surfaced up front: the opening beat.  A dropdown of the scenario's
+    # example seeds picks a starting beat and drops its text into the (hidden) editable box —
+    # which is the value Summon actually reads.  The box stays out of the way until the small
+    # "edit" button reveals it, so the Quick lane reads as one clean picker.  (Premise, genesis,
+    # roster and budget live under Director's cut.)  The app shell reseeds the box's value on
+    # scenario change; the preset list is reseeded just below.
+    with gr.Row():
+        seed_presets = gr.Dropdown(
+            choices=first.example_seeds or [first.default_seed],
+            value=first.default_seed,
+            label="Seed — pick an opening beat",
+            filterable=False,
+            info="Choose a starting beat, or hit edit to write your own.",
+            scale=8,
+        )
+        seed_edit_btn = gr.Button("✎ edit", size="sm", scale=0, elem_classes=["lab-seed-edit"])
     handles["seed"] = gr.Textbox(
         value=first.default_seed,
         label="…the beat the conductor writes (edit freely)",
         lines=2,
+        visible=False,
     )
     seed_presets.change(lambda beat: beat, inputs=[seed_presets], outputs=[handles["seed"]])
+
+    # The edit button toggles the textbox; its label flips so the control reads as a switch.
+    seed_edit_open = gr.State(False)
+
+    def _toggle_seed_edit(is_open):
+        now_open = not is_open
+        return now_open, gr.update(visible=now_open), gr.update(value="✓ done" if now_open else "✎ edit")
+
+    seed_edit_btn.click(
+        _toggle_seed_edit,
+        inputs=[seed_edit_open],
+        outputs=[seed_edit_open, handles["seed"], seed_edit_btn],
+    )
 
     # Mode switch — progressive disclosure.  Quick shows only the essentials above; the
     # Director's cut reveals backend, scenario detail, the cast, and the judge.
