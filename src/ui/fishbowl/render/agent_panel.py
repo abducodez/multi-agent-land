@@ -101,6 +101,7 @@ def render_agent_panel(
             value=model_value,
             label=f"model · {backend_label}",
             interactive=bool(model_choices),
+            filterable=False,  # a pick-from-catalogue dropdown, not a type-to-filter combobox
         )
 
         tools_group: gr.CheckboxGroup | None = None

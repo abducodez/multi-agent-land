@@ -411,6 +411,7 @@ def build_lab() -> dict[str, gr.components.Component]:
                 value=_default_model_key(judge0) if judge0 else None,
                 label="Judge model",
                 interactive=bool(catalogue0),
+                filterable=False,  # pick from the catalogue; no free-text filtering
             )
             handles["judge_strictness"] = gr.Slider(
                 minimum=0,
