@@ -598,8 +598,16 @@ def _wire(
     judge_policy_in = _h(lab_handles, "judge_policy")
     judge_strictness_in = _h(lab_handles, "judge_strictness")
     tools_in = _h(lab_handles, "tools")
-    tokens_in = _h(lab_handles, "tokens")
-    max_rounds_in = _h(lab_handles, "max_rounds")
+    # New editable surface: per-agent edit States + the scenario roster/genesis/governor.
+    cast_tools_in = _h(lab_handles, "cast_tools")
+    cast_personas_in = _h(lab_handles, "cast_personas")
+    cast_schedules_in = _h(lab_handles, "cast_schedules")
+    cast_roster_in = _h(lab_handles, "cast_roster")
+    genesis_in = _h(lab_handles, "world")
+    max_turns_in = _h(lab_handles, "max_turns")
+    max_calls_in = _h(lab_handles, "max_calls_per_turn")
+    max_tokens_in = _h(lab_handles, "max_total_tokens")
+    hourly_budget_in = _h(lab_handles, "hourly_budget_usd")
 
     def _scenario_title(value) -> str:
         """Resolve a Lab scenario selection (title or internal name) to a title key."""
@@ -619,21 +627,40 @@ def _wire(
         from src.core.registry import Registry
         from src.ui.fishbowl.lab import collect_world_config
 
+        def _num(key):
+            v = knobs.get(key)
+            return v if isinstance(v, (int, float)) else None
+
+        def _dict(key):
+            v = knobs.get(key)
+            return v if isinstance(v, dict) else {}
+
         try:
             world = collect_world_config(
                 scenario=name,
                 premise=knobs.get("premise") or "",
                 seed=knobs.get("seed") or "",
-                cast_models=knobs.get("cast_models") if isinstance(knobs.get("cast_models"), dict) else {},
+                cast_models=_dict("cast_models"),
                 judge_policy=knobs.get("judge_policy") or "Majority Vote",
                 judge_model=knobs.get("judge_model") or "",
                 judge_strictness=knobs.get("judge_strictness")
                 if isinstance(knobs.get("judge_strictness"), (int, float))
                 else 50,
                 tools=knobs.get("tools") if isinstance(knobs.get("tools"), list) else [],
-                tokens=knobs.get("tokens") if isinstance(knobs.get("tokens"), (int, float)) else None,
-                max_rounds=knobs.get("max_rounds") if isinstance(knobs.get("max_rounds"), (int, float)) else None,
-                backend=knobs.get("backend") if isinstance(knobs.get("backend"), str) and knobs.get("backend") else "modal",
+                tokens=_num("tokens"),
+                max_rounds=_num("max_rounds"),
+                backend=knobs.get("backend")
+                if isinstance(knobs.get("backend"), str) and knobs.get("backend")
+                else "modal",
+                cast_tools=_dict("cast_tools"),
+                cast_personas=_dict("cast_personas"),
+                cast_schedules=_dict("cast_schedules"),
+                cast_roster=knobs.get("cast_roster") if isinstance(knobs.get("cast_roster"), list) else None,
+                genesis=knobs.get("genesis") if isinstance(knobs.get("genesis"), str) else None,
+                max_turns=_num("max_turns"),
+                max_calls_per_turn=_num("max_calls_per_turn"),
+                max_total_tokens=_num("max_total_tokens"),
+                hourly_budget_usd=_num("hourly_budget_usd"),
             )
             return FishbowlSession(name, registry=Registry.from_world(world), tools=_tools)
         except Exception:
@@ -649,9 +676,16 @@ def _wire(
         judge_policy,
         judge_strictness,
         tools,
-        tokens,
-        max_rounds,
         backend,
+        cast_tools,
+        cast_personas,
+        cast_schedules,
+        cast_roster,
+        genesis,
+        max_turns,
+        max_calls_per_turn,
+        max_total_tokens,
+        hourly_budget_usd,
         layout,
         mind_reader,
     ):
@@ -667,9 +701,16 @@ def _wire(
                 judge_policy=judge_policy,
                 judge_strictness=judge_strictness,
                 tools=tools,
-                tokens=tokens,
-                max_rounds=max_rounds,
                 backend=backend,
+                cast_tools=cast_tools,
+                cast_personas=cast_personas,
+                cast_schedules=cast_schedules,
+                cast_roster=cast_roster,
+                genesis=genesis,
+                max_turns=max_turns,
+                max_calls_per_turn=max_calls_per_turn,
+                max_total_tokens=max_total_tokens,
+                hourly_budget_usd=hourly_budget_usd,
             )
             if name
             else None
@@ -693,9 +734,16 @@ def _wire(
             judge_policy_in if judge_policy_in is not None else blank_state,
             judge_strictness_in if judge_strictness_in is not None else blank_state,
             tools_in if tools_in is not None else blank_state,
-            tokens_in if tokens_in is not None else blank_state,
-            max_rounds_in if max_rounds_in is not None else blank_state,
             backend_in if backend_in is not None else blank_state,
+            cast_tools_in if cast_tools_in is not None else blank_state,
+            cast_personas_in if cast_personas_in is not None else blank_state,
+            cast_schedules_in if cast_schedules_in is not None else blank_state,
+            cast_roster_in if cast_roster_in is not None else blank_state,
+            genesis_in if genesis_in is not None else blank_state,
+            max_turns_in if max_turns_in is not None else blank_state,
+            max_calls_in if max_calls_in is not None else blank_state,
+            max_tokens_in if max_tokens_in is not None else blank_state,
+            hourly_budget_in if hourly_budget_in is not None else blank_state,
             layout_state,
             mind_reader_state,
         ]
