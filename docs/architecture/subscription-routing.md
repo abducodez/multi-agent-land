@@ -91,15 +91,18 @@ The governor prevents this:
 ### Divergent world-growth (Thousand Token Wood)
 
 ```
-scene-whisperer → subscribes_to: [run.started, user.injected], tick: 3
-mischief-critic → subscribes_to: [world.observed], tick: None
-pocket-actor    → subscribes_to: [world.observed, judge.verdict], tick: 2
-echo            → subscribes_to: [user.injected], tick: None
+scene-whisperer → subscribes_to: [],             tick: 1
+pocket-actor    → subscribes_to: [],             tick: 2
+echo            → subscribes_to: [user.injected], tick: 3
+mischief-critic → subscribes_to: [],             tick: 16
 ```
 
-The critic fires immediately every time the scene changes.
-The echo fires immediately every time a visitor drops something.
-The pocket-actor and scene-whisperer run on ticks to keep a steady rhythm.
+The seedkeeper narrates every turn; the pocket-actor wants something every other turn;
+the echo answers visitors instantly and otherwise transforms the table every third turn.
+The reckoning (`mischief-critic`) is *paced, not reactive*: it stays silent until turn 16,
+then records what became real — one closing `judge.verdict` that ends the show. A judge
+that instead `subscribes_to: [world.observed]` would fire on the genesis event and resolve
+the run on turn 1, before the cast ever interacts (see `scenario-authoring.md` pitfalls).
 
 ### Convergent mystery-solving (Mystery Roots)
 

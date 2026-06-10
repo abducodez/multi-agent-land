@@ -50,6 +50,10 @@ class ContextBuilder:
         if memory_text is None:
             memory_text = EpisodicMemory(agent_name, max_recent=memory_window).format_for_prompt(all_events)
 
+        # The latest world line is shown in full under CURRENT SCENE; echoing it again as
+        # the tail of YOUR MEMORY wastes a small model's context and primes it to repeat.
+        memory_text = self._dedup_memory(memory_text, projection.current_scene)
+
         visitor_lines = "\n".join(f"- {a}" for a in projection.user_artifacts[-3:]) or "(quiet)"
 
         goal_block = f"SHARED GOAL\n{projection.goal}\n\n" if projection.goal else ""
@@ -76,6 +80,20 @@ class ContextBuilder:
             memory_chars=len(memory_text),
         )
         return prompt
+
+    @staticmethod
+    def _dedup_memory(memory_text: str, current_scene: str) -> str:
+        """Drop memory lines that merely repeat the CURRENT SCENE.
+
+        Memory lines are ``[turn NNN][kind] <text>``; the most-recent ``world.observed``
+        is also the ``current_scene``, so its line appears in both blocks.  We drop any
+        memory line that ends with the current scene's text, keeping the rest of the
+        recall intact (and leaving the block untouched if that would empty it)."""
+        scene = (current_scene or "").strip()
+        if not scene:
+            return memory_text
+        kept = [line for line in memory_text.splitlines() if not line.rstrip().endswith(scene)]
+        return "\n".join(kept) if kept else memory_text
 
     @staticmethod
     def _blackboard_block(agent_notes: list[str], window: int = 6) -> str:

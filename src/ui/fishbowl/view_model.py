@@ -107,7 +107,10 @@ def view_model_at(
                 "agent": e.actor,
             }
 
-    rounds = 1 + sum(1 for e in prefix if e.kind == "user.injected")
+    # "Round" = the live iteration count, i.e. the sim-turn at the play-head, so the
+    # meter visibly climbs (1 → max_rounds) as the cast takes turns rather than freezing
+    # until a visitor pokes the wood. max_rounds is the governor's max_turns ceiling.
+    rounds = max((e.turn for e in prefix), default=1) or 1
     chosen_voice = voice or scenario_voice(scenario_name)
     voice_name, voice_desc = VOICES.get(chosen_voice, ("NARRATOR", ""))
 

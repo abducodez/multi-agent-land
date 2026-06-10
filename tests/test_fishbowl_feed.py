@@ -21,7 +21,10 @@ def _ev(kind: str, actor: str, turn: int = 1, **payload) -> Event:
 def _events() -> tuple[Event, ...]:
     return (
         _ev("run.started", "conductor", turn=0, seed="seed", goal="g"),
-        _ev("world.observed", "scene-whisperer", turn=1, text="the wood wakes & stirs"),
+        # Genesis narration: emitted by the scenario itself → the anonymous narrator voice.
+        _ev("world.observed", "thousand-token-wood", turn=0, text="the wood wakes & stirs"),
+        # The seedkeeper is a cast member → credited to it as a say line, not the narrator.
+        _ev("world.observed", "scene-whisperer", turn=1, text="the seedkeeper hums"),
         _ev("agent.spoke", "pocket-actor", turn=2, text="I want the moon", thought="secretly scared", mood="panic"),
         _ev("user.injected", "visitor", turn=3, text="a lantern hums", label="POKE"),
         _ev("judge.verdict", "mischief-critic", turn=4, text="keep it"),

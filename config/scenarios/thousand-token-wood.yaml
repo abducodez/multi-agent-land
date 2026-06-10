@@ -11,13 +11,23 @@ example_seeds:
   - The mushrooms have started charging admission to their bioluminescent shows.
   - Time in this clearing runs clockwise for small things and counterclockwise for large ones.
 genesis_text: "The wood stirs awake around '{seed}'."
+# Turn order = cast order. Each round the three speakers take one turn apiece in this
+# order (all tick_every: 1) — the seedkeeper narrates, the pocket actor wants something,
+# the Echo transforms it — then the round repeats. The reckoning (mischief-critic) is
+# listed LAST so when it finally records what became real (after its `tick_every` turns)
+# it gets the closing word. Add or reorder names to change who participates; no engine
+# edits (ADR-0011).
 cast:
   - scene-whisperer
-  - mischief-critic
   - pocket-actor
   - echo
+  - mischief-critic
+# The show runs until the reckoning lands (mischief-critic.schedule.tick_every) or this
+# budget trips, whichever comes first. `max_turns` is the hard "number of rounds"
+# ceiling and must stay above the reckoning's cadence so it records before the budget
+# cuts in; `max_total_tokens` is the parallel "max tokens" ceiling (ADR-0007/0013).
 governor:
-  max_turns: 60
+  max_turns: 20
   max_calls_per_turn: 16
   max_total_calls: 600
   max_total_tokens: 60000

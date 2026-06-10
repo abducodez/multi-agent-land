@@ -110,6 +110,19 @@ def event_to_feed_item(event: Event, cast_names: list[str] | None = None) -> dic
     kind = event.kind
     p = event.payload
     if kind == "world.observed":
+        # A cast member who narrates the wood (e.g. the seedkeeper scene-whisperer, whose
+        # `may_emit` is world.observed) is a *speaker*, not the anonymous house narrator:
+        # credit the line to that agent so it reads as "scene-whisperer …" and lights its
+        # MindCard. Genesis / world lines — emitted by the scenario itself, not a cast
+        # member — keep the narrator voice (THE BARD) below.
+        if cast_names and event.actor in cast_names:
+            return {
+                "kind": "say",
+                "agent": event.actor,
+                "said": p.get("text", ""),
+                "thought": p.get("thought"),
+                "mood": normalize_mood(p.get("mood")),
+            }
         return {"kind": "narrate", "voice": p.get("voice"), "text": p.get("text", "")}
     if kind == "user.injected":
         return {"kind": "poke", "label": p.get("label", "DISTURBANCE"), "text": p.get("text", "")}

@@ -126,6 +126,17 @@ class FishbowlSession:
     def max_rounds(self) -> int:
         return self.governor.max_turns
 
+    @property
+    def autoplay_tick_cap(self) -> int:
+        """Hard backstop on consecutive autoplay generations, derived from the budget.
+
+        The governor (max_turns / max_total_tokens / max_total_calls) is the real bound
+        on how long a show runs — this cap only exists to stop an *unbounded* loop if
+        those are misconfigured. We size it just above the total-call ceiling so a
+        legitimately long show (a late Judge verdict) always resolves on a real budget
+        bound with a meaningful reason, never on this arbitrary backstop."""
+        return max(120, int(getattr(self.governor, "max_total_calls", 0) or 0) + 10)
+
     # ── snapshot ──────────────────────────────────────────────────────────────────
 
     def snapshot(self, k: int | None = None) -> dict:

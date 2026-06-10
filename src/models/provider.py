@@ -181,9 +181,14 @@ class DeterministicTinyModel(ModelProvider):
                 "Every mushroom cap becomes a tiny stage light, waiting for a secret cue.",
             ],
             "mischief-critic": [
-                "Verdict: keep it. The image is specific, playable, and invites the next agent to react.",
-                "Verdict: raise the stakes. The scene needs a want, a rule, or a tiny consequence.",
-                "Verdict: delightful but thin. Add a choice the visitor can disturb.",
+                "And so it is set down: the wood now keeps a booth that trades in yesterdays, and no traveller leaves without spending one.",
+                "It has become real — the paths have stopped pointing north, and the wood answers to longing instead of direction.",
+                "Let it be remembered: a ladder of echoes now rises toward the moon, and the wood is taller than it was at dawn.",
+            ],
+            "echo": [
+                "What you dropped comes back wearing antlers of light, and the clearing leans in to listen.",
+                "The wood swallows your word and returns it as a colour no one has named yet.",
+                "Your gift is given back changed: smaller, warmer, and humming a tune from underground.",
             ],
             "pocket-actor": [
                 "I am collecting echoes so I can knit a ladder to the moon.",

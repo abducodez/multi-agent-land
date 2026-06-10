@@ -50,7 +50,7 @@ class TestDefaultRegistry:
         reg = default_registry()
         gov = reg.governor_for("thousand-token-wood")
         assert isinstance(gov, Governor)
-        assert gov.max_turns == 60  # live-safe cap from scenario YAML
+        assert gov.max_turns == 20  # live-safe cap from scenario YAML
 
     def test_unknown_agent_raises(self):
         reg = default_registry()
@@ -97,7 +97,7 @@ class TestFromWorld:
     def test_governor_threaded_from_world(self):
         reg = Registry.from_world(self._world())
         gov = reg.governor_for("thousand-token-wood")
-        assert gov.max_turns == 60  # carried from the scenario's governor
+        assert gov.max_turns == 20  # carried from the scenario's governor
 
 
 class TestHandlerBinding:

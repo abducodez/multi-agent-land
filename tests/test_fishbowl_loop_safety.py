@@ -43,11 +43,12 @@ def test_advance_stops_on_budget_without_raising() -> None:
     else:  # pragma: no cover - only hit if the loop never stops (the bug we guard against)
         raise AssertionError("autoplay never stopped — infinite loop")
 
-    # The loop terminated with a human-readable reason — never an infinite token burn.
-    # (With a tight budget the run may resolve via a verdict OR trip the governor first;
-    # either is a clean stop.)
+    # The loop terminated with a meaningful reason — never an infinite token burn.
+    # (With a tight budget the run trips a governor bound — surfaced as its structured
+    # reason code, e.g. ``max_total_calls`` — or resolves via a verdict; either is a
+    # clean stop.)
     assert stop_reason
-    assert any(token in stop_reason.lower() for token in ("cap", "reached", "verdict"))
+    assert any(token in stop_reason.lower() for token in ("cap", "reached", "verdict", "max_"))
 
 
 def test_advance_surfaces_budget_reason_at_head() -> None:

@@ -407,6 +407,16 @@ only post to the shared log, and the seam shows.
 - **A judge that sees nothing.** A `strong` judge emitting `judge.verdict` only sees
   globally-visible kinds + its own. If your workers emit `agent.thought` /
   `agent.spoke`, the judge is blind to them — same root cause as above.
+- **The first `judge.verdict` ends the show.** The Fishbowl autoplay loop pauses the
+  moment a verdict lands at the head (`FishbowlSession.has_verdict`). So a judge that
+  `subscribes_to: [world.observed]` fires on the *genesis* event and resolves the run
+  on turn 1 — the cast never interacts. To let the show breathe, pace the judge with
+  `schedule.tick_every: N` (and `subscribes_to: []`): it stays silent for N turns of
+  interaction, then delivers one closing verdict. `N` is your "verdict after X
+  iterations" knob; keep it below the scenario's `governor.max_turns` so the verdict
+  lands before the budget trips. The autoplay backstop is derived from that budget
+  (`max_total_calls`), so a long show is never cut off early. Thousand Token Wood is
+  the worked example: judge `tick_every: 16`, `max_turns: 20`.
 - **`tick_every: 0` means *every* turn**, not *never*. Use `subscribes_to: []` +
   no `tick_every` for an agent that should fire only on subscription.
 - **`max_consecutive` does nothing** today (review #9) — don't rely on it to throttle

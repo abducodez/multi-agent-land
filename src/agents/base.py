@@ -60,10 +60,12 @@ _PROSE_FALLBACK = (
     "Never name or spell the secret word you were given; only describe it."
 )
 
-# Spoken kinds we de-duplicate so the cast advances the conversation instead of echoing
-# the same line (small models ignore "never repeat"; this enforces it).  Verdicts and
-# world/reflection events are excluded — they are not table chatter.
-_SPEECH_KINDS = frozenset({"agent.spoke", "oracle.spoke", "agent.thought"})
+# Kinds we de-duplicate so the cast advances the tale instead of echoing the same line
+# (small models ignore "never repeat"; this enforces it).  `world.observed` is included:
+# the seedkeeper narrates the world every turn, so without it a weak model loops on the
+# same scene line (and other agents parrot it back).  Verdicts (the closing ruling) and
+# reflections (private memory compaction) are excluded — they are not table chatter.
+_SPEECH_KINDS = frozenset({"agent.spoke", "oracle.spoke", "agent.thought", "world.observed"})
 _WORD = re.compile(r"[a-z0-9']+")
 
 

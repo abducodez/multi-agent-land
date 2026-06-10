@@ -81,6 +81,13 @@ class TestAdapter:
 
     def test_feed_vocabulary(self):
         assert adapter.event_to_feed_item(_ev("world.observed", "sw", text="x"))["kind"] == "narrate"
+        # A cast member's world.observed is credited to that agent (a say line), while a
+        # non-cast actor (genesis / the scenario itself) stays the anonymous narrator.
+        cast = ["scene-whisperer"]
+        whisper = adapter.event_to_feed_item(_ev("world.observed", "scene-whisperer", text="the wood wakes"), cast)
+        assert whisper["kind"] == "say" and whisper["agent"] == "scene-whisperer"
+        genesis = adapter.event_to_feed_item(_ev("world.observed", "thousand-token-wood", text="stirs awake"), cast)
+        assert genesis["kind"] == "narrate"
         assert adapter.event_to_feed_item(_ev("user.injected", "visitor", text="x", label="GUST"))["label"] == "GUST"
         assert adapter.event_to_feed_item(_ev("user.injected", "visitor", text="x"))["label"] == "DISTURBANCE"
         assert adapter.event_to_feed_item(_ev("judge.verdict", "j", text="guilty"))["kind"] == "verdict"
@@ -91,6 +98,8 @@ class TestViewModel:
     def _events(self) -> tuple[Event, ...]:
         return (
             _ev("run.started", "conductor", turn=0, seed="seed", goal="g"),
+            # Genesis: emitted by the scenario itself (not a cast member) → narrator voice.
+            _ev("world.observed", "thousand-token-wood", turn=0, text="The wood stirs awake around 'seed'."),
             _ev("world.observed", "scene-whisperer", turn=1, text="the wood wakes"),
             _ev("agent.spoke", "pocket-actor", turn=2, text="I want the moon", thought="scared", mood="panic"),
             _ev("user.injected", "visitor", turn=3, text="a lantern hums", label="POKE"),
@@ -111,7 +120,7 @@ class TestViewModel:
         kinds = {f["kind"] for f in vm["feed"]}
         assert {"narrate", "say", "poke", "verdict"} <= kinds  # run.started omitted
         assert vm["verdict"]["text"] == "keep it"
-        assert vm["rounds"] == 2  # one poke
+        assert vm["rounds"] == 4  # the sim-turn at the play-head (head event is turn 4)
 
     def test_prefix_is_clamped_and_tokens_grow(self):
         events, cast = self._events(), self._cast()
@@ -122,7 +131,7 @@ class TestViewModel:
 
     def test_speaking_id_tracks_the_head(self):
         events, cast = self._events(), self._cast()
-        vm = view_model_at(events, 3, cast)  # head is pocket-actor's spoke
+        vm = view_model_at(events, 4, cast)  # head is pocket-actor's spoke
         assert vm["speaking_id"] == "pocket-actor"
 
 

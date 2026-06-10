@@ -791,10 +791,13 @@ def _wire(
 
     # ── gr.Timer.tick → hybrid: advance k (replay) below head, else step ────────
     # Loop-safe: stops autoplay on a tripped governor, on a verdict at the head (the
-    # show resolved), or after _MAX_AUTO_TICKS consecutive generating ticks (the hard
-    # backstop the user asked for).  Returns (k, *show_outs, *halt-tail, tick_count).
+    # show resolved), or after the governor-derived tick cap of consecutive generating
+    # ticks (the hard backstop).  The cap tracks the scenario budget so a long show that
+    # ends on a late Judge verdict is never cut off early.  Returns (k, *show_outs,
+    # *halt-tail, tick_count).
     def on_tick(session, k, layout, mind_reader, tick_count):
-        new_k, new_ticks, stop_reason = advance_one_tick(session, k, tick_count)
+        cap = session.autoplay_tick_cap if session is not None else _MAX_AUTO_TICKS
+        new_k, new_ticks, stop_reason = advance_one_tick(session, k, tick_count, max_auto_ticks=cap)
         if stop_reason is not None:
             panes = _stopped_panes(session, new_k, layout=layout, mind_reader=mind_reader, reason=stop_reason)
             return (new_k, *panes, *_halt_tail(), new_ticks)
