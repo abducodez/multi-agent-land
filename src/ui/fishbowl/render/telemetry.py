@@ -56,6 +56,8 @@ def log_rows(level: str = "all", layer: str = "all", limit: int = 250) -> list[l
         if layer != "all" and not (event.startswith(layer) or str(rec.get("logger", "")).startswith(layer)):
             continue
         ctx = "/".join(str(rec[k]) for k in ("agent", "turn") if rec.get(k) is not None)
+        if not ctx:
+            continue
         # Detail = the most informative extra fields (skip the bookkeeping keys).
         skip = {"ts", "level", "logger", "event", "msg", "src", "run_id", "turn", "agent"}
         detail = " ".join(f"{k}={_short(v, 80)}" for k, v in rec.items() if k not in skip)
