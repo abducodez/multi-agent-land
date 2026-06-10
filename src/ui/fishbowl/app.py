@@ -777,7 +777,9 @@ def _wire(
             # The seed is now an editable textbox (the preset dropdown that fills it is owned
             # by the Lab and reseeds itself); refresh its value, not its choices.
             updates = {
-                "premise": gr.update(value=cfg.goal),
+                # Premise is a dropdown-that-supports-text: refresh its single preset
+                # (the new world's goal) and select it; a custom typed value still wins.
+                "premise": gr.update(choices=[cfg.goal] if cfg.goal else [], value=cfg.goal),
                 "seed": gr.update(value=cfg.default_seed),
                 "world": gr.update(value=cfg.genesis_text or ""),
                 "narrator": gr.update(value=scenario_voice(cfg.name)),

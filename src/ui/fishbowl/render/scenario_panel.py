@@ -67,11 +67,12 @@ def render_scenario_panel(
 
     with gr.Group():
         gr.Markdown("**Goal & genesis** — what the whole cast is reaching for, and the world they wake into")
-        premise = gr.Textbox(
+        premise = gr.Dropdown(
+            choices=[scenario.goal] if scenario.goal else [],
             value=scenario.goal,
             label="Premise / goal",
-            info="The shared objective handed to the whole cast.",
-            lines=3,
+            info="The shared objective handed to the whole cast — keep the scenario's goal or type your own.",
+            allow_custom_value=True,  # a dropdown that also supports free text
         )
         world = gr.Textbox(
             value=scenario.genesis_text or "",
