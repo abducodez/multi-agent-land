@@ -22,6 +22,8 @@ Two surfaces live here, kept deliberately separate:
 
 from __future__ import annotations
 
+import html
+
 import gradio as gr
 
 from src.core.config import GovernorConfig, ScenarioConfig, validate_scenario, validate_world
@@ -197,6 +199,46 @@ def _voice_choices() -> list[tuple[str, str]]:
     return [(f"{name} · {desc}", voice_id) for voice_id, (name, desc) in VOICES.items()]
 
 
+_DIRECTOR_MODE = "⚙ Director's cut"
+_QUICK_MODE = "✦ Quick"
+
+
+def _world_summary_html(scenario: ScenarioConfig | str, roster: list[str] | None = None) -> str:
+    """A glanceable digest of the chosen world: its goal + a row of capability badges.
+
+    Reads the *effective* cast (``scenario_caps``) so the digest tells the truth even after
+    a roster edit — how many minds wake, whether one of them judges, what tools are in play,
+    and the turn budget.  This is the 'understand the world before you touch a knob' surface
+    that makes the Lab digestible; it carries no state (pure HTML), so it is safe to re-emit
+    on every scenario/roster change.
+    """
+    scn = _resolve_scenario(scenario) if isinstance(scenario, str) else scenario
+    if scn is None:
+        return "<div class='lab-ws'><div class='lab-ws-goal'>No world selected.</div></div>"
+    caps = scenario_ui_caps(scn, cast_override=roster)
+    count = len(caps.cast)
+    badges = [f"<span class='lab-badge'>{count} mind{'' if count == 1 else 's'}</span>"]
+    if caps.judge is not None:
+        badges.append(f"<span class='lab-badge badge-judge'>⚖ {html.escape(caps.judge.name)} judges</span>")
+    else:
+        badges.append("<span class='lab-badge badge-muted'>no judge · open-ended</span>")
+    if caps.has_tools:
+        tool_ids = sorted({t for grants in caps.tool_agents.values() for t in grants})
+        badges.append(f"<span class='lab-badge badge-tool'>🛠 {html.escape(', '.join(tool_ids))}</span>")
+    else:
+        badges.append("<span class='lab-badge badge-muted'>no tools</span>")
+    gov = scn.governor
+    if gov is not None and gov.max_turns:
+        badges.append(f"<span class='lab-badge'>≤ {gov.max_turns} turns</span>")
+    return (
+        "<div class='lab-ws'>"
+        f"<div class='lab-ws-title'>{html.escape(scn.title or scn.name)}</div>"
+        f"<div class='lab-ws-goal'>{html.escape(scn.goal or '')}</div>"
+        f"<div class='lab-ws-badges'>{''.join(badges)}</div>"
+        "</div>"
+    )
+
+
 # ── component tree ───────────────────────────────────────────────────────────────
 
 
@@ -223,131 +265,176 @@ def build_lab() -> dict[str, gr.components.Component]:
 
     gr.Markdown(
         "### The Lab · compose the experiment\n"
-        "Build a bowl of minds, then let them perform. Every knob feeds one durable "
-        "ledger — press **Summon** and the conductor seeds the world."
+        "Pick a world and press **Summon** — that's the whole story. Want to direct it? "
+        "Flip to **Director's cut** to retune every mind."
     )
 
-    # 00 — Inference backend: where the minds run.  This is the headline choice — it
-    # decides which catalogue every model picker below draws from (Modal's self-hosted
-    # vLLM endpoints, or Hugging Face's serverless Inference Providers).  Switching it
-    # re-seeds the cast/judge picks to the new backend's models.
+    # ── Quick lane — always visible.  Three taps to a show: pick a world, read its
+    # digest, (optionally) choose the opening beat, Summon.  Everything heavier lives
+    # under Director's cut, so a newcomer is never asked to parse a wall of knobs.
     with gr.Group():
-        gr.Markdown("**00 · Inference backend** — where the minds think")
-        handles["inference_backend"] = gr.Radio(
-            choices=backend_choices(),
-            value=inference.DEFAULT_BACKEND,
-            label="Backend",
-            info="Modal = vLLM you host · Hugging Face = serverless, many small models.",
-        )
-    backend_radio = handles["inference_backend"]
-
-    # 01 — Scenario picker (the world to compose).  The scenario-level controls
-    # (premise, seed, world, roster, governor) follow in §scenario_panel, re-seeded on
-    # change by the app shell + the reset callback below.
-    with gr.Group():
-        gr.Markdown("**01 · Scenario** — the world the cast wakes up in")
+        gr.Markdown("**Pick a world** — the cast and controls adapt to whatever you choose")
         handles["scenario"] = gr.Radio(
             choices=titles,
             value=titles[0],
             label="Scenario",
-            info="Pick a world; the controls below adapt to its cast.",
+            elem_classes=["lab-scenario-pick"],
+            info="Each world wakes a different cast of small minds.",
         )
 
-    # Scenario-level editable controls (goal / seed / genesis / cast roster / governor).
-    panel = render_scenario_panel(first, available_agents=caps0.available_agents)
-    handles["premise"] = panel.premise
-    handles["seed"] = panel.seed
-    handles["world"] = panel.world
-    handles["cast_roster"] = panel.cast_roster
-    handles["max_turns"] = panel.max_turns
-    handles["max_calls_per_turn"] = panel.max_calls_per_turn
-    handles["max_total_tokens"] = panel.max_total_tokens
-    handles["hourly_budget_usd"] = panel.hourly_budget_usd
-    cast_roster = panel.cast_roster
+    # A live digest of the chosen world — goal + capability badges — so you understand it
+    # at a glance before touching anything.  Reseeded on scenario/roster change below.
+    world_summary = gr.HTML(_world_summary_html(first), elem_classes=["lab-ws-wrap"])
 
-    # Per-agent edit state — one dict per editable field, keyed by agent name.  Seeded
-    # from the lead scenario; re-seeded on scenario/backend change (and the cast render
-    # rewrites them as the user edits).  cast_schedules holds {agent: {tick_every, ...}}.
-    cast_models = gr.State(_cast_defaults(first))
-    cast_tools = gr.State({})
-    cast_personas = gr.State({})
-    cast_schedules = gr.State({})
-    handles["cast_models"] = cast_models
-    handles["cast_tools"] = cast_tools
-    handles["cast_personas"] = cast_personas
-    handles["cast_schedules"] = cast_schedules
+    # The one heavier knob worth surfacing up front: the opening beat.  (Premise, genesis,
+    # roster and the budget live under Director's cut.)  The app shell reseeds its choices
+    # on scenario change, exactly as before.
+    handles["seed"] = gr.Dropdown(
+        choices=first.example_seeds or [first.default_seed],
+        value=first.default_seed,
+        label="Seed — the opening beat",
+        allow_custom_value=True,
+        info="The first thing the conductor writes into the ledger. Pick one, or type your own.",
+    )
 
-    available_tools = available_tool_ids()
-    catalogue0 = model_choices()
+    # Mode switch — progressive disclosure.  Quick shows only the essentials above; the
+    # Director's cut reveals backend, scenario detail, the cast, and the judge.
+    mode = gr.Radio(
+        choices=[_QUICK_MODE, _DIRECTOR_MODE],
+        value=_QUICK_MODE,
+        show_label=False,
+        elem_classes=["lab-mode"],
+    )
 
-    # 03 — The Cast: one editable card per non-judge mind, derived from the *effective*
-    # roster so the form adapts as the user edits it.  The card count varies, so this is a
-    # ``gr.render``; each card writes its edits into the per-field State dicts (the stable
-    # handles the Summon handler reads), exactly as the model picker always has.
-    with gr.Group():
-        gr.Markdown("**03 · The Cast** — bind each mind to a model and edit its config")
+    # ── Director's cut — hidden until asked for.  Holds every advanced knob; toggling
+    # ``mode`` flips this column's visibility.  ``backend_radio`` is bound here (it decides
+    # which catalogue the cast/judge pickers draw from), so the cast render below sees it.
+    with gr.Column(visible=False, elem_classes=["lab-advanced"]) as advanced:
+        with gr.Group():
+            gr.Markdown("**Backend** — where the minds think")
+            handles["inference_backend"] = gr.Radio(
+                choices=backend_choices(),
+                value=inference.DEFAULT_BACKEND,
+                label="Backend",
+                info="Modal = vLLM you host · Hugging Face = serverless, many small models.",
+            )
+        backend_radio = handles["inference_backend"]
 
-        @gr.render(inputs=[handles["scenario"], backend_radio, cast_roster])
-        def _render_cast(scenario_value, backend_value, roster_value):
-            scenario = _resolve_scenario(scenario_value)
-            if scenario is None:
-                gr.Markdown("_No scenario selected._")
-                return
-            backend_value = backend_value or inference.DEFAULT_BACKEND
-            caps = scenario_ui_caps(scenario, cast_override=roster_value)
-            choices = model_choices(backend_value)
-            backend_label = inference.backend_label(backend_value)
+        # Scenario detail — goal, genesis, cast roster, and the governor budget.
+        panel = render_scenario_panel(first, available_agents=caps0.available_agents)
+        handles["premise"] = panel.premise
+        handles["world"] = panel.world
+        handles["cast_roster"] = panel.cast_roster
+        handles["max_turns"] = panel.max_turns
+        handles["max_calls_per_turn"] = panel.max_calls_per_turn
+        handles["max_total_tokens"] = panel.max_total_tokens
+        handles["hourly_budget_usd"] = panel.hourly_budget_usd
+        cast_roster = panel.cast_roster
 
-            workers = caps.worker_cast
-            if not workers:
-                gr.Markdown("_This scenario has no selectable players._")
-            for manifest in workers:
-                tool_choices = _tool_choices_for(manifest, available_tools)
-                card = render_agent_panel(
-                    manifest,
-                    model_choices=choices,
-                    model_value=_default_model_key(manifest, backend_value),
-                    backend_label=backend_label,
-                    tool_choices=tool_choices,
-                )
-                _wire_agent_card(
-                    card,
-                    cast_models=cast_models,
-                    cast_tools=cast_tools,
-                    cast_personas=cast_personas,
-                    cast_schedules=cast_schedules,
-                )
+        # Per-agent edit state — one dict per editable field, keyed by agent name.  Seeded
+        # from the lead scenario; re-seeded on scenario/backend change (and the cast render
+        # rewrites them as the user edits).  cast_schedules holds {agent: {tick_every, ...}}.
+        cast_models = gr.State(_cast_defaults(first))
+        cast_tools = gr.State({})
+        cast_personas = gr.State({})
+        cast_schedules = gr.State({})
+        handles["cast_models"] = cast_models
+        handles["cast_tools"] = cast_tools
+        handles["cast_personas"] = cast_personas
+        handles["cast_schedules"] = cast_schedules
 
-            if workers and not choices:
-                gr.Markdown(f"_No {backend_label} models in the catalogue — the cast runs the deterministic stub._")
+        available_tools = available_tool_ids()
+        catalogue0 = model_choices()
 
-    # 04 — The Judge.  Static handles (the app shell reads them on Summon and the picker
-    # offers the catalogue), wrapped in a Group whose visibility tracks the effective
-    # roster: a judge-less cast hides the whole section so its knobs never apply.  The
-    # legacy global ``tools`` handle is retained as a hidden State (live grants flow
-    # per-agent through ``cast_tools``).
-    handles["tools"] = gr.State([])
-    judge0 = caps0.judge
-    with gr.Group(visible=caps0.has_judge, elem_classes=["lab-judge-card"]) as judge_group:
-        gr.Markdown("**04 · The Judge** — the mind that records the verdict")
-        handles["judge_policy"] = gr.Dropdown(
-            choices=JUDGE_POLICIES,
-            value=JUDGE_POLICIES[0],
-            label="Policy preset",
-        )
-        handles["judge_model"] = gr.Dropdown(
-            choices=catalogue0,
-            value=_default_model_key(judge0) if judge0 else None,
-            label="Judge model",
-            interactive=bool(catalogue0),
-        )
-        handles["judge_strictness"] = gr.Slider(
-            minimum=0,
-            maximum=100,
-            value=50,
-            step=1,
-            label="Strictness (lenient → merciless)",
-        )
+        # The Cast: one *collapsed* editable accordion per non-judge mind, derived from the
+        # *effective* roster so the form adapts as the user edits it.  The card count varies,
+        # so this is a ``gr.render``; each card writes its edits into the per-field State
+        # dicts (the stable handles the Summon handler reads), as the model picker always has.
+        with gr.Group():
+            gr.Markdown(
+                "**The Cast** — expand a mind to bind its model, grant a tool, rewrite its persona, or retime it"
+            )
+
+            @gr.render(inputs=[handles["scenario"], backend_radio, cast_roster])
+            def _render_cast(scenario_value, backend_value, roster_value):
+                scenario = _resolve_scenario(scenario_value)
+                if scenario is None:
+                    gr.Markdown("_No scenario selected._")
+                    return
+                backend_value = backend_value or inference.DEFAULT_BACKEND
+                caps = scenario_ui_caps(scenario, cast_override=roster_value)
+                choices = model_choices(backend_value)
+                backend_label = inference.backend_label(backend_value)
+
+                workers = caps.worker_cast
+                if not workers:
+                    gr.Markdown("_This scenario has no selectable players._")
+                for index, manifest in enumerate(workers):
+                    tool_choices = _tool_choices_for(manifest, available_tools)
+                    card = render_agent_panel(
+                        manifest,
+                        model_choices=choices,
+                        model_value=_default_model_key(manifest, backend_value),
+                        backend_label=backend_label,
+                        tool_choices=tool_choices,
+                        start_open=(index == 0),  # open the lead mind so the section isn't opaque
+                    )
+                    _wire_agent_card(
+                        card,
+                        cast_models=cast_models,
+                        cast_tools=cast_tools,
+                        cast_personas=cast_personas,
+                        cast_schedules=cast_schedules,
+                    )
+
+                if workers and not choices:
+                    gr.Markdown(
+                        f"_No {backend_label} models in the catalogue — the cast runs the deterministic stub._"
+                    )
+
+        # The Judge.  Static handles (the app shell reads them on Summon and the picker
+        # offers the catalogue), wrapped in a Group whose visibility tracks the effective
+        # roster: a judge-less cast hides the whole section so its knobs never apply.  The
+        # legacy global ``tools`` handle is retained as a hidden State (live grants flow
+        # per-agent through ``cast_tools``).
+        handles["tools"] = gr.State([])
+        judge0 = caps0.judge
+        with gr.Group(visible=caps0.has_judge, elem_classes=["lab-judge-card"]) as judge_group:
+            gr.Markdown("**The Judge** — the mind that records the verdict")
+            handles["judge_policy"] = gr.Dropdown(
+                choices=JUDGE_POLICIES,
+                value=JUDGE_POLICIES[0],
+                label="Policy preset",
+            )
+            handles["judge_model"] = gr.Dropdown(
+                choices=catalogue0,
+                value=_default_model_key(judge0) if judge0 else None,
+                label="Judge model",
+                interactive=bool(catalogue0),
+            )
+            handles["judge_strictness"] = gr.Slider(
+                minimum=0,
+                maximum=100,
+                value=50,
+                step=1,
+                label="Strictness (lenient → merciless)",
+            )
+
+    # Flip the whole Director's-cut column on the mode switch.
+    mode.change(lambda m: gr.update(visible=(m == _DIRECTOR_MODE)), inputs=[mode], outputs=[advanced])
+
+    # Keep the world digest honest: refresh it when the scenario changes (read the new
+    # world's own cast) and when the roster is edited (read the effective cast).
+    handles["scenario"].change(
+        lambda scenario_value: _world_summary_html(_resolve_scenario(scenario_value)),
+        inputs=[handles["scenario"]],
+        outputs=[world_summary],
+    )
+    cast_roster.change(
+        lambda scenario_value, roster_value: _world_summary_html(_resolve_scenario(scenario_value), roster_value),
+        inputs=[handles["scenario"], cast_roster],
+        outputs=[world_summary],
+    )
 
     # The Judge section's visibility + its model picker re-seed from the *effective* cast
     # (so dropping the judge hides it) and the chosen backend (so it never offers a model

@@ -23,10 +23,13 @@ from src.core.config import GovernorConfig, ScenarioConfig
 
 @dataclass
 class ScenarioPanel:
-    """Handles for the scenario-level controls :func:`build_lab` reads on Summon."""
+    """Handles for the scenario-level controls :func:`build_lab` reads on Summon.
+
+    The opening *seed* is composed separately (it lives in the always-visible Quick lane,
+    not in this advanced panel), so it is not one of these handles.
+    """
 
     premise: gr.Textbox
-    seed: gr.Dropdown
     world: gr.Textbox
     cast_roster: gr.CheckboxGroup
     max_turns: gr.Number
@@ -56,29 +59,19 @@ def render_scenario_panel(
     *cast_value* seeds the multiselect (defaults to the scenario's own cast).  The
     governor knobs seed from the scenario's ``governor`` block, falling back to
     :class:`GovernorConfig` defaults so a scenario without an explicit budget still
-    shows sensible numbers.
+    shows sensible numbers.  The opening seed is *not* built here — it lives in the
+    always-visible Quick lane (see :func:`build_lab`).
     """
     gov = scenario.governor or GovernorConfig()
-    seeds = list(scenario.example_seeds) or [scenario.default_seed]
     roster = list(cast_value) if cast_value is not None else list(scenario.cast)
 
     with gr.Group():
-        gr.Markdown("**01 · Scenario & Goal**")
+        gr.Markdown("**Goal & genesis** — what the whole cast is reaching for, and the world they wake into")
         premise = gr.Textbox(
             value=scenario.goal,
             label="Premise / goal",
             info="The shared objective handed to the whole cast.",
             lines=3,
-        )
-
-    with gr.Group():
-        gr.Markdown("**02 · The Initiator** — the opening beat + facts the minds wake knowing")
-        seed = gr.Dropdown(
-            choices=seeds,
-            value=scenario.default_seed,
-            label="Seed event",
-            allow_custom_value=True,
-            info="The first beat the conductor writes into the ledger.",
         )
         world = gr.Textbox(
             value=scenario.genesis_text or "",
@@ -93,7 +86,7 @@ def render_scenario_panel(
         )
 
     with gr.Group():
-        gr.Markdown("**06 · Run & Budget** — a fixed seed + recorded outputs reproduce a run exactly")
+        gr.Markdown("**Budget** — the bounds the governor enforces (a fixed seed + these reproduce a run exactly)")
         with gr.Row():
             max_turns = gr.Number(value=gov.max_turns, label="Max turns", precision=0, minimum=1)
             max_calls_per_turn = gr.Number(
@@ -109,7 +102,6 @@ def render_scenario_panel(
 
     return ScenarioPanel(
         premise=premise,
-        seed=seed,
         world=world,
         cast_roster=cast_roster,
         max_turns=max_turns,

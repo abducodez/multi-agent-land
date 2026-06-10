@@ -1036,3 +1036,125 @@ footer { display: none !important; }
   background: linear-gradient(180deg, rgba(40,30,10,0.34), rgba(7,24,31,0.4)) !important;
   box-shadow: inset 0 1px 0 rgba(255,207,107,0.08), 0 16px 38px -32px rgba(0,0,0,0.9) !important;
 }
+
+/* ============================================================
+   The Lab — progressive disclosure (Quick / Director's cut).
+   The form is now a guided console: pick a world, read its live
+   digest, drop a seed, Summon — with every advanced knob folded
+   behind a mode switch so a newcomer is never handed the cockpit.
+   ============================================================ */
+
+/* World digest — the at-a-glance card under the scenario picker. A framed
+   readout (title in phosphor display, goal in calm body, capability badges)
+   so you understand a world before touching a single control. */
+.gradio-container .lab-ws-wrap { padding: 0 !important; }
+.lab-ws {
+  position: relative;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--r-lg);
+  padding: 13px 16px 14px;
+  margin: 2px 0 4px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(79,230,210,0.09), transparent 60%),
+    linear-gradient(180deg, rgba(10,34,43,0.6), rgba(7,24,31,0.42));
+  box-shadow: inset 0 1px 0 rgba(120,222,214,0.08), 0 18px 40px -34px rgba(0,0,0,0.9);
+}
+.lab-ws-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+  text-shadow: var(--glow);
+}
+.lab-ws-goal {
+  margin-top: 5px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-mid);
+  max-width: 64ch;
+}
+.lab-ws-badges { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+.lab-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(5,18,26,0.55);
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mid);
+}
+.lab-badge.badge-judge { border-color: rgba(255,207,107,0.45); color: var(--amber); }
+.lab-badge.badge-tool  { border-color: rgba(155,232,107,0.45); color: var(--lime); }
+.lab-badge.badge-muted { color: var(--ink-faint); opacity: 0.78; }
+
+/* Mode switch — a segmented control, not a stack of radio dots. The selected
+   speed glows; the other reads as a quiet sibling tab. */
+.gradio-container .lab-mode { border: 0 !important; background: transparent !important; }
+.gradio-container .lab-mode [role="radiogroup"],
+.gradio-container .lab-mode .wrap {
+  display: inline-flex !important;
+  gap: 0 !important;
+  padding: 3px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 999px !important;
+  background: rgba(5,18,26,0.6) !important;
+}
+.gradio-container .lab-mode label {
+  margin: 0 !important;
+  padding: 6px 18px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--ink-dim) !important;
+  font-family: var(--font-display) !important;
+  font-size: 11.5px !important;
+  letter-spacing: 0.05em !important;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+.gradio-container .lab-mode label input { display: none !important; }
+.gradio-container .lab-mode label:hover { color: var(--ink) !important; }
+.gradio-container .lab-mode label:has(input:checked) {
+  background: linear-gradient(180deg, rgba(79,230,210,0.22), rgba(79,230,210,0.1)) !important;
+  color: var(--ink) !important;
+  box-shadow: 0 0 16px -4px rgba(79,230,210,0.5), inset 0 1px 0 rgba(120,222,214,0.15) !important;
+}
+
+/* Director's cut — the advanced column. A left rail + faint inset so the deep
+   controls read as a distinct workspace that opened, not part of the quick flow. */
+.gradio-container .lab-advanced {
+  border-left: 2px solid var(--line-soft) !important;
+  padding-left: 12px !important;
+  margin-top: 6px !important;
+  animation: lab-adv-in 0.28s ease both;
+}
+@keyframes lab-adv-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Per-agent accordion — the collapsed minds. Phosphor rail on the header so the
+   cast reads as a stack of distinct instruments; the open card lifts. */
+.gradio-container .lab-agent-card {
+  border: 1px solid var(--line) !important;
+  border-left: 2px solid var(--line-hot) !important;
+  border-radius: var(--r-lg) !important;
+  background: linear-gradient(180deg, rgba(10,34,43,0.4), rgba(7,24,31,0.3)) !important;
+  margin-bottom: 8px !important;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.gradio-container .lab-agent-card:hover { border-left-color: var(--cyan) !important; }
+.gradio-container .lab-agent-card > button,
+.gradio-container .lab-agent-card .label-wrap {
+  font-family: var(--font-display) !important;
+  letter-spacing: 0.03em;
+  color: var(--ink) !important;
+}

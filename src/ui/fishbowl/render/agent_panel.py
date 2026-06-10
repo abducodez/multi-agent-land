@@ -77,24 +77,25 @@ def render_agent_panel(
     model_value: str | None,
     backend_label: str,
     tool_choices: list[tuple[str, str]] | None = None,
+    start_open: bool = False,
 ) -> AgentPanel:
     """Render one agent's editable card and return its control handles.
 
-    Called inside a ``gr.render`` (or any Blocks context).  *model_choices* /
-    *model_value* / *backend_label* drive the model dropdown exactly as the old inline
-    row did.  *tool_choices* is the set of (label, tool_id) the agent may be granted
-    *and* that the engine actually has — when empty/None the tool picker is omitted, so
-    a tool checkbox only ever appears for a tool-capable agent.
+    Called inside a ``gr.render`` (or any Blocks context).  The card is a *collapsed*
+    ``gr.Accordion`` whose title carries the at-a-glance facts (name · archetype · tier ·
+    a 🛠 marker for a tool-capable mind), so the cast reads as a tidy stack of minds you
+    expand only when you want to tune one — not a wall of textboxes.  *model_choices* /
+    *model_value* / *backend_label* drive the model dropdown exactly as the old inline row
+    did.  *tool_choices* is the set of (label, tool_id) the agent may be granted *and* that
+    the engine actually has — when empty/None the tool picker is omitted, so a tool checkbox
+    only ever appears for a tool-capable agent.  *start_open* expands the card on first
+    render (the composer opens the lead mind so the section is never an opaque list).
     """
     archetype = manifest.archetype or f"the {manifest.role}"
-    with gr.Group(elem_classes=["lab-agent-card"]):
-        gr.Markdown(
-            f"<div class='lab-agent-head'>"
-            f"<span class='lab-agent-name'>{html.escape(manifest.name)}</span>"
-            f"<span class='lab-agent-arch'>{html.escape(archetype)}</span></div>"
-            f"{_info_chips(manifest)}",
-            elem_classes=["lab-agent-meta"],
-        )
+    tool_mark = " · 🛠" if tool_choices else ""
+    title = f"{manifest.name}  ·  {archetype}  ·  {manifest.model_profile}{tool_mark}"
+    with gr.Accordion(title, open=start_open, elem_classes=["lab-agent-card"]):
+        gr.Markdown(_info_chips(manifest), elem_classes=["lab-agent-meta"])
         model = gr.Dropdown(
             choices=model_choices,
             value=model_value,
