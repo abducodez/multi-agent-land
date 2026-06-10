@@ -774,10 +774,11 @@ def _wire(
             cfg = _registry.scenarios.get(SCENARIOS.get(_scenario_title(scenario_value), ""))
             if cfg is None:
                 return tuple(gr.update() for _ in _present_fields)
-            seeds = list(cfg.example_seeds) or [cfg.default_seed]
+            # The seed is now an editable textbox (the preset dropdown that fills it is owned
+            # by the Lab and reseeds itself); refresh its value, not its choices.
             updates = {
                 "premise": gr.update(value=cfg.goal),
-                "seed": gr.update(choices=seeds, value=cfg.default_seed),
+                "seed": gr.update(value=cfg.default_seed),
                 "world": gr.update(value=cfg.genesis_text or ""),
                 "narrator": gr.update(value=scenario_voice(cfg.name)),
             }

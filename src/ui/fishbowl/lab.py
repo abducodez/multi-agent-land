@@ -286,16 +286,25 @@ def build_lab() -> dict[str, gr.components.Component]:
     # at a glance before touching anything.  Reseeded on scenario/roster change below.
     world_summary = gr.HTML(_world_summary_html(first), elem_classes=["lab-ws-wrap"])
 
-    # The one heavier knob worth surfacing up front: the opening beat.  (Premise, genesis,
-    # roster and the budget live under Director's cut.)  The app shell reseeds its choices
-    # on scenario change, exactly as before.
-    handles["seed"] = gr.Dropdown(
+    # The one heavier knob worth surfacing up front: the opening beat.  A dropdown of the
+    # scenario's example seeds picks a starting beat; selecting one drops its text into the
+    # editable box below — which is the value Summon actually reads — so you can take a
+    # preset as-is or rewrite it.  (Premise, genesis, roster and budget live under Director's
+    # cut.)  The app shell reseeds the box's value on scenario change; the preset list is
+    # reseeded just below.
+    seed_presets = gr.Dropdown(
         choices=first.example_seeds or [first.default_seed],
         value=first.default_seed,
-        label="Seed — the opening beat",
-        allow_custom_value=True,
-        info="The first thing the conductor writes into the ledger. Pick one, or type your own.",
+        label="Seed — pick an opening beat",
+        filterable=False,
+        info="Choose a starting beat; it drops into the box below to keep or rewrite.",
     )
+    handles["seed"] = gr.Textbox(
+        value=first.default_seed,
+        label="…the beat the conductor writes (edit freely)",
+        lines=2,
+    )
+    seed_presets.change(lambda beat: beat, inputs=[seed_presets], outputs=[handles["seed"]])
 
     # Mode switch — progressive disclosure.  Quick shows only the essentials above; the
     # Director's cut reveals backend, scenario detail, the cast, and the judge.
@@ -436,6 +445,16 @@ def build_lab() -> dict[str, gr.components.Component]:
         inputs=[handles["scenario"], cast_roster],
         outputs=[world_summary],
     )
+
+    # Refresh the seed preset list to the new world's example beats (the editable seed box's
+    # value is reseeded by the app shell).
+    def _reseed_seed_presets(scenario_value):
+        scn = _resolve_scenario(scenario_value)
+        if scn is None:
+            return gr.update()
+        return gr.update(choices=list(scn.example_seeds) or [scn.default_seed], value=scn.default_seed)
+
+    handles["scenario"].change(_reseed_seed_presets, inputs=[handles["scenario"]], outputs=[seed_presets])
 
     # The Judge section's visibility + its model picker re-seed from the *effective* cast
     # (so dropping the judge hides it) and the chosen backend (so it never offers a model

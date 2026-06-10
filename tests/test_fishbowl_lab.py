@@ -57,8 +57,8 @@ def test_build_lab_returns_expected_handles():
     assert backend_values == {b.key for b in inference.backends()}
     assert handles["inference_backend"].value == inference.DEFAULT_BACKEND
     assert isinstance(handles["scenario"], gr.Radio)
-    assert isinstance(handles["seed"], gr.Dropdown)
-    assert handles["seed"].allow_custom_value is True
+    # The seed is an editable textbox (a preset dropdown fills it; the box is what Summon reads).
+    assert isinstance(handles["seed"], gr.Textbox)
     assert isinstance(handles["narrator"], gr.Dropdown)
     # The cast picker is a gr.render writing into these states (one card per player).
     assert isinstance(handles["cast_models"], gr.State)
