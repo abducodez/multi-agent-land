@@ -49,15 +49,18 @@ class _FakeIndex:
     def __init__(self) -> None:
         self.store: dict[str, Event] = {}
         self.add_calls: list[str] = []
+        self.search_run_ids: list[str | None] = []
 
     def index(self, events: tuple[Event, ...]) -> None:
         for e in events:
             self.add_calls.append(e.id)
             self.store[e.id] = e  # upsert by id → idempotent
 
-    def search(self, query: str, k: int) -> list[Event]:
+    def search(self, query: str, k: int, run_id: str | None = None) -> list[Event]:
+        self.search_run_ids.append(run_id)
         q = set(query.lower().split())
-        scored = [(len(q & set(str(e.payload.get("text", "")).lower().split())), e) for e in self.store.values()]
+        pool = [e for e in self.store.values() if run_id is None or e.run_id == run_id]
+        scored = [(len(q & set(str(e.payload.get("text", "")).lower().split())), e) for e in pool]
         scored.sort(key=lambda t: t[0], reverse=True)
         return [e for _, e in scored[:k]]
 
@@ -114,6 +117,22 @@ class TestSalienceUsesIndex:
         mem = SalienceMemory("a", index=idx)
         mem.visible((mine, theirs, glob), current_turn=2, query="stage")
         assert set(idx.store) == {"mine", "glob"}  # 'theirs' never indexed
+
+    def test_search_is_scoped_to_the_candidates_run(self):
+        """The index spans every run in the shared store; recall must be scoped to
+        the run the candidates came from, so one show's (or one user's) discussion
+        never crowds another's relevance budget."""
+        idx = _FakeIndex()
+        # The index already holds an event from ANOTHER run that matches the query.
+        foreign = Event(run_id="other-run", turn=1, kind="world.observed", actor="n", payload={"text": "beacon glow"})
+        idx.index((foreign,))
+
+        ours = _event("world.observed", turn=2, text="beacon glow signal", eid="ours")  # run_id="r"
+        mem = SalienceMemory("x", top_k=2, index=idx)
+        recalled = mem.visible((ours,), current_turn=3, query="beacon glow")
+
+        assert idx.search_run_ids == ["r"]  # the search was run-scoped...
+        assert [e.id for e in recalled] == ["ours"]  # ...and the foreign hit never surfaced
 
     def test_recency_still_applies_with_index(self):
         """Relevance is one term; recency must still separate equally-relevant

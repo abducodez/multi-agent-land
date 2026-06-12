@@ -30,6 +30,20 @@ from src.tools.builtins import default_tool_registry
 from src.ui.fishbowl.adapter import scenario_voice
 from src.ui.fishbowl.view_model import view_model_at
 
+try:  # archive: "my past sessions" read layer over the run-history ledger (ADR-0026)
+    from src.ui.fishbowl.archive import list_runs, load_replay, run_card_label
+except Exception:  # pragma: no cover - degrade gracefully if the archive unit is absent
+
+    def list_runs(*_args, **_kwargs):
+        return []
+
+    def load_replay(*_args, **_kwargs):
+        return None
+
+    def run_card_label(_summary):
+        return "▶ (run)"
+
+
 # ── loop-safety backstop ────────────────────────────────────────────────────────
 # Belt-and-suspenders against a runaway autoplay loop: even when the governor never
 # trips (e.g. a generous budget) the timer halts after this many consecutive auto-ticks
@@ -384,6 +398,12 @@ def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max
     ticks = int(ticks or 0)
     if session is None:
         return 0, 0, None
+    if getattr(session, "replay", False):
+        # A loaded past run: replay forward through the recorded prefix, then stop.
+        # It owns no live engine, so generating is impossible — never spend a tick here.
+        if k < session.head:
+            return k + 1, ticks, None
+        return k, ticks, "end of session — replay complete"
     if session.has_verdict():
         return k, ticks, "verdict reached — the show resolved"
     if k < session.head:
@@ -479,10 +499,33 @@ def build_app() -> gr.Blocks:
         blank_state = gr.State("")  # stand-in input when a leaf widget is absent
         stopped_state = gr.State(False)  # set once the run halts (budget/backstop/verdict)
         tick_count_state = gr.State(0)  # consecutive autoplay ticks (the 40-tick backstop)
+        # Per-user session id: resolved from the browser's localStorage on load (see
+        # _SESSION_ID_JS) so it survives reloads.  Stamped onto run.started so the
+        # Archive can list "my sessions only"; a hidden carrier, never shown.
+        session_id_box = gr.Textbox(value="", visible=False, elem_id="fb-session-id")
+
+        # Populated after the tabs build, then read at gr.render runtime (post-load) so
+        # the Lab's Archive drawer can target the Show's panes it lists into.
+        archive_refs: dict = {}
 
         with gr.Tabs() as tabs:
             with gr.Tab("The Lab", id="lab"):
                 lab_handles = build_lab()
+                _build_archive_drawer(
+                    scenario_handle=(lab_handles or {}).get("scenario"),
+                    session_id_box=session_id_box,
+                    refs=archive_refs,
+                    tabs=tabs,
+                    states={
+                        "session": session_state,
+                        "k": k_state,
+                        "scenario": scenario_state,
+                        "layout": layout_state,
+                        "mind": mind_reader_state,
+                        "stopped": stopped_state,
+                        "ticks": tick_count_state,
+                    },
+                )
             with gr.Tab("The Show", id="show"):
                 show_handles = build_show()
             with gr.Tab("Telemetry", id="telemetry"):
@@ -490,6 +533,10 @@ def build_app() -> gr.Blocks:
 
         # CRT foreground layers (scanlines + vignette, above content, click-through).
         gr.HTML(_CRT_FG_HTML)
+
+        # The Archive's gr.render runs client-side after build; by then show_handles
+        # exists, so it reads the live panes through this ref.
+        archive_refs["show_handles"] = show_handles or {}
 
         _wire(
             tabs=tabs,
@@ -503,7 +550,12 @@ def build_app() -> gr.Blocks:
             blank_state=blank_state,
             stopped_state=stopped_state,
             tick_count_state=tick_count_state,
+            session_id_box=session_id_box,
         )
+
+        # Resolve (or mint) the browser's session id once the page loads; updating the
+        # hidden box fires its change, which re-renders the Archive list for this user.
+        demo.load(None, None, [session_id_box], js=_SESSION_ID_JS)
 
     return demo
 
@@ -532,6 +584,7 @@ def _wire(
     blank_state: gr.State,
     stopped_state: gr.State,
     tick_count_state: gr.State,
+    session_id_box: gr.Textbox | None = None,
 ) -> None:
     """Connect Lab/Show component handles to session transport + HTML re-render.
 
@@ -688,6 +741,7 @@ def _wire(
         hourly_budget_usd,
         layout,
         mind_reader,
+        session_id,
     ):
         title = _scenario_title(scenario_value)
         name = SCENARIOS.get(title, "")
@@ -716,7 +770,7 @@ def _wire(
             else None
         )
         if session is not None:
-            session.reset((seed_value or "").strip())
+            session.reset((seed_value or "").strip(), session_id=(session_id or "").strip() or None)
             k = session.head
         else:
             k = 0
@@ -746,6 +800,7 @@ def _wire(
             hourly_budget_in if hourly_budget_in is not None else blank_state,
             layout_state,
             mind_reader_state,
+            session_id_box if session_id_box is not None else blank_state,
         ]
         summon_btn.click(
             on_summon,
@@ -960,6 +1015,123 @@ def _wire(
 def _pad_values(values, show_outs: list) -> tuple:
     """Trim a (stage, feed, meters, verdict) tuple to the present panes' count."""
     return tuple(values[: len(show_outs)])
+
+
+# ── Archive drawer ("my past sessions" → read-only replay) ──────────────────────
+
+# Resolve (or mint) a per-browser session id from localStorage on page load.  Kept in
+# JS so the id is the user's own and survives reloads — Python only reads the carrier.
+_SESSION_ID_JS = """
+() => {
+  try {
+    let id = localStorage.getItem('fishbowl_session_id');
+    if (!id) {
+      id = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      localStorage.setItem('fishbowl_session_id', id);
+    }
+    return id;
+  } catch (e) {
+    return 'sess-' + Math.random().toString(36).slice(2);
+  }
+}
+"""
+
+
+def _title_for(value) -> str:
+    """Resolve a scenario title *or* internal name to a display-title key."""
+    if value in SCENARIOS:
+        return value
+    for title, name in SCENARIOS.items():
+        if value == name:
+            return title
+    return _DEFAULT_TITLE
+
+
+def _show_outs(show_handles: dict) -> list:
+    """The present Show panes (stage, feed, meters, verdict), in render order."""
+    stage = _h(show_handles, "stage", "stage_html", "constellation")
+    feed = _h(show_handles, "feed", "feed_html")
+    meters = _h(show_handles, "meters", "meters_html")
+    verdict = _h(show_handles, "verdict", "verdict_html")
+    return [c for c in (stage, feed, meters, verdict) if c is not None]
+
+
+def _archive_empty_html() -> str:
+    """The drawer's empty state — no past runs for this world yet."""
+    return _fishbowl(
+        '<div class="archive-empty">'
+        '<div class="eyebrow">&#10227; No past sessions</div>'
+        '<div class="ae-body">Summon the bowl, and your runs in this world '
+        "will gather here — yours alone, replayable any time.</div>"
+        "</div>",
+        role="fb-archive",
+    )
+
+
+def _build_archive_drawer(*, scenario_handle, session_id_box, refs: dict, tabs, states: dict) -> None:
+    """The Lab's "Past sessions" accordion: clickable phosphor cards → read-only replay.
+
+    A ``gr.render`` keyed on (scenario, session id) lists *this user's* runs for the
+    *current* world via :func:`list_runs`; clicking a card loads that run with
+    :func:`load_replay` and jumps to the Show.  The list re-renders on world change,
+    when the session id resolves from localStorage, and on the manual refresh.
+    """
+    if scenario_handle is None:  # no scenario picker → nothing to scope a list to
+        return
+
+    with gr.Accordion("⟲ Past sessions · this world", open=False, elem_classes=["archive-drawer"]):
+        refresh = gr.Button("⟳ refresh", size="sm", elem_classes=["archive-refresh"], scale=0)
+
+        @gr.render(
+            inputs=[scenario_handle, session_id_box],
+            triggers=[scenario_handle.change, session_id_box.change, refresh.click],
+        )
+        def _render_archive(scenario_value, session_id):
+            name = SCENARIOS.get(_title_for(scenario_value), "")
+            runs = list_runs(name, session_id)
+            if not runs:
+                gr.HTML(_archive_empty_html())
+                return
+
+            show_outs = _show_outs(refs.get("show_handles") or {})
+            n_out = 6 + len(show_outs)  # session, k, scenario, tabs, *panes, stopped, ticks
+
+            def _loader(run_id: str):
+                def _load(layout, mind_reader):
+                    session = load_replay(run_id, registry=_registry, tools=_tools)
+                    if session is None:
+                        return tuple(gr.update() for _ in range(n_out))
+                    k = session.head  # land on the full discussion; scrub/▶ replays it
+                    out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
+                    return (
+                        session,
+                        k,
+                        _title_for(session.scenario_name),
+                        gr.update(selected="show"),
+                        *_pad_values(out, show_outs),
+                        False,
+                        0,
+                    )
+
+                return _load
+
+            for summary in runs:
+                card = gr.Button(run_card_label(summary), elem_classes=["archive-card"])
+                card.click(
+                    _loader(summary.run_id),
+                    inputs=[states["layout"], states["mind"]],
+                    outputs=[
+                        states["session"],
+                        states["k"],
+                        states["scenario"],
+                        tabs,
+                        *show_outs,
+                        states["stopped"],
+                        states["ticks"],
+                    ],
+                )
 
 
 # ── dev server port (ported from the original root app.py) ──────────────────────

@@ -59,9 +59,9 @@ class FishbowlSession:
 
     # ── lifecycle ───────────────────────────────────────────────────────────────
 
-    def reset(self, seed: str = "") -> None:
+    def reset(self, seed: str = "", *, session_id: str | None = None) -> None:
         obs.log("session.reset", scenario=self._scenario_name, seed=seed or self.scenario.default_seed)
-        self.conductor.reset(seed or self.scenario.default_seed)
+        self.conductor.reset(seed or self.scenario.default_seed, session_id=session_id)
 
     def step(self, n_ticks: int = 1) -> None:
         with obs.span("session.step", **{"session.n_ticks": n_ticks}):
@@ -86,21 +86,50 @@ class FishbowlSession:
     def scenario(self):
         return self.conductor.scenario
 
+    # Marks the live, generative session apart from a read-only ``ReplaySession``;
+    # the autoplay loop checks this so loading a past run never spends tokens.
+    replay = False
+
     @property
     def events(self):
-        return self.conductor.ledger.events
+        # Run-scoped: the ledger is a shared store of *every* run (ADR-0009), so the
+        # Show must only ever see the current run's events — otherwise scenario B's
+        # stage would replay scenario A's discussion.  Every read below (head,
+        # snapshot, scrubber) flows from this, so scoping here scopes the whole Show.
+        return self.conductor.ledger.events_for_run(self.conductor.run_id)
 
     @property
     def head(self) -> int:
-        """The generation-head: number of events in the ledger so far."""
-        return len(self.conductor.ledger.events)
+        """The generation-head: number of events in *this run* so far."""
+        return len(self.events)
 
     def has_verdict(self) -> bool:
-        """True once a ``judge.verdict`` event sits in the ledger — the show resolved.
+        """True once a ``judge.verdict`` event sits in *this run* — the show resolved.
 
-        The Fishbowl autoplay loop consults this to auto-pause the timer when the
-        Judge has ruled, so the curtain falls on its own (no extra token spend)."""
-        return any(getattr(e, "kind", None) == "judge.verdict" for e in self.conductor.ledger.events)
+        Run-scoped (ADR-0009): the ledger is a shared, append-only store of every run,
+        so we only consult the current run's events.  The Fishbowl autoplay loop calls
+        this to auto-pause the timer when the Judge has ruled, so the curtain falls on
+        its own (no extra token spend)."""
+        return any(e.kind == "judge.verdict" for e in self.conductor.ledger.events_for_run(self.conductor.run_id))
+
+    def finalize(self, reason: str) -> None:
+        """Close the current run with a ``run.finished`` event (idempotent-safe).
+
+        On a verdict we derive ``winner`` from the judge's ruling (best-effort: the
+        ``winner`` payload key when present) and ``winning_model`` from the run.started
+        cast map; both fall back to ``None`` when unknown."""
+        winner: str | None = None
+        winning_model: str | None = None
+        run_events = self.conductor.ledger.events_for_run(self.conductor.run_id)
+        if reason == "verdict":
+            verdict = next((e for e in reversed(run_events) if e.kind == "judge.verdict"), None)
+            if verdict is not None:
+                winner = verdict.payload.get("winner") or None
+            if winner:
+                started = next((e for e in run_events if e.kind == "run.started"), None)
+                cast = (started.payload.get("cast") or {}) if started is not None else {}
+                winning_model = (cast.get(winner) or {}).get("model_endpoint")
+        self.conductor.finalize(reason, winner=winner, winning_model=winning_model)
 
     @property
     def cast(self) -> list[AgentManifest]:
@@ -151,4 +180,98 @@ class FishbowlSession:
             governor=self.governor,
             token_ceiling=self.token_ceiling,
             max_rounds=self.max_rounds,
+        )
+
+
+class ReplaySession:
+    """A read-only view over one *past* run — the Archive's "Load" target.
+
+    It exposes the exact read surface the Show renders (``events`` / ``head`` /
+    ``snapshot`` / ``has_verdict``) so the transport's scrubber and replay just work,
+    but it owns no live ``Conductor``: ``step``/``step_one``/``inject`` are no-ops and
+    ``replay`` is ``True``, so autoplay never generates (no token spend) on a load.
+
+    The fixed event list is the run's own slice (``events_for_run(run_id)``); the cast
+    cards / meters bounds are rebuilt from that run's scenario via the registry, while
+    the discussion itself is replayed verbatim from the events.
+    """
+
+    replay = True
+
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        events: tuple,
+        scenario_name: str,
+        registry: Registry | None = None,
+        tools=None,
+    ) -> None:
+        self.run_id = run_id
+        self._events = tuple(events)
+        self._scenario_name = scenario_name
+        registry = registry or default_registry()
+        tools = tools if tools is not None else default_tool_registry()
+        scenario = registry.build_scenario(scenario_name, tools=tools)
+        self._scenario = scenario
+        self._cast = [agent.manifest for agent in scenario.agents]
+        self._governor = registry.governor_for(scenario_name)
+        obs.log("session.replay", scenario=scenario_name, run_id=run_id, events=len(self._events))
+
+    # ── read surface (mirrors FishbowlSession) ────────────────────────────────────
+
+    @property
+    def events(self):
+        return self._events
+
+    @property
+    def head(self) -> int:
+        return len(self._events)
+
+    @property
+    def scenario_name(self) -> str:
+        return self._scenario_name
+
+    @property
+    def goal(self) -> str:
+        return self._scenario.goal
+
+    @property
+    def cast(self) -> list[AgentManifest]:
+        return self._cast
+
+    def has_verdict(self) -> bool:
+        return any(e.kind == "judge.verdict" for e in self._events)
+
+    @property
+    def autoplay_tick_cap(self) -> int:
+        return self.head
+
+    # ── inert lifecycle (a replay never generates) ────────────────────────────────
+
+    def reset(self, *_args, **_kwargs) -> None:  # pragma: no cover - inert by design
+        return None
+
+    def step(self, *_args, **_kwargs) -> None:
+        return None
+
+    def step_one(self, *_args, **_kwargs) -> bool:
+        return False
+
+    def inject(self, *_args, **_kwargs) -> None:
+        return None
+
+    # ── snapshot ──────────────────────────────────────────────────────────────────
+
+    def snapshot(self, k: int | None = None) -> dict:
+        events = self._events
+        return view_model_at(
+            events,
+            k if k is not None else len(events),
+            self._cast,
+            scenario_name=self._scenario_name,
+            goal=self.goal,
+            governor=None,  # no live governor on a replay — meters show recorded text only
+            token_ceiling=getattr(self._governor, "max_total_tokens", None),
+            max_rounds=getattr(self._governor, "max_turns", None),
         )

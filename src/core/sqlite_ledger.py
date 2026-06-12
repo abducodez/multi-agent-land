@@ -13,6 +13,7 @@ Design decisions:
   - reset() is deliberately destructive: it clears the current run, not all runs.
     Multi-run persistence (keeping history across resets) is a Phase 3 milestone.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,11 +56,13 @@ class SQLiteLedger(Ledger):
                 actor           TEXT    NOT NULL,
                 payload         TEXT    NOT NULL,
                 created_at      TEXT    NOT NULL,
-                schema_version  INTEGER NOT NULL DEFAULT 1
+                schema_version  INTEGER NOT NULL DEFAULT 1,
+                session_id      TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_run_id ON events(run_id);
             CREATE INDEX IF NOT EXISTS idx_kind   ON events(kind);
             CREATE INDEX IF NOT EXISTS idx_actor  ON events(actor);
+            CREATE INDEX IF NOT EXISTS idx_session_id ON events(session_id);
         """)
         self._conn.commit()
 
@@ -71,8 +74,8 @@ class SQLiteLedger(Ledger):
         try:
             self._conn.execute(
                 "INSERT INTO events "
-                "(id, run_id, turn, kind, actor, payload, created_at, schema_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, run_id, turn, kind, actor, payload, created_at, schema_version, session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     event.id,
                     event.run_id,
@@ -82,6 +85,7 @@ class SQLiteLedger(Ledger):
                     json.dumps(event.payload),
                     event.created_at.isoformat(),
                     event.schema_version,
+                    event.session_id,
                 ),
             )
             self._conn.commit()
@@ -118,52 +122,59 @@ class SQLiteLedger(Ledger):
         ledger = cls(path)
         return ledger
 
-    def _load_cache(self) -> None:
-        rows = self._conn.execute(
-            "SELECT id, run_id, turn, kind, actor, payload, created_at, schema_version "
-            "FROM events ORDER BY offset"
-        ).fetchall()
-        for row in rows:
-            try:
-                created_at = datetime.fromisoformat(row[6])
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
-            except (ValueError, TypeError):
-                created_at = datetime.now(timezone.utc)
+    _SELECT_COLS = "id, run_id, turn, kind, actor, payload, created_at, schema_version, session_id"
 
-            e = Event(
-                id=row[0],
-                run_id=row[1],
-                turn=row[2],
-                kind=row[3],  # type: ignore[arg-type]
-                actor=row[4],
-                payload=json.loads(row[5]),
-                created_at=created_at,
-                schema_version=row[7],
-            )
+    @staticmethod
+    def _row_to_event(row: tuple) -> Event:
+        try:
+            created_at = datetime.fromisoformat(row[6])
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            created_at = datetime.now(timezone.utc)
+        return Event(
+            id=row[0],
+            run_id=row[1],
+            turn=row[2],
+            kind=row[3],  # type: ignore[arg-type]
+            actor=row[4],
+            payload=json.loads(row[5]),
+            created_at=created_at,
+            schema_version=row[7],
+            session_id=row[8],
+        )
+
+    def _load_cache(self) -> None:
+        rows = self._conn.execute(f"SELECT {self._SELECT_COLS} FROM events ORDER BY offset").fetchall()
+        for row in rows:
+            e = self._row_to_event(row)
             self._cache.append(e)
             self._seen_ids.add(e.id)
 
     def tail(self, from_offset: int = 0) -> tuple[Event, ...]:
         """Return events with offset > from_offset (for crash-recovery replay)."""
         rows = self._conn.execute(
-            "SELECT id, run_id, turn, kind, actor, payload, created_at, schema_version "
-            "FROM events WHERE offset > ? ORDER BY offset",
+            f"SELECT {self._SELECT_COLS} FROM events WHERE offset > ? ORDER BY offset",
             (from_offset,),
         ).fetchall()
-        events = []
-        for row in rows:
-            e = Event(
-                id=row[0], run_id=row[1], turn=row[2], kind=row[3],  # type: ignore[arg-type]
-                actor=row[4], payload=json.loads(row[5]),
-                schema_version=row[7],
-            )
-            events.append(e)
-        return tuple(events)
+        return tuple(self._row_to_event(row) for row in rows)
 
     def latest_offset(self) -> int:
         row = self._conn.execute("SELECT MAX(offset) FROM events").fetchone()
         return row[0] or 0
+
+    def events_for_run(self, run_id: str) -> tuple[Event, ...]:
+        """Return the events of *run_id* in append/offset order (indexed query)."""
+        rows = self._conn.execute(
+            f"SELECT {self._SELECT_COLS} FROM events WHERE run_id = ? ORDER BY offset",
+            (run_id,),
+        ).fetchall()
+        return tuple(self._row_to_event(row) for row in rows)
+
+    def runs(self) -> tuple[str, ...]:
+        """Return the distinct run_ids in first-seen order (indexed query)."""
+        rows = self._conn.execute("SELECT run_id FROM events GROUP BY run_id ORDER BY MIN(offset)").fetchall()
+        return tuple(row[0] for row in rows)
 
     def close(self) -> None:
         self._conn.close()

@@ -26,6 +26,7 @@ installed.  The offline in-memory path stays import-clean.
 Backend selection lives in :mod:`src.core.ledger_factory`: with ``DATABASE_URL``
 set the system uses this store; otherwise it uses the in-memory ``Ledger``.
 """
+
 from __future__ import annotations
 
 import json
@@ -95,6 +96,7 @@ class SqlAlchemyLedger(Ledger):
             Column("payload", Text, nullable=False),
             Column("created_at", DateTime(timezone=True), nullable=False),
             Column("schema_version", Integer, nullable=False, server_default="1"),
+            Column("session_id", String, nullable=True, index=True),
         )
         self._metadata.create_all(self._engine)
 
@@ -121,6 +123,7 @@ class SqlAlchemyLedger(Ledger):
                         payload=json.dumps(event.payload),
                         created_at=_aware(event.created_at),
                         schema_version=event.schema_version,
+                        session_id=event.session_id,
                     )
                 )
             self._cache.append(event)
@@ -179,6 +182,26 @@ class SqlAlchemyLedger(Ledger):
             value = conn.execute(stmt).scalar()
         return value or 0
 
+    def events_for_run(self, run_id: str) -> tuple[Event, ...]:
+        """Return the events of *run_id* in append/offset order (indexed query)."""
+        from sqlalchemy import select
+
+        t = self._events_table
+        stmt = select(t).where(t.c.run_id == run_id).order_by(t.c.offset)
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).mappings().all()
+        return tuple(self._row_to_event(row) for row in rows)
+
+    def runs(self) -> tuple[str, ...]:
+        """Return the distinct run_ids in first-seen order (indexed query)."""
+        from sqlalchemy import func, select
+
+        t = self._events_table
+        stmt = select(t.c.run_id).group_by(t.c.run_id).order_by(func.min(t.c.offset))
+        with self._engine.connect() as conn:
+            rows = conn.execute(stmt).scalars().all()
+        return tuple(rows)
+
     def close(self) -> None:
         self._engine.dispose()
 
@@ -219,6 +242,7 @@ class SqlAlchemyLedger(Ledger):
             payload=payload,
             created_at=created_at,
             schema_version=row["schema_version"],
+            session_id=row.get("session_id"),
         )
 
 
