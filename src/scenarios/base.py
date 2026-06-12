@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from src.agents.base import Agent
+from src.core.config import CompetitionConfig
 from src.core.events import Event
 
 
@@ -20,6 +21,10 @@ class Scenario:
     genesis_text: str | None = None
     """Template for the opening world.observed event.  '{seed}' is substituted.
     Falls back to a generic clearing line when None."""
+    competition: CompetitionConfig | None = None
+    """The arena contract (ADR-0029) — how this scenario produces a winner.  Stamped
+    onto ``run.started`` by the Conductor so a run is self-describing.  ``None`` (the
+    legacy/test default) behaves like ``kind: none``: no winner, no leaderboard rows."""
 
     def genesis(self, run_id: str, turn: int, seed: str) -> Iterable[Event]:
         template = self.genesis_text or "The first clearing forms around '{seed}'."

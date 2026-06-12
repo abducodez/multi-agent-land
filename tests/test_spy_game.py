@@ -11,6 +11,8 @@ offline (deterministic stub, no API key):
 
 from __future__ import annotations
 
+import re
+
 from src.core.conductor import Conductor
 from src.core.ledger_factory import make_ledger
 from src.core.registry import default_registry
@@ -62,10 +64,16 @@ def test_public_setup_never_names_the_words() -> None:
     # globally visible — every mind reads them. They must set up the game without
     # publishing the answer; the words live only in each persona + the host reveal.
     cond = _run()
+    # Match the secret words as whole words, not substrings: run.started now carries the
+    # competition block whose ``teams`` key contains the literal "TEA" inside "TEAMS"
+    # (ADR-0029) — a coincidence, not a leak. The team map names the spy *agent*, never
+    # the secret *word*, and run.started never reaches an agent's prompt (only `text`/
+    # `goal` do). What must never appear is the word itself.
+    leak = re.compile(r"\b(COFFEE|TEA)\b")
     for e in cond.ledger.events:
         if e.kind in ("run.started", "world.observed"):
             blob = str(e.payload).upper()
-            assert "COFFEE" not in blob and "TEA" not in blob
+            assert not leak.search(blob), f"secret word leaked into {e.kind}: {e.payload}"
 
 
 def test_host_verdict_unmasks_the_spy() -> None:

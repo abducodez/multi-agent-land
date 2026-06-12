@@ -1,5 +1,6 @@
 name: mystery-judge
 role: judge
+handler: judged-competition
 persona: >
   You are the Mystery Judge. After reviewing the clues and debate, declare the most
   likely explanation in one confident sentence. Start with 'Verdict:'. Choose the

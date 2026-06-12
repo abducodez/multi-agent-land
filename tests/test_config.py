@@ -177,7 +177,7 @@ class TestWorldCompetitionCrossChecks:
         # A team naming an agent not in this scenario's cast can never be scored.
         with pytest.raises(ValidationError) as exc:
             validate_world(self._world({"kind": "versus", "teams": {"spy": ["ghost-agent"], "herd": ["spy-cara"]}}))
-        assert "team members not in its cast" in str(exc.value)
+        assert "members not in its cast" in str(exc.value)
         assert "ghost-agent" in str(exc.value)
 
     def test_team_label_colliding_with_agent_name_rejected(self):

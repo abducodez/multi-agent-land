@@ -1,0 +1,28 @@
+name: beat-battle
+title: "🎭 Beat Battle"
+goal: >
+  Two storytellers in matched seats alternate vivid story beats on a single seed,
+  building one shared tale until the delight judge crowns the teller whose beats
+  sing loudest. The point is a watchable showcase of which model tells the more
+  delightful story.
+default_seed: A lighthouse keeper discovers the sea has started writing letters back.
+example_seeds:
+  - A lighthouse keeper discovers the sea has started writing letters back.
+  - A clockmaker inherits a town where everyone's shadow runs an hour late.
+  - A child trades their name to a fox and must win it back one favour at a time.
+genesis_text: "Two tellers, one tale. It begins: '{seed}'"
+cast:
+  - storyteller-a
+  - storyteller-b
+  - beat-judge
+governor:
+  max_turns: 24
+  max_calls_per_turn: 8
+  max_total_calls: 300
+  max_total_tokens: 45000
+  hourly_budget_usd: 4.0
+competition:
+  kind: versus
+  symmetric_seats:
+    - storyteller-a
+    - storyteller-b

@@ -41,3 +41,12 @@ governor:
   max_turns: 2000
   max_calls_per_turn: 16
   max_total_calls: 20000
+# The arena contract (ADR-0029): a head-to-head between the lone spy and the herd.
+# The winner is ground truth, decided in code by the spy-host handler (it compares the
+# host's accusation to the real spy), not by the model's prose — so a single-member
+# 'spy' team attributes the win to spy-nil's model, while a 'herd' win credits the seat.
+competition:
+  kind: versus
+  teams:
+    spy: [spy-nil]
+    herd: [spy-cara, spy-bex, spy-ovo]

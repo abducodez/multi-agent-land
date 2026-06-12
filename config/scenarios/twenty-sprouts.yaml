@@ -1,0 +1,34 @@
+name: twenty-sprouts
+title: "❓ Twenty Sprouts"
+goal: >
+  Play twenty questions in the sprout grove: the keeper holds one secret word, the
+  guesser narrows it down with yes/no questions and lands a final guess. The keeper
+  wins by staying hidden; the guesser wins by naming the word.
+# The secret word is dealt BY CODE (the secret-keeper handler), never by the model — the
+# same ground-truth discipline as The Steeped's spy words. It rides each keeper event on a
+# private `secret` payload key, which the context builder never surfaces (only `text` is
+# shown), so the guesser can't read it; the sprout-judge handler reads it back at the end.
+default_seed: A small thing from the wood, ordinary enough to overlook, strange enough to miss.
+example_seeds:
+  - A small thing from the wood, ordinary enough to overlook, strange enough to miss.
+  - Something a traveller might carry, or wish they had, on the long path through the trees.
+  - One object the grove keeps returning to, no matter how often it is lost.
+genesis_text: "A hush falls over the sprout grove. The keeper has chosen a word, and the questions begin: '{seed}'"
+cast:
+  - sprout-guesser
+  - secret-keeper
+  - sprout-judge
+governor:
+  max_turns: 44
+  max_calls_per_turn: 8
+  max_total_calls: 400
+  max_total_tokens: 50000
+  hourly_budget_usd: 4.0
+# The arena contract (ADR-0029): a head-to-head with a deterministic win condition. The
+# winner is the guesser (the dealt word appears in their final guess) or the keeper (it
+# does not) — decided in code by the sprout-judge handler, not the model's prose.
+competition:
+  kind: versus
+  teams:
+    guesser: [sprout-guesser]
+    keeper: [secret-keeper]

@@ -439,3 +439,103 @@ only post to the shared log, and the seam shows.
   invisible unless you add a renderer.
 - **One shared ledger across scenarios** when `DATABASE_URL` is set (`app.py:34`);
   use `scripts/resume_run.py` (one DB per scenario) for isolated durable runs.
+
+---
+
+## Scenario authoring checklist: making it arena-grade
+
+A scenario that *runs* is not yet a scenario that *competes*. The arena (ADR-0029,
+[arena roadmap](next-steps/arena-roadmap.md) W2–W3) asks every shipped scenario to
+declare how it ends and who — if anyone — wins, so the leaderboard can attribute wins
+to models. Run down this list before you ship:
+
+- [ ] **Premise** — `goal`, `default_seed`, `example_seeds`, and `genesis_text` are
+  all set. The goal is rendered into every prompt; the seeds are what the Summon
+  dropdown offers; the genesis is the audience's opening line.
+- [ ] **Cast** — every name in `cast:` resolves to a manifest in `config/agents/`
+  (`validate_world` fails loudly if not).
+- [ ] **Governor** — explicit budgets (`max_turns`, `max_total_calls`, ideally
+  `max_total_tokens` and `hourly_budget_usd`). The budget is the show's outer wall.
+- [ ] **`competition` block** — explicit, even when it's `kind: none`. The model
+  defaults to `none` so old YAML still validates, but shipped scenarios must say
+  what they are out loud (the contract test checks).
+- [ ] **End condition** — a judge whose `schedule.tick_every` fires *within* the
+  governor's budget (the first `judge.verdict` drops the curtain — see the pitfall
+  above), or `kind: none` with a closing voice like the Wood's reckoning.
+- [ ] **Structured verdict** — the judge lists `winner` in `output_extra_fields`
+  and runs `handler: judged-competition` (or a ground-truth subclass), so the
+  verdict carries `payload.winner` as data, not prose.
+- [ ] **Reveal text** — the verdict reads as an *ending*. Hidden-info games attach a
+  `reveal: [{agent, secret, role}]` payload (the banner renders it); judged games
+  make the verdict prose name and justify the winner.
+
+### The `competition` block, one example per kind
+
+**`versus` with teams** — asymmetric sides; ground truth decided in code
+(`config/scenarios/the-steeped.yaml`, scored by the `spy-host` handler):
+
+```yaml
+competition:
+  kind: versus
+  teams:
+    spy: [spy-nil]
+    herd: [spy-cara, spy-bex, spy-ovo]
+```
+
+**`versus` with symmetric seats** ([ADR-0030](../adr/0030-arena-scenarios-and-offline-winners.md)) —
+identical manifests, different models; the cleanest "which model plays better" arena
+(`config/scenarios/debate-duel.yaml`):
+
+```yaml
+competition:
+  kind: versus
+  symmetric_seats:
+    - debater-a
+    - debater-b
+```
+
+**`judged`** — a judge names the winning *agent* via its verdict's `winner` field
+(`config/scenarios/mystery-roots.yaml`, `open-table.yaml`):
+
+```yaml
+competition:
+  kind: judged
+```
+
+**`none`** — collaborative or showcase; full session and history, no winner, no
+leaderboard rows (`config/scenarios/thousand-token-wood.yaml`, `oracle-grove.yaml`):
+
+```yaml
+competition:
+  kind: none
+```
+
+The eight shipped scenarios, for orientation: 🕵 The Steeped (versus, teams,
+ground-truth `SpyHost`) · ❓ Twenty Sprouts (versus, teams, ground-truth
+`SproutJudge`) · ⚔️ Debate Duel (versus, symmetric seats) · 🎭 Beat Battle (versus,
+symmetric seats) · 🔍 Mystery Roots (judged) · 💬 Open Table (judged) · 🍄 Thousand
+Token Wood (none) · 🔮 Oracle Grove (none, tool-use showcase).
+
+### The checklist is enforced, not aspirational
+
+`tests/test_scenario_contract.py` loads every YAML under `config/scenarios/` and
+composes a full `WorldConfig` (this matters — the cross-cast competition rules, e.g.
+team/seat members must be in the cast and team labels must not collide with agent
+names, run on `WorldConfig`, **not** on the per-file `validate_scenario` path). It
+then asserts:
+
+- an **explicit** `competition` block is present on every shipped scenario;
+- `judged`/`versus` scenarios include a cast member with `role: judge` that emits
+  `judge.verdict` (a *test-level* check — the schema stays permissive so a partial
+  world from the Lab still validates);
+- every team member and symmetric seat is in the scenario's `cast`;
+- symmetric seats are *actually* symmetric — their manifests are identical except
+  `name`, `hue`, `archetype`, `model_profile`, and `model_endpoint`, so a seat win
+  measures the model, not a stacked persona.
+
+```bash
+uv run pytest tests/test_scenario_contract.py -q   # your scenario is arena-grade when this is green
+```
+
+If your scenario fails the judge check but genuinely has no winner, the fix is one
+line: say `kind: none` and mean it.

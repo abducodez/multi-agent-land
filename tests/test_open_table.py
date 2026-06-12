@@ -32,10 +32,12 @@ class TestOpenTableRegistry:
         assert "open-table" in reg.scenarios
         assert {"chat-curious", "chat-skeptic", "chat-host"} <= set(reg.agents)
 
-    def test_scenario_builds_with_three_manifest_agents(self):
+    def test_scenario_builds_with_its_manifest_cast(self):
         reg = default_registry()
         sc = reg.build_scenario("open-table")
-        assert [a.name for a in sc.agents] == ["chat-curious", "chat-skeptic", "chat-host"]
+        # The three conversational voices plus the table-judge that names the most
+        # persuasive of them at the end (the arena verdict, ADR-0029).
+        assert [a.name for a in sc.agents] == ["chat-curious", "chat-skeptic", "chat-host", "table-judge"]
         assert all(isinstance(a, ManifestAgent) for a in sc.agents)
         assert sc.goal
 

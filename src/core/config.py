@@ -80,51 +80,68 @@ class GovernorConfig(BaseModel):
 
 # ── competition ──────────────────────────────────────────────────────────────────
 
-
 class CompetitionConfig(BaseModel):
     """Declares whether — and how — a scenario produces a winner (ADR-0029).
 
-    A scenario can be a ``versus`` contest between named teams, a ``judged`` pick
-    where the judge's verdict *is* the result, or ``none`` (the default) where
-    nobody wins.  ``winner`` downstream carries either an agent name or a team
-    label, so the team labels here must stay distinct from agent names — that
-    cross-cast check lives in :meth:`WorldConfig._check_cast_references`, while the
-    rules a competition can enforce on its own (team shape, disjointness) live in
-    the validator below.
+    A scenario can be a ``versus`` contest — between named ``teams`` (asymmetric
+    sides, e.g. The Steeped's spy vs herd) or between ``symmetric_seats`` (identical
+    seats that differ only by model, e.g. Debate Duel / Beat Battle — the comparison
+    that makes the model-leaderboard meaningful) — a ``judged`` pick where the
+    judge's verdict *is* the result, or ``none`` (the default) where nobody wins.
+    ``winner`` downstream carries either an agent name or a team label, so the team
+    labels here must stay distinct from agent names — that cross-cast check lives in
+    :meth:`WorldConfig._check_cast_references`, while the rules a competition can
+    enforce on its own (team shape, disjointness, seat count) live in the validator
+    below.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["versus", "judged", "none"] = "none"
-    """How a winner is derived — ``versus`` (team contest), ``judged`` (the judge's
-    pick is the answer), or ``none`` (no winner; the default and the absent block)."""
+    """How a winner is derived — ``versus`` (team or seat contest), ``judged`` (the
+    judge's pick is the answer), or ``none`` (no winner; the default and the absent
+    block)."""
 
     teams: dict[str, list[str]] | None = None
     """Team label → member agent names.  Permitted only when ``kind == 'versus'``."""
+
+    symmetric_seats: list[str] | None = None
+    """Cast members occupying *identical* seats that differ only by which model fills
+    them — the "which model argues better" comparison.  ``versus`` only; needs ≥2
+    entries.  An alternative to ``teams`` (a versus scenario declares one or the other)."""
 
     @model_validator(mode="after")
     def _check_teams(self) -> "CompetitionConfig":
         if self.kind != "versus":
             if self.teams is not None:
                 raise ValueError(f"competition.teams is only allowed when kind is 'versus' (got kind={self.kind!r})")
+            if self.symmetric_seats is not None:
+                raise ValueError(
+                    f"competition.symmetric_seats is only allowed when kind is 'versus' (got kind={self.kind!r})"
+                )
             return self
-        # kind == "versus": teams are required and must describe a real contest.
-        if not self.teams:
-            raise ValueError("competition.kind 'versus' requires a non-empty 'teams' mapping")
-        empty = [label for label, members in self.teams.items() if not members]
-        if empty:
-            raise ValueError(f"competition.teams has empty member lists for teams: {sorted(empty)}")
-        seen: dict[str, str] = {}
-        overlap: set[str] = set()
-        for label, members in self.teams.items():
-            for member in members:
-                if member in seen and seen[member] != label:
-                    overlap.add(member)
-                seen[member] = label
-        if overlap:
-            raise ValueError(
-                f"competition.teams must be mutually disjoint; agents on more than one team: {sorted(overlap)}"
-            )
+        # kind == "versus": the contest is described by teams OR symmetric_seats.
+        if self.teams is None and self.symmetric_seats is None:
+            raise ValueError("competition.kind 'versus' requires either a 'teams' mapping or 'symmetric_seats'")
+        if self.symmetric_seats is not None and len(self.symmetric_seats) < 2:
+            raise ValueError("competition.symmetric_seats needs ≥2 entries to be a contest")
+        if self.teams is not None:
+            if not self.teams:
+                raise ValueError("competition.kind 'versus' requires a non-empty 'teams' mapping")
+            empty = [label for label, members in self.teams.items() if not members]
+            if empty:
+                raise ValueError(f"competition.teams has empty member lists for teams: {sorted(empty)}")
+            seen: dict[str, str] = {}
+            overlap: set[str] = set()
+            for label, members in self.teams.items():
+                for member in members:
+                    if member in seen and seen[member] != label:
+                        overlap.add(member)
+                    seen[member] = label
+            if overlap:
+                raise ValueError(
+                    f"competition.teams must be mutually disjoint; agents on more than one team: {sorted(overlap)}"
+                )
         return self
 
 
@@ -150,7 +167,10 @@ class ScenarioConfig(BaseModel):
     governor: GovernorConfig | None = None
 
     competition: CompetitionConfig | None = None
-    """Optional winner contract (ADR-0029); absent == ``none`` (no winner)."""
+    """Optional winner contract (ADR-0029); absent == ``none`` (no winner).  The
+    authoring checklist (``tests/test_scenario_contract.py``) requires an explicit
+    block on every *shipped* scenario, but the schema stays permissive so a partial
+    world from the Lab/an LLM still validates."""
 
 
 # ── the whole world ──────────────────────────────────────────────────────────────
@@ -182,19 +202,22 @@ class WorldConfig(BaseModel):
                     f"Defined agents: {sorted(defined)}"
                 )
             competition = scenario.competition
-            if competition is None or competition.teams is None:
+            if competition is None:
                 continue
-            # Every team member must be in this scenario's cast (ADR-0029 §1).
             cast = set(scenario.cast)
-            off_cast = sorted({m for members in competition.teams.values() for m in members if m not in cast})
+            # Every team member AND every symmetric seat must be in this scenario's
+            # cast (ADR-0029 §1).
+            members = {m for members in (competition.teams or {}).values() for m in members}
+            members.update(competition.symmetric_seats or [])
+            off_cast = sorted(m for m in members if m not in cast)
             if off_cast:
                 raise ValueError(
-                    f"scenario {scenario.name!r} competition team members not in its cast: {off_cast}. "
+                    f"scenario {scenario.name!r} competition members not in its cast: {off_cast}. "
                     f"Cast: {sorted(cast)}"
                 )
             # A team label must not collide with any agent name, or the winner union
             # (agent name OR team label) becomes ambiguous (ADR-0029 §1).
-            collisions = sorted(label for label in competition.teams if label in defined)
+            collisions = sorted(label for label in (competition.teams or {}) if label in defined)
             if collisions:
                 raise ValueError(
                     f"scenario {scenario.name!r} competition team labels collide with agent names: {collisions}. "

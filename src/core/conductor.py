@@ -136,6 +136,12 @@ class Conductor:
         obs.set_context(run_id=self.run_id, turn=self.turn)
         obs.log("run.started", run_id=self.run_id, seed=seed, goal=goal, scenario=scenario_name)
         payload: dict = {"seed": seed, "goal": goal, "scenario": scenario_name, "cast": cast}
+        # Stamp the arena contract so the run is self-describing forever (ADR-0029):
+        # the leaderboard reads competition.kind to know which runs produce winners
+        # and how to attribute them.  None (legacy/test scenarios) behaves like 'none'.
+        competition = getattr(self.scenario, "competition", None)
+        if competition is not None:
+            payload["competition"] = competition.model_dump()
         if self.session_id:
             payload["session_id"] = self.session_id
         genesis_start = Event(
