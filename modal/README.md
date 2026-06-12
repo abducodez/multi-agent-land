@@ -38,7 +38,7 @@ Each running endpoint also self-documents at `/docs` (Swagger UI) and
 | Provider | App            | Model                                   | Endpoint name         | GPU     |
 | -------- | -------------- | --------------------------------------- | --------------------- | ------- |
 | NVIDIA   | `nvidia-llms`  | NVIDIA-Nemotron-3-Nano-30B-A3B-BF16     | `nemotron-3-nano-30b` | H200:1  |
-| NVIDIA   | `nvidia-llms`  | Nemotron-Cascade-14B-Thinking           | `nemotron-cascade-14b-thinking` | L40S:1  |
+| NVIDIA   | `nvidia-llms`  | Nemotron-Cascade-14B-Thinking           | `nemotron-cascade-14b`          | L40S:1  |
 | NVIDIA   | `nvidia-llms`  | NVIDIA-Nemotron-3-Nano-4B-BF16          | `nemotron-3-nano-4b`  | L4:1    |
 | OpenBMB  | `openbmb-llms` | MiniCPM-o-4_5 (omni)                    | `minicpm-o-4-5`       | L40S:1  |
 | OpenBMB  | `openbmb-llms` | MiniCPM4.1-8B                           | `minicpm-4-1-8b`      | L40S:1  |
