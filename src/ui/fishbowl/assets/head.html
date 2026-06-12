@@ -23,3 +23,112 @@
   href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;500;600;700;800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400;1,500&display=swap"
   rel="stylesheet"
 />
+
+<!-- FISHBOWL — live feed auto-follow + "jump to live" pill.
+
+     The narrator feed (and the feed-layout stage) is a gr.HTML island whose inner
+     content is fully replaced on every transport tick/scrub. A fresh node starts at
+     scrollTop 0, so without help the newest line sits below the fold and the feed
+     appears frozen on the oldest message while the show plays. This script:
+
+       • pins the feed to the latest line while the viewer is reading live (auto-follow);
+       • when the viewer scrolls UP to read history, stops following and reveals a
+         floating "jump to live" pill instead of yanking them back down;
+       • preserves the exact reading position across re-renders (older lines keep their
+         offset; new lines are appended below), so scrolling back stays put.
+
+     Pure DOM, no dependencies; idempotent and resilient to Gradio's island swaps. -->
+<script>
+  (function () {
+    var THRESHOLD = 48; // px from the bottom that still counts as "at the live edge"
+    var PANELS = ["feed-html", "stage-html"]; // the rail feed + the feed-layout stage
+
+    function scroller(panel) {
+      return panel.querySelector(".feed.scroll") || panel.querySelector(".feed");
+    }
+
+    function ensureButton(panel) {
+      panel.style.position = "relative";
+      var btn = panel.querySelector(":scope > .feed-jump");
+      if (!btn) {
+        btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "feed-jump";
+        btn.setAttribute("aria-label", "Jump to the latest message");
+        btn.innerHTML =
+          '<span class="fj-pulse"></span>' +
+          '<span class="fj-label">live</span>' +
+          '<span class="fj-arrow" aria-hidden="true">&#8595;</span>';
+        btn.addEventListener("click", function () {
+          panel.__pinned = true;
+          var sc = scroller(panel);
+          if (sc) sc.scrollTop = sc.scrollHeight;
+          refresh(panel);
+        });
+        panel.appendChild(btn);
+      }
+      return btn;
+    }
+
+    function refresh(panel) {
+      var sc = scroller(panel);
+      var btn = ensureButton(panel);
+      if (!sc) {
+        btn.classList.remove("show");
+        return;
+      }
+      if (panel.__pinned == null) panel.__pinned = true;
+      if (panel.__pinned) {
+        sc.scrollTop = sc.scrollHeight; // follow the live edge
+      } else if (panel.__lastTop != null) {
+        // older lines keep their offset across the swap, so restoring scrollTop keeps
+        // the viewer parked on the same message they were reading.
+        sc.scrollTop = Math.min(panel.__lastTop, sc.scrollHeight);
+      }
+      var dist = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
+      btn.classList.toggle("show", !panel.__pinned && dist > THRESHOLD);
+    }
+
+    function bindScroll(panel) {
+      var sc = scroller(panel);
+      if (!sc || sc.__fjBound) return;
+      sc.__fjBound = true;
+      sc.addEventListener(
+        "scroll",
+        function () {
+          panel.__lastTop = sc.scrollTop;
+          var dist = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
+          panel.__pinned = dist <= THRESHOLD;
+          ensureButton(panel).classList.toggle("show", !panel.__pinned && dist > THRESHOLD);
+        },
+        { passive: true }
+      );
+    }
+
+    function manage(panel) {
+      if (panel.__fjManaged) return;
+      panel.__fjManaged = true;
+      panel.__pinned = true;
+      ensureButton(panel);
+      bindScroll(panel);
+      refresh(panel);
+      new MutationObserver(function () {
+        bindScroll(panel);
+        refresh(panel);
+      }).observe(panel, { childList: true, subtree: true });
+    }
+
+    function sweep() {
+      for (var i = 0; i < PANELS.length; i++) {
+        var panel = document.getElementById(PANELS[i]);
+        if (panel) manage(panel);
+      }
+    }
+
+    // The islands mount after Gradio boots and may remount on tab switches; keep a light
+    // poll so newly-mounted feed panels get adopted (manage() is idempotent).
+    setInterval(sweep, 800);
+    if (document.readyState !== "loading") sweep();
+    else document.addEventListener("DOMContentLoaded", sweep);
+  })();
+</script>

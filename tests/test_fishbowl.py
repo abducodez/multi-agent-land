@@ -74,6 +74,22 @@ class TestAdapter:
         assert adapter.model_tier("balanced") == "mid"
         assert adapter.model_tier("strong") == "deep"
 
+    def test_agent_model_falls_back_to_profile_without_endpoint(self):
+        class NoEndpoint:
+            name, role, model_profile, model_endpoint = "echo", "worker", "balanced", None
+
+        assert adapter.agent_model(NoEndpoint()) == "balanced"
+        assert adapter.agent_tier(NoEndpoint()) == "mid"
+
+    def test_agent_model_honours_endpoint_override(self):
+        # An unknown/offline catalogue key degrades to the raw key (never blank), and the
+        # tier still falls back to the declared profile — the Show stays honest offline.
+        class WithEndpoint:
+            name, role, model_profile, model_endpoint = "pocket", "worker", "fast", "no-such-key"
+
+        assert adapter.agent_model(WithEndpoint()) == "no-such-key"
+        assert adapter.agent_tier(WithEndpoint()) == "fast"
+
     def test_mood_normalization(self):
         assert adapter.normalize_mood("panic") == "panic"
         assert adapter.normalize_mood("curious") == "calm"
@@ -117,6 +133,10 @@ class TestViewModel:
         assert vm["scene"] == "the wood wakes"
         pa = next(c for c in vm["cast"] if c["id"] == "pocket-actor")
         assert pa["said"] == "I want the moon" and pa["thought"] == "scared" and pa["mood"] == "panic"
+        # Every card carries the model it is running (profile name when it routes by
+        # profile) so the Show can badge each agent with its model.
+        assert all(c["model"] for c in vm["cast"])
+        assert pa["model"] == pa["model_profile"]  # no endpoint override → profile name
         kinds = {f["kind"] for f in vm["feed"]}
         assert {"narrate", "say", "poke", "verdict"} <= kinds  # run.started omitted
         assert vm["verdict"]["text"] == "keep it"

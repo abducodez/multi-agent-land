@@ -73,6 +73,58 @@ def model_tier(profile: str) -> str:
     return _PROFILE_TIER.get(profile, "mid")
 
 
+def _endpoint_entry(endpoint: str) -> dict | None:
+    """The Modal catalogue entry for a casting key, or None (offline/unknown-safe)."""
+    from src.models import modal_catalogue
+
+    try:
+        return modal_catalogue.entry_by_key(endpoint)
+    except Exception:  # pragma: no cover - catalogue is import-safe, belt-and-suspenders
+        return None
+
+
+def model_label(endpoint: str) -> str:
+    """A short, human-readable model name for a Modal catalogue casting key.
+
+    Resolves the key to its ``served_model_id`` and shows just the model name (the part
+    after the ``org/`` prefix), e.g. ``minicpm-4-1-8b`` → ``MiniCPM4-8B``.  An unknown key
+    (or an unavailable catalogue) degrades to the raw key so the card is never blank.
+    """
+    entry = _endpoint_entry(endpoint)
+    if entry is None:
+        return endpoint
+    served = str(entry.get("served_model_id") or "")
+    short = served.rsplit("/", 1)[-1] if served else ""
+    return short or endpoint
+
+
+def agent_model(manifest) -> str:
+    """The model an agent is actually running, for the Show's model badge.
+
+    Honours the ADR-0022 ``model_endpoint`` override — the concrete catalogue model the
+    cast member is bound to — and falls back to the ``model_profile`` tier name when the
+    agent routes purely by profile.
+    """
+    endpoint = getattr(manifest, "model_endpoint", None)
+    if endpoint:
+        return model_label(str(endpoint))
+    return manifest.model_profile
+
+
+def agent_tier(manifest) -> str:
+    """The tier dot colour key for an agent, following its real model.
+
+    When the agent overrides its profile with a catalogue endpoint, the dot reflects that
+    model's own profile; otherwise it reflects the declared ``model_profile``.
+    """
+    endpoint = getattr(manifest, "model_endpoint", None)
+    if endpoint:
+        entry = _endpoint_entry(str(endpoint))
+        if entry and entry.get("profile"):
+            return model_tier(str(entry["profile"]))
+    return model_tier(manifest.model_profile)
+
+
 # ── moods + voices ──────────────────────────────────────────────────────────────
 
 
