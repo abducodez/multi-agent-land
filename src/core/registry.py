@@ -239,6 +239,13 @@ class Registry:
 
         memory_index = memory_index_from_env()
         agents = tuple(self.build_agent(agent_name, router, tools, memory_index) for agent_name in cfg.cast)
+        # Inject the scenario's competition context (ADR-0029) — the same single-attribute
+        # seam as ``agent.manifest``.  This is the only scenario-level fact an agent sees:
+        # it lets a judge validate its winner against the cast and a versus handler attribute
+        # the win to a team.  Absent block == no competition, so the hook stays inert.
+        for agent in agents:
+            agent.competition = cfg.competition
+            agent.cast_names = list(cfg.cast)
         obs.log(
             "registry.cast_assembled",
             scenario=cfg.name,

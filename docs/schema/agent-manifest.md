@@ -63,6 +63,10 @@ output_extra_fields: []        # extra payload fields the model is asked for, e.
 - **`handler`** stays `null` for the common case (the generic `ManifestAgent`).
   Set it to a key registered via `@register_handler` for agents that call tools or
   need custom prompt logic; the YAML still supplies all declarative fields.
+- **`output_extra_fields`** entries are required strings, except the well-known
+  typed names `winner` and `scores` (optional, engine-typed — ADR-0029).  A judge in
+  a competition scenario lists them to make its verdict machine-readable; see
+  [structured-output.md](../architecture/structured-output.md#well-known-typed-fields).
 - **`memory.*`** layers are pure views over the ledger — see
   [memory-stack.md](../architecture/memory-stack.md).
 

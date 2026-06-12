@@ -56,7 +56,14 @@ class RunSummary(BaseModel):
     finished_at: datetime | None = None
     reason: str | None = None
     winner: str | None = None
+    winner_kind: str | None = None
+    """Whether ``winner`` names a cast agent (``"agent"``) or a team label
+    (``"team"``); ``None`` for runs with no competition or no winner (ADR-0029)."""
     winning_model: str | None = None
+    winning_models: list[str] = Field(default_factory=list)
+    """Endpoint(s) behind the winner — the agent's model, or every member of a
+    winning team (``None`` entries dropped).  ``winning_model`` stays the single
+    agent-winner endpoint for back-compat."""
     turns: int = 0
     tokens: int = 0
 
@@ -88,7 +95,9 @@ def _apply_finished(summary: RunSummary, event: Event) -> None:
     payload = event.payload
     summary.reason = payload.get("reason")
     summary.winner = payload.get("winner")
+    summary.winner_kind = payload.get("winner_kind")
     summary.winning_model = payload.get("winning_model")
+    summary.winning_models = list(payload.get("winning_models") or [])
     summary.turns = int(payload.get("turns", 0) or 0)
     summary.tokens = int(payload.get("tokens", 0) or 0)
     summary.finished_at = event.created_at

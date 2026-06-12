@@ -115,11 +115,15 @@ class FishbowlSession:
     def finalize(self, reason: str) -> None:
         """Close the current run with a ``run.finished`` event (idempotent-safe).
 
-        On a verdict we derive ``winner`` from the judge's ruling (best-effort: the
-        ``winner`` payload key when present) and ``winning_model`` from the run.started
-        cast map; both fall back to ``None`` when unknown."""
+        On a verdict we derive ``winner`` from the judge's ruling and resolve its kind
+        (ADR-0029): a cast agent name → ``winner_kind: "agent"`` with that agent's
+        ``winning_model``; a team label → ``winner_kind: "team"`` with every member's
+        endpoint in ``winning_models`` (``winning_model`` left ``None``, never guessed).
+        All fall back to ``None`` / empty when unknown."""
         winner: str | None = None
+        winner_kind: str | None = None
         winning_model: str | None = None
+        winning_models: list[str] = []
         run_events = self.conductor.ledger.events_for_run(self.conductor.run_id)
         if reason == "verdict":
             verdict = next((e for e in reversed(run_events) if e.kind == "judge.verdict"), None)
@@ -128,8 +132,26 @@ class FishbowlSession:
             if winner:
                 started = next((e for e in run_events if e.kind == "run.started"), None)
                 cast = (started.payload.get("cast") or {}) if started is not None else {}
-                winning_model = (cast.get(winner) or {}).get("model_endpoint")
-        self.conductor.finalize(reason, winner=winner, winning_model=winning_model)
+                scenario = self._registry.scenarios.get(self._scenario_name)
+                teams = getattr(getattr(scenario, "competition", None), "teams", None) or {}
+                if winner in cast:
+                    winner_kind = "agent"
+                    winning_model = (cast.get(winner) or {}).get("model_endpoint")
+                    winning_models = [winning_model] if winning_model else []
+                elif winner in teams:
+                    winner_kind = "team"
+                    winning_models = [
+                        endpoint
+                        for member in teams[winner]
+                        if (endpoint := (cast.get(member) or {}).get("model_endpoint"))
+                    ]
+        self.conductor.finalize(
+            reason,
+            winner=winner,
+            winner_kind=winner_kind,
+            winning_model=winning_model,
+            winning_models=winning_models,
+        )
 
     @property
     def cast(self) -> list[AgentManifest]:

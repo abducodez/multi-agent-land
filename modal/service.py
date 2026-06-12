@@ -80,6 +80,13 @@ JSON_LOGS = os.environ.get("MODAL_LLM_JSON_LOGS", "").lower() in ("1", "true", "
 # config applies the same level). Read at deploy time and baked into the image.
 LOG_LEVEL = os.environ.get("MODAL_LLM_LOG_LEVEL", "INFO").upper()
 
+# Demo-day switch: keep N containers warm for every *profile-bound* model (the
+# tiers the cast actually runs on), removing their cold starts entirely for the
+# duration of the deploy. Specialists keep scale-to-zero. Costs GPU-hours while
+# deployed — turn it on right before a live demo, redeploy without it after:
+#   MODAL_LLM_KEEP_WARM=1 modal deploy modal/app_nvidia.py
+KEEP_WARM = int(os.environ.get("MODAL_LLM_KEEP_WARM", "0") or "0")
+
 # Where the structured-logging module + its generated config live in the
 # container. The module dir goes on PYTHONPATH so vLLM can import the formatter
 # the dictConfig references (``vllm_logging.JsonFormatter``).
@@ -139,6 +146,12 @@ def build_image(cfg: ModelConfig) -> modal.Image:
             .env({"PYTHONPATH": _LOG_MODULE_DIR})
             .env({"MODAL_LLM_JSON_LOGS": "1", "MODAL_LLM_LOG_LEVEL": LOG_LEVEL})
         )
+    if cfg.gpu_snapshot:
+        # Snapshot prerequisites: VLLM_SERVER_DEV_MODE exposes the /sleep and
+        # /wake_up endpoints the snapshot lifecycle drives, and single-threaded
+        # inductor compilation keeps torch.compile artifacts snapshot-safe
+        # (Modal's documented vLLM + GPU-snapshot recipe).
+        image = image.env({"VLLM_SERVER_DEV_MODE": "1", "TORCHINDUCTOR_COMPILE_THREADS": "1"})
     if cfg.extra_pip:
         image = image.uv_pip_install(*cfg.extra_pip)
     if cfg.env:
@@ -204,6 +217,10 @@ def build_command(cfg: ModelConfig) -> list[str]:
         cmd += ["--tool-call-parser", cfg.tool_call_parser]
     if cfg.mm_limits:
         cmd += ["--limit-mm-per-prompt", json.dumps(cfg.mm_limits)]
+    if cfg.gpu_snapshot:
+        # Sleep mode lets the snapshot lifecycle offload weights to host RAM
+        # (sleep level 1) before the memory snapshot is taken, then wake on restore.
+        cmd += ["--enable-sleep-mode"]
     cmd += list(cfg.extra_vllm_args)
     return cmd
 
@@ -211,12 +228,19 @@ def build_command(cfg: ModelConfig) -> list[str]:
 # --- Endpoint registration ------------------------------------------------------
 
 
-def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
+def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function | type:
     """Attach one model to ``app`` as an autoscaling, OpenAI-compatible endpoint.
 
-    The function is serialized (its prebuilt ``vllm serve`` argv is shipped to
-    the container), which lets us register many distinctly-named endpoints from
-    a simple loop without each needing a hand-written module-level function.
+    Dispatches on ``cfg.gpu_snapshot``: the default path is a serialized
+    ``@app.function`` web server; snapshot models use a class-based lifecycle
+    (load → warm up → sleep → snapshot) so later cold starts restore in seconds
+    instead of re-paying download + load + warmup. Both paths publish the same
+    URL shape (``…--<app>-<endpoint_name>.modal.run``), so clients can't tell
+    them apart.
+
+    Everything is serialized (the prebuilt ``vllm serve`` argv is shipped to the
+    container), which lets us register many distinctly-named endpoints from a
+    simple loop without each needing a hand-written module-level function.
     """
     image = build_image(cfg)
     cmd = build_command(cfg)
@@ -227,10 +251,27 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
         # Exposes VLLM_API_KEY in the container; vLLM then enforces bearer auth.
         secrets.append(modal.Secret.from_name(API_KEY_SECRET_NAME))
 
+    # Demo-day keep-warm: pin warm containers for the tier-bound models only —
+    # specialists keep scale-to-zero (see KEEP_WARM above).
+    min_containers = cfg.min_containers
+    if KEEP_WARM and cfg.profile:
+        min_containers = max(min_containers, KEEP_WARM)
+
     # Autoscale at the target, but let a hot container absorb a burst up to the
     # hard max before another cold-starts (Modal high-perf-inference guidance).
     # Default the target to ~75% of the ceiling so we scale out before saturating.
     target_inputs = cfg.target_concurrent_inputs or max(1, (cfg.max_concurrent_inputs * 3) // 4)
+
+    if cfg.gpu_snapshot:
+        return _register_snapshot_model(
+            app,
+            cfg,
+            image=image,
+            cmd=cmd,
+            secrets=secrets,
+            min_containers=min_containers,
+            target_inputs=target_inputs,
+        )
 
     function_kwargs = dict(
         name=cfg.endpoint_name,
@@ -239,7 +280,7 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
         volumes={HF_CACHE_PATH: hf_cache_vol, VLLM_CACHE_PATH: vllm_cache_vol},
         secrets=secrets,
         scaledown_window=cfg.scaledown_window,
-        min_containers=cfg.min_containers,
+        min_containers=min_containers,
         timeout=cfg.request_timeout,
         serialized=True,
     )
@@ -268,6 +309,138 @@ def register_model(app: modal.App, cfg: ModelConfig) -> modal.Function:
         subprocess.Popen(cmd, env=env)
 
     return serve
+
+
+def _class_name(slug: str) -> str:
+    """Modal class name for an endpoint slug: ``nemotron-3-nano-4b`` → ``Nemotron3Nano4b``."""
+    return "".join(part.capitalize() for part in slug.replace("_", "-").split("-") if part) or "SnapshotServer"
+
+
+def _register_snapshot_model(
+    app: modal.App,
+    cfg: ModelConfig,
+    *,
+    image: modal.Image,
+    cmd: list[str],
+    secrets: list[modal.Secret],
+    min_containers: int,
+    target_inputs: int,
+) -> type:
+    """Snapshot serving path — Modal's vLLM + GPU-memory-snapshot recipe.
+
+    First boot: start vLLM, wait for the port, run a few warmup completions so
+    compiled artifacts and caches are resident, put the engine to sleep (weights
+    offloaded to host RAM, KV cache dropped), and let Modal snapshot the
+    container (CPU + GPU state). Every later cold start restores the snapshot
+    and wakes the engine — seconds instead of minutes. The web URL label is
+    pinned to ``cfg.endpoint_name`` so the public URL is identical to the plain
+    function path (``…--<app>-<endpoint_name>.modal.run``).
+    """
+    served_name = cfg.served_name
+
+    # Helpers are nested (not module-level) on purpose: the class ships to the
+    # container via cloudpickle (``serialized=True``), and closures are pickled
+    # by value — a module-level helper would be pickled by reference to the
+    # ``service`` module, which doesn't exist inside the container.
+    def _headers() -> dict[str, str]:
+        import os
+
+        key = os.environ.get("VLLM_API_KEY")
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+    def _wait_ready(proc) -> None:
+        # vLLM opens the port only once the engine is initialized, so a
+        # successful connect means "ready", not just "listening".
+        import socket
+        import time
+
+        while True:
+            try:
+                socket.create_connection(("localhost", VLLM_PORT), timeout=1).close()
+                return
+            except OSError:
+                if proc.poll() is not None:
+                    raise RuntimeError(f"vllm exited with code {proc.returncode}")
+                time.sleep(0.2)
+
+    def _post(path: str, json_body: dict | None = None, timeout: float = 300.0) -> None:
+        import requests  # vLLM dependency, always present in the image
+
+        url = f"http://localhost:{VLLM_PORT}{path}"
+        requests.post(url, headers=_headers(), json=json_body, timeout=timeout).raise_for_status()
+
+    class _SnapshotServer:
+        @modal.enter(snap=True)
+        def start(self):
+            import os
+            import subprocess
+
+            env = dict(os.environ)
+            # Same structured-logging hook as the plain path (see ``serve``).
+            if env.get("MODAL_LLM_JSON_LOGS", "").lower() in ("1", "true", "yes"):
+                import vllm_logging
+
+                vllm_logging.write_config(_LOG_CONFIG_PATH, level=env.get("MODAL_LLM_LOG_LEVEL", "INFO"))
+                env["VLLM_LOGGING_CONFIG_PATH"] = _LOG_CONFIG_PATH
+
+            self.vllm_proc = subprocess.Popen(cmd, env=env)
+            _wait_ready(self.vllm_proc)
+            # Touch the full serving path so compile/caching work happens *before*
+            # the snapshot rather than on the first real request after restore.
+            warmup = {
+                "model": served_name,
+                "messages": [{"role": "user", "content": "Who tends the wood?"}],
+                "max_tokens": 8,
+            }
+            for _ in range(3):
+                _post("/v1/chat/completions", json_body=warmup)
+            # Offload weights to host RAM (sleep level 1); Modal snapshots the
+            # container right after the snap=True enters return.
+            _post("/sleep?level=1", timeout=120.0)
+
+        @modal.enter(snap=False)
+        def wake(self):
+            # Runs after every restore (and on the snapshot-creating boot itself,
+            # which simply resumes serving): reload weights onto the GPU.
+            _post("/wake_up", timeout=120.0)
+            _wait_ready(self.vllm_proc)
+
+        @modal.web_server(port=VLLM_PORT, startup_timeout=cfg.startup_timeout, label=cfg.endpoint_name)
+        def serve(self):
+            pass  # vLLM (already running) is the web server; Modal just exposes the port.
+
+        @modal.exit()
+        def stop(self):
+            proc = getattr(self, "vllm_proc", None)
+            if proc is not None:
+                proc.terminate()
+
+    # One Modal class per model, named after the endpoint (App.cls has no name
+    # override, so rename the type before decorating).
+    name = _class_name(cfg.endpoint_name)
+    _SnapshotServer.__name__ = name
+    _SnapshotServer.__qualname__ = name
+
+    cls_kwargs = dict(
+        image=image,
+        gpu=cfg.gpu,
+        volumes={HF_CACHE_PATH: hf_cache_vol, VLLM_CACHE_PATH: vllm_cache_vol},
+        secrets=secrets,
+        scaledown_window=cfg.scaledown_window,
+        min_containers=min_containers,
+        timeout=cfg.request_timeout,
+        # Bounds the whole snap=True phase (download + load + warmup + sleep).
+        startup_timeout=cfg.startup_timeout,
+        serialized=True,
+        enable_memory_snapshot=True,
+        # GPU snapshots are Modal-alpha; scoped per model via cfg.gpu_snapshot.
+        experimental_options={"enable_gpu_snapshot": True},
+    )
+    if cfg.buffer_containers:
+        cls_kwargs["buffer_containers"] = cfg.buffer_containers
+
+    concurrent = modal.concurrent(max_inputs=cfg.max_concurrent_inputs, target_inputs=target_inputs)
+    return app.cls(**cls_kwargs)(concurrent(_SnapshotServer))
 
 
 def register_all(app: modal.App, configs: Iterable[ModelConfig]) -> None:

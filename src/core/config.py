@@ -16,7 +16,10 @@ to "emit JSON, validate it, run it."  See ADR-0011.
 The agent schema itself is :class:`AgentManifest` (``src/core/manifest.py``) — we
 reuse it here rather than duplicating, so the four stable contracts stay singular.
 """
+
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -75,6 +78,56 @@ class GovernorConfig(BaseModel):
     hourly_budget_usd: float | None = None
 
 
+# ── competition ──────────────────────────────────────────────────────────────────
+
+
+class CompetitionConfig(BaseModel):
+    """Declares whether — and how — a scenario produces a winner (ADR-0029).
+
+    A scenario can be a ``versus`` contest between named teams, a ``judged`` pick
+    where the judge's verdict *is* the result, or ``none`` (the default) where
+    nobody wins.  ``winner`` downstream carries either an agent name or a team
+    label, so the team labels here must stay distinct from agent names — that
+    cross-cast check lives in :meth:`WorldConfig._check_cast_references`, while the
+    rules a competition can enforce on its own (team shape, disjointness) live in
+    the validator below.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["versus", "judged", "none"] = "none"
+    """How a winner is derived — ``versus`` (team contest), ``judged`` (the judge's
+    pick is the answer), or ``none`` (no winner; the default and the absent block)."""
+
+    teams: dict[str, list[str]] | None = None
+    """Team label → member agent names.  Permitted only when ``kind == 'versus'``."""
+
+    @model_validator(mode="after")
+    def _check_teams(self) -> "CompetitionConfig":
+        if self.kind != "versus":
+            if self.teams is not None:
+                raise ValueError(f"competition.teams is only allowed when kind is 'versus' (got kind={self.kind!r})")
+            return self
+        # kind == "versus": teams are required and must describe a real contest.
+        if not self.teams:
+            raise ValueError("competition.kind 'versus' requires a non-empty 'teams' mapping")
+        empty = [label for label, members in self.teams.items() if not members]
+        if empty:
+            raise ValueError(f"competition.teams has empty member lists for teams: {sorted(empty)}")
+        seen: dict[str, str] = {}
+        overlap: set[str] = set()
+        for label, members in self.teams.items():
+            for member in members:
+                if member in seen and seen[member] != label:
+                    overlap.add(member)
+                seen[member] = label
+        if overlap:
+            raise ValueError(
+                f"competition.teams must be mutually disjoint; agents on more than one team: {sorted(overlap)}"
+            )
+        return self
+
+
 # ── scenario ─────────────────────────────────────────────────────────────────────
 
 
@@ -95,6 +148,9 @@ class ScenarioConfig(BaseModel):
 
     genesis_text: str | None = None
     governor: GovernorConfig | None = None
+
+    competition: CompetitionConfig | None = None
+    """Optional winner contract (ADR-0029); absent == ``none`` (no winner)."""
 
 
 # ── the whole world ──────────────────────────────────────────────────────────────
@@ -124,6 +180,25 @@ class WorldConfig(BaseModel):
                 raise ValueError(
                     f"scenario {scenario.name!r} references undefined agents: {missing}. "
                     f"Defined agents: {sorted(defined)}"
+                )
+            competition = scenario.competition
+            if competition is None or competition.teams is None:
+                continue
+            # Every team member must be in this scenario's cast (ADR-0029 §1).
+            cast = set(scenario.cast)
+            off_cast = sorted({m for members in competition.teams.values() for m in members if m not in cast})
+            if off_cast:
+                raise ValueError(
+                    f"scenario {scenario.name!r} competition team members not in its cast: {off_cast}. "
+                    f"Cast: {sorted(cast)}"
+                )
+            # A team label must not collide with any agent name, or the winner union
+            # (agent name OR team label) becomes ambiguous (ADR-0029 §1).
+            collisions = sorted(label for label in competition.teams if label in defined)
+            if collisions:
+                raise ValueError(
+                    f"scenario {scenario.name!r} competition team labels collide with agent names: {collisions}. "
+                    f"Team labels must be distinct from agent names to keep the winner unambiguous."
                 )
         return self
 

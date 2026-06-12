@@ -55,7 +55,52 @@ class SpyHost(ManifestAgent):
         ]
         if reveal:
             event.payload["reveal"] = reveal
+        self._stamp_scoreboard(event)
         return event
+
+    def _stamp_scoreboard(self, event: Event) -> None:
+        """Score the verdict in code — the load-bearing split of ADR-0029.
+
+        The judge's prose names a suspect (``payload['winner']`` on the live path);
+        this handler turns that *accusation* into the ground-truth *result* using the
+        scenario's ``competition.teams``: the herd wins when the named player really is
+        a spy, the spy wins otherwise.  The accusation is preserved as ``accused`` and a
+        ``correct`` flag rides alongside, so the trace stays auditable.  Offline (no
+        ``winner`` field) the accusation is recovered from the verdict text, so the
+        no-API-key demo still ends on a full, deterministic scoreboard.  With no spy
+        team declared, or no recoverable accusation, the round is a ``no_contest``.
+        """
+        comp = self.competition
+        spies = set((getattr(comp, "teams", None) or {}).get("spy", []))
+        if getattr(comp, "kind", "none") != "versus" or not spies:
+            return
+        accused = event.payload.get("winner") or self._scan_accusation(str(event.payload.get("text", "")))
+        if not accused:
+            event.payload.pop("winner", None)
+            event.payload["no_contest"] = True
+            return
+        correct = accused in spies
+        event.payload["accused"] = accused
+        event.payload["correct"] = correct
+        event.payload["winner"] = "herd" if correct else "spy"
+
+    def _scan_accusation(self, text: str) -> str | None:
+        """Recover the accused player from verdict *text* — the first cast name named.
+
+        Matches each player by the distinctive tail of its agent name (``spy-cara`` →
+        ``cara``), case-insensitively, and returns the one mentioned earliest.  The host
+        itself is excluded so it never accuses the judge."""
+        low = text.lower()
+        best: str | None = None
+        best_at = len(low) + 1
+        for name in self.cast_names:
+            if name == self.name:
+                continue
+            token = name.split("-")[-1].lower()
+            at = low.find(token) if token else -1
+            if at != -1 and at < best_at:
+                best, best_at = name, at
+        return best
 
 
 @register_handler("fortune-teller")

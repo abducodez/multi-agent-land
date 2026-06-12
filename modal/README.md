@@ -71,6 +71,11 @@ sizing, and how to add models/providers or wire endpoints into the engine.
   radius; one provider's outage or redeploy never touches another.
 - **Scalable** — serverless autoscaling, input concurrency, a shared weight
   cache (pull once, warm everywhere), and per-model `min_containers` warm pools.
+- **Fast cold starts** — snapshot-enabled models (`gpu_snapshot=True`) restore a
+  pre-warmed engine from a Modal memory snapshot in seconds instead of re-paying
+  download + load + warmup; `MODAL_LLM_KEEP_WARM=1` at deploy time pins warm
+  containers for the tier models on demo day. See
+  [`docs/deploying.md` → Cold starts](docs/deploying.md#cold-starts) (ADR-0030).
 - **Extensible** — add a model = one `ModelConfig` in `catalogue.py`; add a
   provider = one `Provider` entry + one app file. The serving path is written once
   in `service.py`, and the engine picks up the new model with no edits (it reads

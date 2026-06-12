@@ -115,6 +115,12 @@ class ManifestAgent(Agent):
         self.memory_index = memory_index
         self._reflection_tracker: ReflectionTracker | None = None
         self.last_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # Scenario competition context (ADR-0029), injected by the registry when this
+        # agent is assembled into a cast.  ``None`` (the standalone default) means no
+        # competition: the verdict-validation hook is inert, so non-judged scenarios
+        # and bare-constructed agents behave exactly as before.
+        self.competition = None
+        self.cast_names: list[str] = []
         # The model behind the most recent generation, captured when the provider is
         # resolved and stamped onto the event in act()/reflection — so each line in the
         # ledger records the model that actually produced it, not just the intended one.
@@ -241,6 +247,10 @@ class ManifestAgent(Agent):
         Offline path (deterministic stub, no ``complete_structured``): append the
         JSON instruction and run the tolerant parser as before.  Token/cost usage
         is recorded from the provider in every path.
+
+        On either path, a judge's verdict in a competition scenario is run through
+        :meth:`_verify_verdict` — one corrective re-ask when the model names a winner
+        outside the cast (ADR-0029), otherwise a no-op for every other agent.
         """
         wants_thought = bool(extra_fields and "thought" in extra_fields)
         provider = self.router.for_profile(self._route_key)
@@ -248,25 +258,113 @@ class ManifestAgent(Agent):
         with obs.span("agent.resolve", **{"mal.agent": role, "mal.profile": self._route_key}):
             if hasattr(provider, "complete_structured"):
                 model = build_output_model(allowed, extra_fields)
-                try:
-                    result = provider.complete_structured(role, prompt, model)
+
+                def _structured(p: str) -> dict | None:
+                    """One structured generation: a usable payload, or None to fall back."""
+                    try:
+                        result = provider.complete_structured(role, p, model)
+                    except Exception:
+                        self.last_usage = dict(provider.last_usage)
+                        return None  # structured failed — caller falls through to prose
                     self.last_usage = dict(provider.last_usage)
                     payload = self._with_reasoning(result.model_dump(), provider, "", wants_thought)
-                    if is_usable_line(payload.get("text", "")):
-                        obs.add_span_attrs(**{"resolve.path": "structured", "event.kind": payload.get("kind", "")})
-                        return payload
-                except Exception:
-                    pass  # structured failed — fall through to the prose fallback
+                    return payload if is_usable_line(payload.get("text", "")) else None
+
+                payload = _structured(prompt)
+                if payload is not None:
+                    payload = self._verify_verdict(prompt, payload, _structured)
+                    obs.add_span_attrs(**{"resolve.path": "structured", "event.kind": payload.get("kind", "")})
+                    return payload
                 obs.add_span_attrs(**{"resolve.path": "prose_fallback"})
                 return self._prose_fallback(role, prompt, allowed, wants_thought, provider)
 
             instruction = json_instruction(allowed, extra_fields=extra_fields)
-            raw = provider.complete(role, f"{prompt}\n{instruction}")
-            self.last_usage = dict(provider.last_usage)
-            self._guard_model_error(role, raw)
-            parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
+
+            def _offline(p: str) -> dict:
+                """One offline generation: parse the stub's output into a payload."""
+                raw = provider.complete(role, f"{p}\n{instruction}")
+                self.last_usage = dict(provider.last_usage)
+                self._guard_model_error(role, raw)
+                parsed = parse_agent_output(raw, allowed_kinds=allowed, fallback_kind=allowed[0])
+                return self._with_reasoning(parsed, provider, raw, wants_thought)
+
+            parsed = self._verify_verdict(prompt, _offline(prompt), _offline)
             obs.add_span_attrs(**{"resolve.path": "offline_parse", "event.kind": parsed.get("kind", "")})
-            return self._with_reasoning(parsed, provider, raw, wants_thought)
+            return parsed
+
+    # ── verdict winner validation (ADR-0029) ───────────────────────────────────
+
+    def _verify_verdict(self, prompt: str, payload: dict, regenerate) -> dict:
+        """Validate a verdict's ``winner``/``scores``; re-ask once on a bad winner.
+
+        ``scores`` is normalised in place (non-cast keys dropped, values clamped to
+        0–10) and never re-asked — it is garnish.  An out-of-cast ``winner`` triggers
+        exactly one corrective regeneration via *regenerate*, with the token usage of
+        both calls summed so the governor (ADR-0013) meters the retry.  A second
+        failure drops ``winner`` and stamps ``no_contest`` — the verdict *text* still
+        ships, so the show always ends; only the leaderboard row is forfeited.
+
+        For every non-judge agent, every ``kind: none`` scenario, and every standalone
+        agent (no competition attached), :meth:`_validate_payload` returns ``None`` and
+        this is a transparent pass-through."""
+        error = self._validate_payload(payload)
+        if error is None:
+            return payload
+        first_usage = dict(self.last_usage)
+        corrective = (
+            f"\n\nCORRECTION: your previous reply named an invalid winner. {error} "
+            "Reply again with the same JSON object, changing only the 'winner' field."
+        )
+        retry = regenerate(prompt + corrective)
+        self.last_usage = self._sum_usage(first_usage, self.last_usage)
+        if retry is not None and is_usable_line(retry.get("text", "")) and self._validate_payload(retry) is None:
+            return retry
+        payload.pop("winner", None)
+        payload["no_contest"] = True
+        return payload
+
+    def _validate_payload(self, parsed: dict) -> str | None:
+        """Return an error string when a judge named an out-of-cast winner, else ``None``.
+
+        Active only for a ``judge`` whose attached competition has ``kind != none`` and
+        whose manifest declares a ``winner`` field.  A missing/empty ``winner`` is *not*
+        an error (the field is optional and the offline stub never emits it — determinism
+        preserved); ``scores`` is normalised in place as a side effect (never an error)."""
+        comp = self.competition
+        if comp is None or getattr(comp, "kind", "none") == "none" or self.manifest.role != "judge":
+            return None
+        if "winner" not in (self.manifest.output_extra_fields or []):
+            return None
+        cast = set(self.cast_names)
+        scores = parsed.get("scores")
+        if isinstance(scores, dict):
+            cleaned: dict[str, float] = {}
+            for name, value in scores.items():
+                if name not in cast:
+                    continue
+                try:
+                    cleaned[name] = max(0.0, min(10.0, float(value)))
+                except (TypeError, ValueError):
+                    continue
+            parsed["scores"] = cleaned
+        winner = parsed.get("winner")
+        if winner in (None, ""):
+            return None
+        if winner not in self._winner_vocab():
+            return f"'winner' must be exactly one of: {', '.join(self._winner_vocab())}."
+        return None
+
+    def _winner_vocab(self) -> list[str]:
+        """The valid winner vocabulary: every cast member, plus any team labels."""
+        comp = self.competition
+        teams = getattr(comp, "teams", None) or {}
+        return list(self.cast_names) + list(teams.keys())
+
+    @staticmethod
+    def _sum_usage(first: dict, second: dict) -> dict:
+        """Sum two token-usage dicts so a re-ask's cost is metered, not lost."""
+        keys = set(first) | set(second)
+        return {k: int(first.get(k, 0) or 0) + int(second.get(k, 0) or 0) for k in keys}
 
     def _guard_model_error(self, role: str, raw: str) -> None:
         """Raise when *raw* is a provider failure sentinel, not a spoken line.

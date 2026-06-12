@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from src.core.structured import (
+    AgentOutputError,
+    build_output_model,
     clean_clue,
     extract_reasoning,
     is_usable_line,
@@ -198,3 +203,85 @@ class TestIsUsableLine:
 
     def test_accepts_a_real_line(self):
         assert is_usable_line("A dark brew warms the dawn.")
+
+
+class TestBuildOutputModel:
+    """The live-path schema. kind is Literal-constrained, text is required, and the
+    well-known verdict fields (ADR-0029) get real optional types — everything else
+    stays a required string, exactly as before."""
+
+    def test_requires_at_least_one_kind(self):
+        with pytest.raises(AgentOutputError):
+            build_output_model([])
+
+    def test_kind_is_literal_constrained(self):
+        model = build_output_model(["judge.verdict"])
+        with pytest.raises(ValidationError):
+            model(kind="not.allowed", text="x")
+
+    def test_text_is_required(self):
+        model = build_output_model(["agent.spoke"])
+        with pytest.raises(ValidationError):
+            model(kind="agent.spoke")
+
+    def test_ordinary_extra_field_is_required_string(self):
+        # The *other* row: an arbitrary scenario field stays a required str (back-compat).
+        model = build_output_model(["agent.spoke"], extra_fields=["mood"])
+        with pytest.raises(ValidationError):
+            model(kind="agent.spoke", text="hi")  # mood missing → invalid
+        inst = model(kind="agent.spoke", text="hi", mood="calm")
+        assert inst.mood == "calm"
+
+    def test_winner_is_optional_and_defaults_to_none(self):
+        # A judge may decline to name a winner; the field must default to None, not error.
+        model = build_output_model(["judge.verdict"], extra_fields=["winner"])
+        inst = model(kind="judge.verdict", text="Verdict: undecided.")
+        assert inst.winner is None
+
+    def test_winner_accepts_a_name(self):
+        model = build_output_model(["judge.verdict"], extra_fields=["winner"])
+        inst = model(kind="judge.verdict", text="t", winner="clue-gatherer")
+        assert inst.winner == "clue-gatherer"
+
+    def test_scores_defaults_to_empty_map(self):
+        model = build_output_model(["judge.verdict"], extra_fields=["scores"])
+        inst = model(kind="judge.verdict", text="t")
+        assert inst.scores == {}
+
+    def test_scores_coerces_numeric_map(self):
+        model = build_output_model(["judge.verdict"], extra_fields=["scores"])
+        inst = model(kind="judge.verdict", text="t", scores={"clue-gatherer": 9})
+        assert inst.scores == {"clue-gatherer": 9.0}
+
+    def test_mixed_known_and_unknown_fields(self):
+        # mood required, winner/scores optional — the full mystery-judge shape.
+        model = build_output_model(["judge.verdict"], extra_fields=["mood", "winner", "scores"])
+        inst = model(kind="judge.verdict", text="t", mood="smug")
+        assert (inst.mood, inst.winner, inst.scores) == ("smug", None, {})
+
+
+class TestJsonInstructionWellKnown:
+    """The prompt hint. With NO well-known field present it must be byte-identical to
+    the original uniform schema; with winner/scores present it renders typed hints."""
+
+    @pytest.mark.parametrize("extra", [None, ["mood"], ["thought"], ["mood", "thought"]])
+    def test_byte_identical_without_well_known_fields(self, extra):
+        # The common case must not drift: the same schema-line rendering as before.
+        out = json_instruction(["agent.spoke"], extra_fields=extra)
+        fields = '", "'.join(["kind", "text", *(extra or [])])
+        assert f'Schema: {{"{fields}": "..."}}' in out
+
+    def test_winner_hint_appears_when_present(self):
+        out = json_instruction(["judge.verdict"], extra_fields=["winner"])
+        assert "winner" in out
+        assert "or null" in out  # the typed hint, not the uniform "..."
+
+    def test_scores_hint_appears_when_present(self):
+        out = json_instruction(["judge.verdict"], extra_fields=["scores"])
+        assert "0-10" in out  # a number-map hint, not a quoted string
+
+    def test_ordinary_field_keeps_uniform_hint_alongside_known(self):
+        # mood sits next to winner: it still gets "..." while winner gets its typed hint.
+        out = json_instruction(["judge.verdict"], extra_fields=["mood", "winner", "scores"])
+        assert '"mood": "..."' in out
+        assert "or null" in out and "0-10" in out

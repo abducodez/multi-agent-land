@@ -82,6 +82,18 @@ class ModelConfig:
     max_num_seqs: int | None = None  # cap sequences batched per step (memory vs. throughput)
     max_num_batched_tokens: int | None = None  # token budget per scheduler step (prefill throughput)
 
+    # Cold starts. Opt a model into Modal memory snapshots (CPU + experimental GPU
+    # snapshot): the container boots once, loads weights, warms the engine, puts it
+    # to sleep (vLLM sleep mode, weights offloaded to host RAM), and is snapshotted;
+    # every later cold start restores the snapshot and wakes the engine in seconds
+    # instead of re-paying download + load + warmup. Constraints (why this is per
+    # model, not global): single-GPU models only, the model's vLLM build must
+    # support `--enable-sleep-mode`, and host RAM must hold the offloaded weights.
+    # Modal marks GPU snapshots alpha — keep it off for exotic serving paths
+    # (Transformers-backend Gemma, the omni specialist) and flip off on any model
+    # that misbehaves; the plain serving path is unchanged.
+    gpu_snapshot: bool = False
+
     # Observability / request logging (vLLM serve flags). Defaults give per-request
     # visibility in the container logs out of the box; see ``service.build_command``.
     log_requests: bool = True  # log each request's id, sampling params, and token counts
@@ -153,12 +165,17 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
         trust_remote_code=True,
         gated=True,
         max_concurrent_inputs=32,
+        # Tiny tier is the cast's hottest endpoint and 4B of BF16 weights (~8GB)
+        # easily fit host RAM during sleep — the ideal snapshot candidate.
+        gpu_snapshot=True,
     ),
     ModelConfig(
         name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         endpoint_name="nemotron-3-nano-30b",
         # 30B total params in BF16 (~60GB) though only ~3B activate per token.
         # An alternate strong model — not cast to a profile by default.
+        # No gpu_snapshot: sleep mode would offload ~60GB of weights to host RAM,
+        # past what a default container comfortably holds.
         params_b=30,
         gpu="H200:1",
         max_model_len=32768,
@@ -187,6 +204,9 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="hermes",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=48,
+        # Qwen3-native single-GPU path on the pinned vLLM — snapshot-safe, and a
+        # reasoning model is exactly where a multi-minute cold start hurts most.
+        gpu_snapshot=True,
     ),
 )
 
@@ -202,6 +222,10 @@ OPENBMB_MODELS: tuple[ModelConfig, ...] = (
         max_model_len=32768,
         trust_remote_code=True,
         max_concurrent_inputs=48,
+        # Fast tier default for the cast; 8B BF16 (~16GB) offloads to host RAM
+        # fine. Sleep mode is allocator-level, so the custom MiniCPM modeling
+        # code doesn't affect it.
+        gpu_snapshot=True,
         # No tool_call_parser on purpose: MiniCPM4.1 emits a custom
         # <|tool_call_start|> format vLLM 0.21.0 has no parser for, so tool-call
         # structured output 400s here. The engine's structured path uses vLLM
@@ -252,7 +276,10 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         # Served via vLLM's Transformers modeling backend (gemma4_unified has no
         # native vLLM class), which runs eager-only — CUDA-graph capture and the
         # async scheduler aren't supported on that path, so disable both here.
-        # Prefix caching still applies and stays on (the default).
+        # Prefix caching still applies and stays on (the default). gpu_snapshot
+        # stays off too: sleep mode on the nightly Transformers backend is
+        # unverified, and the Gemmas already skip the costliest warmup (no
+        # CUDA-graph capture).
         enforce_eager=True,
         async_scheduling=False,
         # Text-only in the cast (vision/audio is the MiniCPM-o specialist's job).

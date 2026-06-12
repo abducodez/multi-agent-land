@@ -143,6 +143,12 @@ scenario shape agent output without engine edits.  The Fishbowl cast uses
 deterministic stub synthesises them offline so the mind-reader works with no API key
 (ADR-0021).
 
+Fields are required strings by default, but two names are **well-known and
+engine-typed** (ADR-0029): `winner` (`str | None`, optional) and `scores`
+(`dict[str, float]`, optional).  Judges in competition scenarios list them —
+`output_extra_fields: [mood, winner, scores]` — to make the verdict machine-readable.
+See [structured-output.md](structured-output.md#well-known-typed-fields).
+
 ### `hue` / `archetype`
 Optional presentation metadata, consumed by the Fishbowl UI presenter and **ignored by
 the engine** (ADR-0021).  `hue` (0–360) colours the agent's mind on stage; `archetype`

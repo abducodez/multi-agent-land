@@ -79,6 +79,7 @@ changes needed:
 | `target_concurrent_inputs` | Autoscale target — scale out here, burst to the max (defaults to ~75% of the ceiling). |
 | `buffer_containers`     | Extra idle containers pre-warmed under active load (bursty traffic). |
 | `scaledown_window`      | Idle seconds before a container stops (cold-start vs. cost).   |
+| `gpu_snapshot`          | Serve via Modal memory snapshots (CPU + GPU): cold starts restore a warmed engine in seconds instead of re-paying load + warmup. See [Cold starts](#cold-starts). |
 | `min_containers`        | Keep N warm to eliminate cold starts (always-on cost).         |
 | `gpu_memory_utilization` | Fraction of VRAM for weights + KV cache (vLLM default `0.9`); raise for a bigger KV cache. |
 | `enable_prefix_caching` | Reuse the KV cache for shared prompt prefixes (on by default — big win when the system prompt / ledger context repeats across the cast). |
@@ -130,6 +131,46 @@ per model:
 
 For memory-bound models, raise `gpu_memory_utilization` (more KV cache → more
 concurrency) and cap `max_num_seqs` / `max_num_batched_tokens` if a step OOMs.
+
+### Cold starts
+
+A scale-from-zero cold start normally pays the full pipeline: container boot →
+weight load → engine warmup — minutes for the bigger models. Two mechanisms cut
+this (ADR-0030):
+
+**1. Memory snapshots (`gpu_snapshot=True`, per model).** The first container
+boots once, loads weights, runs a few warmup completions, puts vLLM to sleep
+(sleep level 1: weights offloaded to host RAM, KV cache dropped), and Modal
+snapshots the container — CPU *and* GPU state. Every later cold start restores
+the snapshot and wakes the engine, turning a multi-minute boot into seconds.
+Under the hood this switches the model from the plain `@app.function` web server
+to a class-based lifecycle (`@modal.enter(snap=True)` warmup → snapshot →
+`@modal.enter(snap=False)` wake), but the public URL and API are identical —
+clients can't tell the paths apart.
+
+Snapshot-enabled today: `nemotron-3-nano-4b` (tiny), `minicpm-4-1-8b` (fast),
+`nemotron-cascade-14b`. Left off deliberately: the Gemmas (nightly
+Transformers-backend path, sleep mode unverified), `nemotron-3-nano-30b`
+(~60GB of weights won't fit host RAM during sleep), and the omni specialist.
+GPU snapshots are **Modal-alpha** — if a snapshot model misbehaves, set its
+`gpu_snapshot=False` and redeploy; the plain path is unchanged.
+
+**2. Demo-day keep-warm (deploy-time, no code edits).** Pin warm containers for
+every *profile-bound* model (tiny/fast/balanced/strong) right before a live
+demo — specialists keep scale-to-zero:
+
+```bash
+MODAL_LLM_KEEP_WARM=1 modal deploy modal/app_nvidia.py   # one warm container per tier model
+modal deploy modal/app_nvidia.py                         # back to scale-to-zero after
+```
+
+This burns GPU-hours while deployed; it's a switch for the hours around a demo,
+not a steady state. `min_containers` in `catalogue.py` remains the per-model
+override for anything finer-grained.
+
+Cold-start clients must follow redirects: a Modal endpoint that hasn't answered
+within ~150s returns a `303` to the same URL while the container finishes
+booting (`modal/healthcheck.py` handles this; so does the engine's gateway).
 
 ### Add a model
 

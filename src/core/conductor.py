@@ -155,12 +155,20 @@ class Conductor:
         *,
         winner: str | None = None,
         winning_model: str | None = None,
+        winner_kind: str | None = None,
+        winning_models: list[str] | None = None,
     ) -> Event | None:
         """Close the current run with a ``run.finished`` event.
 
         Idempotent-safe: if this run already has a ``run.finished`` event we return
         the existing one rather than emitting a duplicate.  ``turns`` and ``tokens``
         are read from the governor's live counters.
+
+        Attribution (ADR-0029): ``winner`` is a cast agent name (``winner_kind:
+        "agent"``) or a team label (``winner_kind: "team"``).  ``winning_model`` keeps
+        its original meaning — a single cast agent's endpoint, populated only for an
+        agent winner — while ``winning_models`` lists the endpoint(s) behind the
+        winner (every member of a winning team).  All keys are additive.
         """
         existing = [e for e in self.ledger.events_for_run(self.run_id) if e.kind == "run.finished"]
         if existing:
@@ -174,7 +182,9 @@ class Conductor:
             payload={
                 "reason": reason,
                 "winner": winner,
+                "winner_kind": winner_kind,
                 "winning_model": winning_model,
+                "winning_models": list(winning_models or []),
                 "turns": int(stats.get("current_turn", self.turn) or self.turn),
                 "tokens": int(stats.get("total_tokens", 0) or 0),
             },
@@ -184,6 +194,7 @@ class Conductor:
             run_id=self.run_id,
             reason=reason,
             winner=winner,
+            winner_kind=winner_kind,
             winning_model=winning_model,
             turns=finished.payload["turns"],
             tokens=finished.payload["tokens"],
