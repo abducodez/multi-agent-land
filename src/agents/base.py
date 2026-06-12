@@ -115,6 +115,11 @@ class ManifestAgent(Agent):
         self.memory_index = memory_index
         self._reflection_tracker: ReflectionTracker | None = None
         self.last_usage: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # The model behind the most recent generation, captured when the provider is
+        # resolved and stamped onto the event in act()/reflection — so each line in the
+        # ledger records the model that actually produced it, not just the intended one.
+        self.last_model_profile: str | None = None
+        self.last_model_id: str | None = None
 
     @property
     def name(self) -> str:  # type: ignore[override]
@@ -175,6 +180,8 @@ class ManifestAgent(Agent):
             kind=parsed["kind"],
             actor=self.manifest.name,
             payload={k: v for k, v in parsed.items() if k != "kind"},
+            model_profile=self.last_model_profile,
+            model_id=self.last_model_id,
         )
 
     @staticmethod
@@ -237,6 +244,7 @@ class ManifestAgent(Agent):
         """
         wants_thought = bool(extra_fields and "thought" in extra_fields)
         provider = self.router.for_profile(self._route_key)
+        self._record_model(provider)
         with obs.span("agent.resolve", **{"mal.agent": role, "mal.profile": self._route_key}):
             if hasattr(provider, "complete_structured"):
                 model = build_output_model(allowed, extra_fields)
@@ -308,10 +316,17 @@ class ManifestAgent(Agent):
     def _complete(self, role: str, prompt: str) -> str:
         """Route to the provider for this agent's profile and record token usage."""
         provider = self.router.for_profile(self._route_key)
+        self._record_model(provider)
         raw = provider.complete(role, prompt)
         self.last_usage = dict(provider.last_usage)
         self._guard_model_error(role, raw)
         return raw
+
+    def _record_model(self, provider) -> None:
+        """Remember the model behind the current generation so the emitted event can
+        record it (the route key asked for + the concrete model that actually ran)."""
+        self.last_model_profile = self._route_key
+        self.last_model_id = getattr(provider, "model_id", "") or None
 
     # ── memory ──────────────────────────────────────────────────────────────
 
@@ -349,6 +364,8 @@ class ManifestAgent(Agent):
             kind=_REFLECTION_KIND,
             actor=self.manifest.name,
             payload={k: v for k, v in parsed.items() if k != "kind"},
+            model_profile=self.last_model_profile,
+            model_id=self.last_model_id,
         )
 
     # ── output authority ──────────────────────────────────────────────────────

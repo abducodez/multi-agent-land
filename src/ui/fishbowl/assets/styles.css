@@ -677,14 +677,29 @@ footer { display: none !important; }
 .fishbowl .mind.rattled .mind-front { border-color: var(--coral); animation: cardShake 0.4s ease-in-out infinite; }
 @keyframes cardShake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
 
-.fishbowl .mind-head { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding-bottom: 11px; border-bottom: 1px solid var(--line-soft); }
+/* head: avatar · identity · the live mood pill (the one datum that changes turn to turn) */
+.fishbowl .mind-head { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
 .fishbowl .mind-id { min-width: 0; }
-.fishbowl .mind-name { font-size: 14px; font-weight: 700; letter-spacing: 0.06em; color: var(--ink); display: flex; align-items: center; gap: 7px; }
+.fishbowl .mind-name { font-size: 14.5px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink); line-height: 1.15; display: flex; align-items: center; gap: 7px; }
 .fishbowl .mic { color: var(--coral); font-size: 9px; animation: livePulse 0.9s ease-in-out infinite; }
-.fishbowl .mind-arch { font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fishbowl .mind-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.fishbowl .mind-model { display: flex; align-items: center; gap: 5px; font-size: 9.5px; letter-spacing: 0.04em; color: var(--ink-mid); }
-.fishbowl .mind-mood { font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+.fishbowl .mind-arch { margin-top: 3px; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* mood pill — colour-coded by mood, with a glowing status dot; reads at a glance */
+.fishbowl .mind-mood-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 8px; border-radius: 999px; border: 1px solid color-mix(in oklab, var(--mc) 50%, transparent); background: color-mix(in oklab, var(--mc) 13%, transparent); white-space: nowrap; align-self: start; }
+.fishbowl .mmp-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mc); box-shadow: 0 0 7px var(--mc); flex: none; }
+.fishbowl .mmp-label { font-family: var(--font-display); font-size: 8px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--mc); }
+/* a panicking mind throbs its pill so the leak is impossible to miss */
+@media (prefers-reduced-motion: no-preference) {
+  .fishbowl .mind.rattled .mmp-dot { animation: livePulse 0.7s ease-in-out infinite; }
+}
+
+/* model meta-strip — provenance gets its own labelled row, so a long served id stays legible */
+.fishbowl .mind-meta-strip { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding: 6px 10px; border: 1px solid var(--line-soft); border-radius: var(--r); background: rgba(3,12,18,0.55); }
+.fishbowl .mms-model { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.fishbowl .mms-model .tier-dot { width: 7px; height: 7px; }
+.fishbowl .mms-name { font-family: var(--font-display); font-size: 10px; letter-spacing: 0.01em; color: var(--ink-mid); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fishbowl .mms-tier { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); flex: none; }
+.fishbowl .mms-tier:empty { display: none; }
 
 .fishbowl .bubbles { display: flex; flex-direction: column; gap: 8px; padding-top: 11px; }
 .fishbowl .bubble { border-radius: var(--r); padding: 9px 11px 10px; position: relative; }
@@ -914,9 +929,6 @@ footer { display: none !important; }
   0%, 100% { box-shadow: 0 0 18px color-mix(in oklab, var(--ac) 32%, transparent); }
   50% { box-shadow: 0 0 30px color-mix(in oklab, var(--ac) 55%, transparent); }
 }
-/* tighten the head so name + model never feel cramped at card width */
-.fishbowl .mind-name { line-height: 1.2; }
-.fishbowl .mind-arch { margin-top: 2px; }
 .fishbowl .bubble.said { box-shadow: inset 0 0 0 1px var(--line-soft); }
 
 /* ---- SPLIT (Lab Readout): let the omniscient table flow full-width ---- */

@@ -1,4 +1,4 @@
-# ADR-0028: Session-Stamped Events and Run-Scoped Memory Recall
+# ADR-0028: Session-Stamped, Model-Attributed Events and Run-Scoped Recall
 
 ## Status
 
@@ -24,6 +24,12 @@ and scoped the **UI** to one run. Three gaps remained on the data/context side:
 Additionally, the session id originates in `localStorage` — untrusted client input —
 and reached the ledger unvalidated.
 
+4. **No per-event model attribution.** `run.started.cast` recorded the *intended*
+   binding per agent, but no event recorded the model that *actually* produced it —
+   so "which model said this line" (and "which model won") was an inference from the
+   cast map, not a fact, and env overrides / endpoint fallbacks were invisible after
+   the fact.
+
 ## Decision
 
 - **`Event.session_id: str | None` on the envelope.** Stamped by the Conductor at
@@ -46,12 +52,32 @@ and reached the ledger unvalidated.
   search, free for callers). `session_id` rides in index metadata for forensics.
 - **RunIndex prefers the envelope.** `RunSummary.session_id` folds from
   `event.session_id` first, payload copy second.
+- **Per-event model attribution.** `Event.model_profile` (the route key the agent
+  asked for — tier or endpoint key) and `Event.model_id` (the concrete model that
+  ran). The agent captures both when it resolves its provider
+  (`ModelProvider.model_id` unifies the live gateway's `model` and the stub's
+  `variant`) and stamps them on the event it emits; handler subclasses inherit it
+  via `super().act()`. Scenario/genesis/lifecycle events stay `None`. mem0 metadata
+  carries them; the Show's cast card prefers the *actual* model once a line is
+  spoken (`short_model_name`), falling back to the intended binding.
+- **DB structure: columns + indexes, no new tables.** The queryable envelope facts
+  (`session_id`, `model_profile`, `model_id`) are typed columns, not buried JSON —
+  the right denormalization for an *immutable* log. We add a composite
+  `(run_id, offset)` index (the hottest read — `events_for_run` ordered by offset)
+  plus single indexes on `session_id` and `model_id`. We deliberately **do not**
+  add normalized/lookup tables or foreign keys: an append-only log never mutates,
+  so FKs buy no integrity and only cost joins. A materialized `runs` read-model
+  remains a deferred option (rebuildable cache) for *when* folding events is
+  measurably slow or real accounts arrive — not now.
 
 ## Consequences
 
-- Every action is directly filterable by session in SQL (`WHERE session_id = ?`,
-  indexed), in mem0 metadata, and in exported traces (the JSONL dump inherits the
-  envelope field for free).
+- Every action is directly filterable by session **and by model** in SQL
+  (`WHERE session_id = ?`, `WHERE model_id = ?`, both indexed), in mem0 metadata,
+  and in exported traces (the JSONL dump inherits the envelope fields for free).
+- "Which model won / spoke this line" is now a recorded fact, not an inference —
+  useful for sponsor-track receipts (which model played which part) and the demo's
+  per-card model badge.
 - Prompts are hermetic per run: neither the episodic window, nor salience ranking,
   nor semantic recall can surface another run's text. Verified by probe-agent and
   scoped-search tests.

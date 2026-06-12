@@ -57,12 +57,17 @@ class SQLiteLedger(Ledger):
                 payload         TEXT    NOT NULL,
                 created_at      TEXT    NOT NULL,
                 schema_version  INTEGER NOT NULL DEFAULT 1,
-                session_id      TEXT
+                session_id      TEXT,
+                model_profile   TEXT,
+                model_id        TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_run_id ON events(run_id);
-            CREATE INDEX IF NOT EXISTS idx_kind   ON events(kind);
-            CREATE INDEX IF NOT EXISTS idx_actor  ON events(actor);
+            -- Composite (run_id, offset) serves the hottest read — events_for_run
+            -- ordered by offset — from one index, instead of a run_id seek + sort.
+            CREATE INDEX IF NOT EXISTS idx_run_offset ON events(run_id, offset);
+            CREATE INDEX IF NOT EXISTS idx_kind       ON events(kind);
+            CREATE INDEX IF NOT EXISTS idx_actor      ON events(actor);
             CREATE INDEX IF NOT EXISTS idx_session_id ON events(session_id);
+            CREATE INDEX IF NOT EXISTS idx_model_id   ON events(model_id);
         """)
         self._conn.commit()
 
@@ -74,8 +79,9 @@ class SQLiteLedger(Ledger):
         try:
             self._conn.execute(
                 "INSERT INTO events "
-                "(id, run_id, turn, kind, actor, payload, created_at, schema_version, session_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(id, run_id, turn, kind, actor, payload, created_at, schema_version, "
+                "session_id, model_profile, model_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     event.id,
                     event.run_id,
@@ -86,6 +92,8 @@ class SQLiteLedger(Ledger):
                     event.created_at.isoformat(),
                     event.schema_version,
                     event.session_id,
+                    event.model_profile,
+                    event.model_id,
                 ),
             )
             self._conn.commit()
@@ -122,7 +130,9 @@ class SQLiteLedger(Ledger):
         ledger = cls(path)
         return ledger
 
-    _SELECT_COLS = "id, run_id, turn, kind, actor, payload, created_at, schema_version, session_id"
+    _SELECT_COLS = (
+        "id, run_id, turn, kind, actor, payload, created_at, schema_version, session_id, model_profile, model_id"
+    )
 
     @staticmethod
     def _row_to_event(row: tuple) -> Event:
@@ -142,6 +152,8 @@ class SQLiteLedger(Ledger):
             created_at=created_at,
             schema_version=row[7],
             session_id=row[8],
+            model_profile=row[9],
+            model_id=row[10],
         )
 
     def _load_cache(self) -> None:

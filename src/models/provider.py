@@ -42,6 +42,16 @@ class ModelProvider:
         raise NotImplementedError
 
     @property
+    def model_id(self) -> str:
+        """The concrete model this provider runs — for per-event attribution.
+
+        Uniform across backends: the live gateway sets ``self.model`` (e.g.
+        ``openai/openbmb/MiniCPM4.1-8B``); the offline stub sets ``self.variant``
+        (e.g. ``stub:fast``).  Empty string when neither is set.
+        """
+        return str(getattr(self, "model", None) or getattr(self, "variant", None) or "")
+
+    @property
     def last_usage(self) -> dict[str, int]:
         """Token usage of the most recent complete() call.
 

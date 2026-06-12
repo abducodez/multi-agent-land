@@ -98,6 +98,20 @@ def model_label(endpoint: str) -> str:
     return short or endpoint
 
 
+def short_model_name(model_id: str) -> str:
+    """Prettify a *concrete* resolved model string for the card's model badge.
+
+    Unlike :func:`model_label` (which resolves a catalogue *key*), this takes the
+    model that actually ran, recorded on the event envelope (ADR-0028): a served id
+    like ``openai/openbmb/MiniCPM4.1-8B`` → ``MiniCPM4.1-8B``, or the offline
+    ``stub:fast`` left as-is.  Empty input degrades to ``""`` so callers fall back.
+    """
+    text = (model_id or "").strip()
+    if not text or text.startswith("stub:"):
+        return text
+    return text.rsplit("/", 1)[-1] or text
+
+
 def agent_model(manifest) -> str:
     """The model an agent is actually running, for the Show's model badge.
 

@@ -104,6 +104,15 @@ class Event(BaseModel):
     # headless/legacy events.  An OPTIONAL envelope field — additive, so
     # schema_version stays 1 and old rows load with session_id=None.
     session_id: str | None = None
+    # Which model produced this event, set by the agent at generation time:
+    #   model_profile — the route key the agent asked for (tiny/fast/balanced/
+    #                    strong, or an explicit catalogue endpoint key, ADR-0022)
+    #   model_id       — the concrete model that actually ran (e.g.
+    #                    "openai/openbmb/MiniCPM4.1-8B", or "stub:fast" offline)
+    # Both None for events with no model behind them (genesis, user.injected,
+    # run.started/finished).  Additive envelope fields — schema_version stays 1.
+    model_profile: str | None = None
+    model_id: str | None = None
 
     @field_validator("kind")
     @classmethod

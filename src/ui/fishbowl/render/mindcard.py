@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import html
 
-from src.ui.fishbowl.adapter import TIER_COLOR
+from src.ui.fishbowl.adapter import TIER_COLOR, mood_color
 from src.ui.fishbowl.render.avatar import agent_color, agent_color_dim, render_avatar
 
 __all__ = ["render_mindcard"]
@@ -74,8 +74,13 @@ def render_mindcard(
     # to the profile tier name when it routes purely by profile.
     model = html.escape(str(card.get("model") or card.get("model_profile", "")))
     mood_label = html.escape(str(card.get("mood_label", "")))
+    mood_col = mood_color(mood)
     tier = card.get("tier", "mid")
     tier_color = TIER_COLOR.get(tier, "var(--cyan)")
+    # The profile label (tiny/fast/balanced/strong) sits beside the model name as the
+    # human-chosen tier; the concrete served id rides the tooltip so a long name stays short.
+    profile = html.escape(str(card.get("model_profile", "")))
+    model_title = html.escape(str(card.get("model_id") or card.get("model") or profile))
 
     mic = '<span class="mic">●</span>' if speaking else ""
 
@@ -104,10 +109,17 @@ def render_mindcard(
         f'<div class="mind-name disp">{name}{mic}</div>'
         f'<div class="mind-arch">{archetype}</div>'
         "</div>"
-        '<div class="mind-meta">'
-        f'<span class="mind-model" title="model"><span class="tier-dot" style="background:{tier_color}"></span>{model}</span>'
-        f'<span class="mind-mood">{mood_label}</span>'
+        f'<div class="mind-mood-pill" style="--mc:{mood_col}">'
+        '<span class="mmp-dot"></span>'
+        f'<span class="mmp-label">{mood_label}</span>'
         "</div>"
+        "</div>"
+        f'<div class="mind-meta-strip" title="{model_title}">'
+        '<span class="mms-model">'
+        f'<span class="tier-dot" style="background:{tier_color}"></span>'
+        f'<span class="mms-name">{model}</span>'
+        "</span>"
+        f'<span class="mms-tier">{profile}</span>'
         "</div>"
         '<div class="bubbles">'
         '<div class="bubble said">'

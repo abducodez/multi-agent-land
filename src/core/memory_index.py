@@ -351,6 +351,8 @@ def _event_metadata(event: Event) -> dict:
         "created_at": event.created_at.isoformat(),
         "schema_version": event.schema_version,
         "session_id": event.session_id,
+        "model_profile": event.model_profile,
+        "model_id": event.model_id,
     }
 
 
@@ -368,6 +370,8 @@ def _event_from_metadata(metadata: dict | None) -> Event | None:
             payload=dict(metadata.get("payload") or {}),
             schema_version=int(metadata.get("schema_version", 1)),
             session_id=metadata.get("session_id") or None,
+            model_profile=metadata.get("model_profile") or None,
+            model_id=metadata.get("model_id") or None,
         )
     except (KeyError, ValueError, TypeError):  # pragma: no cover - defensive
         return None

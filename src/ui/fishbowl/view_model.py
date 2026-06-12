@@ -27,6 +27,7 @@ from src.ui.fishbowl.adapter import (
     mood_label,
     normalize_mood,
     scenario_voice,
+    short_model_name,
 )
 from src.ui.fishbowl.cast_state import derive_cast_state
 
@@ -65,6 +66,13 @@ def view_model_at(
     names = [m.name for m in cast]
     states = derive_cast_state(prefix, names)
 
+    # The model that *actually* produced each actor's most recent line (envelope,
+    # ADR-0028) — overrides the card's intended binding once a line has been spoken.
+    actual_model: dict[str, str] = {}
+    for e in prefix:
+        if e.model_id and e.actor in names:
+            actual_model[e.actor] = e.model_id
+
     speaking_id: str | None = None
     if k > 0:
         head = events[k - 1]
@@ -82,7 +90,9 @@ def view_model_at(
                 "hue": agent_hue(m),
                 "role": m.role,
                 "model_profile": m.model_profile,
-                "model": agent_model(m),
+                # Prefer the model that actually ran; fall back to the intended binding.
+                "model": short_model_name(actual_model[m.name]) if m.name in actual_model else agent_model(m),
+                "model_id": actual_model.get(m.name),
                 "model_endpoint": getattr(m, "model_endpoint", None),
                 "tier": agent_tier(m),
                 "said": st.said,

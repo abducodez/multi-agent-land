@@ -70,6 +70,7 @@ class SqlAlchemyLedger(Ledger):
         from sqlalchemy import (
             Column,
             DateTime,
+            Index,
             Integer,
             MetaData,
             String,
@@ -97,6 +98,11 @@ class SqlAlchemyLedger(Ledger):
             Column("created_at", DateTime(timezone=True), nullable=False),
             Column("schema_version", Integer, nullable=False, server_default="1"),
             Column("session_id", String, nullable=True, index=True),
+            # Which model produced the event (set by the agent; ADR-0028).
+            Column("model_profile", String, nullable=True),
+            Column("model_id", String, nullable=True, index=True),
+            # Composite index for the hottest read: events of one run, by offset.
+            Index("ix_events_run_offset", "run_id", "offset"),
         )
         self._metadata.create_all(self._engine)
 
@@ -124,6 +130,8 @@ class SqlAlchemyLedger(Ledger):
                         created_at=_aware(event.created_at),
                         schema_version=event.schema_version,
                         session_id=event.session_id,
+                        model_profile=event.model_profile,
+                        model_id=event.model_id,
                     )
                 )
             self._cache.append(event)
@@ -243,6 +251,8 @@ class SqlAlchemyLedger(Ledger):
             created_at=created_at,
             schema_version=row["schema_version"],
             session_id=row.get("session_id"),
+            model_profile=row.get("model_profile"),
+            model_id=row.get("model_id"),
         )
 
 
