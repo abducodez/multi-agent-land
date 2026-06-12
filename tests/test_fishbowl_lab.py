@@ -25,14 +25,18 @@ EXPECTED_HANDLE_KEYS = {
     "world",
     "narrator",
     "cast_models",
+    "cast_tools",
+    "cast_personas",
+    "cast_schedules",
+    "cast_roster",
     "judge_policy",
     "judge_model",
     "judge_strictness",
     "tools",
-    "tokens",
-    "max_rounds",
-    "seed_num",
-    "cadence",
+    "max_turns",
+    "max_calls_per_turn",
+    "max_total_tokens",
+    "hourly_budget_usd",
     "summon_btn",
     "surprise_btn",
 }
@@ -53,12 +57,18 @@ def test_build_lab_returns_expected_handles():
     assert backend_values == {b.key for b in inference.backends()}
     assert handles["inference_backend"].value == inference.DEFAULT_BACKEND
     assert isinstance(handles["scenario"], gr.Radio)
-    assert isinstance(handles["seed"], gr.Dropdown)
-    assert handles["seed"].allow_custom_value is True
+    # The seed is an editable textbox (a preset dropdown fills it; the box is what Summon reads).
+    assert isinstance(handles["seed"], gr.Textbox)
     assert isinstance(handles["narrator"], gr.Dropdown)
-    # The cast picker is a gr.render writing into this state (one dropdown per player).
+    # The cast picker is a gr.render writing into these states (one card per player).
     assert isinstance(handles["cast_models"], gr.State)
-    assert isinstance(handles["tools"], gr.CheckboxGroup)
+    assert isinstance(handles["cast_tools"], gr.State)
+    assert isinstance(handles["cast_personas"], gr.State)
+    assert isinstance(handles["cast_schedules"], gr.State)
+    # Per-agent tool grants live on each card now; the legacy global handle is a State.
+    assert isinstance(handles["tools"], gr.State)
+    # The cast roster multiselect drives the effective cast (and Judge visibility).
+    assert isinstance(handles["cast_roster"], gr.CheckboxGroup)
     assert isinstance(handles["judge_strictness"], gr.Slider)
     assert isinstance(handles["summon_btn"], gr.Button)
     assert isinstance(handles["surprise_btn"], gr.Button)
@@ -206,3 +216,161 @@ def test_collect_world_config_unknown_scenario_raises():
             tokens=None,
             max_rounds=None,
         )
+
+
+# ── the editable surface: per-agent tools / persona / schedule + scenario knobs ──
+
+
+def test_collect_world_config_pins_tool_persona_schedule_onto_the_right_agent():
+    registry = default_registry()
+    scenario = registry.scenarios["oracle-grove"]
+    # The fortune-teller is the tool-capable mind; scene-whisperer has no grant.
+    world = lab.collect_world_config(
+        scenario=scenario.name,
+        premise="",
+        seed="",
+        cast_models={},
+        judge_policy="Majority Vote",
+        judge_model="",
+        judge_strictness=50,
+        tools=[],
+        tokens=None,
+        max_rounds=None,
+        cast_tools={"fortune-teller": ["oracle"], "scene-whisperer": []},
+        cast_personas={"scene-whisperer": "A brand-new whispered identity for the test."},
+        cast_schedules={"fortune-teller": {"tick_every": 3, "max_consecutive": 2}},
+    )
+
+    by_name = {a.name: a for a in world.agents}
+    assert by_name["fortune-teller"].tools == ["oracle"]
+    assert by_name["scene-whisperer"].tools == []  # explicitly dropped grant
+    assert by_name["scene-whisperer"].persona == "A brand-new whispered identity for the test."
+    assert by_name["fortune-teller"].schedule.tick_every == 3
+    assert by_name["fortune-teller"].schedule.max_consecutive == 2
+    # The shared registry manifests are untouched (non-destructive model_copy).
+    assert registry.agents["scene-whisperer"].persona != "A brand-new whispered identity for the test."
+    assert registry.agents["fortune-teller"].schedule.tick_every == 1
+
+
+def test_collect_world_config_drops_ungranted_or_unknown_tools():
+    registry = default_registry()
+    scenario = registry.scenarios["oracle-grove"]
+    world = lab.collect_world_config(
+        scenario=scenario.name,
+        premise="",
+        seed="",
+        cast_models={},
+        judge_policy="Majority Vote",
+        judge_model="",
+        judge_strictness=50,
+        tools=[],
+        tokens=None,
+        max_rounds=None,
+        # tts.speak / dice.roll are friendly labels the engine does not actually have.
+        cast_tools={"fortune-teller": ["oracle", "tts.speak", "dice.roll"]},
+    )
+    by_name = {a.name: a for a in world.agents}
+    assert by_name["fortune-teller"].tools == ["oracle"]  # only the real, engine-backed tool
+
+
+def test_collect_world_config_never_escalates_a_non_tool_agent():
+    # The UI never offers scene-whisperer a tool picker (it has no grant), but a stale or
+    # crafted cast_tools entry must NOT be able to grant it a capability it was never given.
+    registry = default_registry()
+    scenario = registry.scenarios["oracle-grove"]
+    assert registry.agents["scene-whisperer"].tools == []  # guard: it is genuinely tool-less
+    world = lab.collect_world_config(
+        scenario=scenario.name,
+        premise="",
+        seed="",
+        cast_models={},
+        judge_policy="Majority Vote",
+        judge_model="",
+        judge_strictness=50,
+        tools=[],
+        tokens=None,
+        max_rounds=None,
+        cast_tools={"scene-whisperer": ["oracle"]},  # crafted escalation attempt
+    )
+    by_name = {a.name: a for a in world.agents}
+    assert by_name["scene-whisperer"].tools == []  # intersected with its own (empty) grant
+
+
+def test_collect_world_config_honours_roster_genesis_and_governor():
+    registry = default_registry()
+    scenario = registry.scenarios["thousand-token-wood"]
+    judge = next(n for n in scenario.cast if registry.agents[n].role == "judge")
+    trimmed = [n for n in scenario.cast if n != judge]  # drop the judge from the roster
+
+    world = lab.collect_world_config(
+        scenario=scenario.name,
+        premise="",
+        seed="",
+        cast_models={},
+        judge_policy="Majority Vote",
+        judge_model="",
+        judge_strictness=50,
+        tools=[],
+        tokens=None,
+        max_rounds=None,
+        cast_roster=trimmed,
+        genesis="A custom genesis the test pins in.",
+        max_turns=17,
+        max_calls_per_turn=5,
+        max_total_tokens=44_000,
+        hourly_budget_usd=2.5,
+    )
+
+    out = world.scenarios[0]
+    # The roster override drives the cast (judge removed → a judge-less, valid world).
+    assert out.cast == trimmed
+    assert judge not in {a.name for a in world.agents}
+    assert out.genesis_text == "A custom genesis the test pins in."
+    assert out.governor is not None
+    assert out.governor.max_turns == 17
+    assert out.governor.max_calls_per_turn == 5
+    assert out.governor.max_total_tokens == 44_000
+    assert out.governor.hourly_budget_usd == 2.5
+
+
+def test_collect_world_config_judgeless_world_is_valid_without_judge_knobs():
+    # open-table has no judge; composing it with no judge model must still validate.
+    registry = default_registry()
+    scenario = registry.scenarios["open-table"]
+    world = lab.collect_world_config(
+        scenario=scenario.name,
+        premise="",
+        seed="",
+        cast_models={},
+        judge_policy="Majority Vote",
+        judge_model="",  # no judge to bind
+        judge_strictness=50,
+        tools=[],
+        tokens=None,
+        max_rounds=None,
+    )
+    assert isinstance(world, WorldConfig)
+    assert all(a.role != "judge" for a in world.agents)
+    assert world.scenarios[0].cast == list(scenario.cast)
+
+
+def test_collect_world_config_legacy_token_and_round_knobs_still_apply():
+    # Back-compat: callers passing the old tokens / max_rounds get a governor too.
+    registry = default_registry()
+    scenario = registry.scenarios["thousand-token-wood"]
+    world = lab.collect_world_config(
+        scenario=scenario.name,
+        premise="",
+        seed="",
+        cast_models={},
+        judge_policy="Majority Vote",
+        judge_model="",
+        judge_strictness=50,
+        tools=[],
+        tokens=99_000,
+        max_rounds=33,
+    )
+    gov = world.scenarios[0].governor
+    assert gov is not None
+    assert gov.max_turns == 33
+    assert gov.max_total_tokens == 99_000
