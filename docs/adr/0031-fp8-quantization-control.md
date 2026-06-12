@@ -84,6 +84,18 @@ output quantized, we can pin `quantization="fp8"` on it in the catalogue.
   deploy (no stale-precision restores — the snapshot is keyed to the new function
   version). A model that can't serve FP8 fails at snapshot *creation*, which is the
   same loud no-healthy-container failure as the plain path.
+- **FP8 KV cache is incompatible with sleep-mode/snapshot models on the pinned vLLM.**
+  `--kv-cache-dtype fp8` boots and snapshots fine, but the `/wake_up` path runs
+  `init_fp8_kv_scales()` over a post-sleep KV cache that is a *list* of per-layer
+  tensors (not one tensor), so `cache_tensor.zero_()` throws and every snapshot restore
+  500s — an endpoint that boots but can never wake. This bit `nemotron-3-nano-4b`
+  (`gpu_snapshot=True`) under a global `MODAL_LLM_KV_CACHE_DTYPE=fp8` deploy.
+  `build_command` therefore **drops an FP8 `kv_cache_dtype` for any `gpu_snapshot`
+  model** and warns: snapshot is a structural per-model decision, the KV dtype a deploy
+  knob, so snapshot wins and the endpoint serves with full-precision KV cache. Weight
+  `--quantization fp8` is a different code path and is unaffected. To actually run FP8
+  KV cache on such a model, drop `gpu_snapshot` (trade the fast cold start for the KV
+  win) — or revisit once the vLLM pin advances past the bug.
 - Possible future unlock: FP8 weights halve the host-RAM needed for sleep level 1,
   which was the stated blocker for snapshotting `nemotron-3-nano-30b` (~60GB BF16,
   ADR-0030). Unverified — Nemotron-H may reject on-the-fly FP8 entirely — so this

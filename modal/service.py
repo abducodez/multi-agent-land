@@ -220,6 +220,21 @@ def build_command(cfg: ModelConfig) -> list[str]:
     if quantization:
         cmd += ["--quantization", quantization]
     kv_cache_dtype = _resolve_precision(KV_CACHE_DTYPE, cfg.kv_cache_dtype)
+    # FP8 KV cache is incompatible with sleep-mode/snapshot models on the pinned
+    # vLLM: the wake path runs init_fp8_kv_scales() over a post-sleep KV cache that
+    # is a *list* of per-layer tensors, not one tensor, so cache_tensor.zero_()
+    # throws and /wake_up 500s (every snapshot restore dies). Snapshot is a
+    # structural per-model decision; the KV dtype is a deploy knob — so snapshot
+    # wins. Drop the flag and warn loudly rather than ship an endpoint that boots
+    # but can never wake. Weight --quantization is unaffected (different code path).
+    if kv_cache_dtype and cfg.gpu_snapshot and kv_cache_dtype.lower().startswith("fp8"):
+        print(
+            f"⚠️  {cfg.endpoint_name}: dropping --kv-cache-dtype {kv_cache_dtype} — "
+            "FP8 KV cache crashes the snapshot wake path on the pinned vLLM (see ADR-0031). "
+            "Serving with full-precision KV cache. Drop gpu_snapshot to keep FP8 KV cache.",
+            flush=True,
+        )
+        kv_cache_dtype = None
     if kv_cache_dtype:
         cmd += ["--kv-cache-dtype", kv_cache_dtype]
     # Performance / throughput knobs (all data-driven from ModelConfig).

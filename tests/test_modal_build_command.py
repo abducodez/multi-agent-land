@@ -85,6 +85,45 @@ def test_kv_cache_env_override(service, monkeypatch):
     assert cmd[cmd.index("--kv-cache-dtype") + 1] == "fp8"
 
 
+# ── FP8 KV cache × snapshot incompatibility (vLLM wake-path crash) ─────────────
+
+
+def test_fp8_kv_cache_dropped_for_snapshot_models(service):
+    # FP8 KV cache crashes the /wake_up path on snapshot models, so the flag is
+    # suppressed when gpu_snapshot is set — the endpoint serves with full-precision
+    # KV cache rather than booting into a state it can never wake from.
+    cmd = service.build_command(_make(service, kv_cache_dtype="fp8", gpu_snapshot=True))
+    assert "--kv-cache-dtype" not in cmd
+    # The snapshot flag itself still wins and is emitted.
+    assert "--enable-sleep-mode" in cmd
+
+
+def test_fp8_kv_cache_env_override_dropped_for_snapshot_models(service, monkeypatch):
+    # The global deploy override is the common trigger: it lands on every model in
+    # the app, including snapshot ones, which must still drop it.
+    monkeypatch.setattr(service, "KV_CACHE_DTYPE", "fp8")
+    cmd = service.build_command(_make(service, gpu_snapshot=True))
+    assert "--kv-cache-dtype" not in cmd
+
+
+def test_fp8_variant_kv_cache_dropped_for_snapshot_models(service):
+    # Every fp8 variant hits init_fp8_kv_scales, so fp8_e5m2 is dropped too.
+    cmd = service.build_command(_make(service, kv_cache_dtype="fp8_e5m2", gpu_snapshot=True))
+    assert "--kv-cache-dtype" not in cmd
+
+
+def test_non_fp8_kv_cache_kept_for_snapshot_models(service):
+    # The guard only fires on fp8; a non-fp8 dtype passes through even with snapshot.
+    cmd = service.build_command(_make(service, kv_cache_dtype="auto", gpu_snapshot=True))
+    assert cmd[cmd.index("--kv-cache-dtype") + 1] == "auto"
+
+
+def test_fp8_kv_cache_kept_for_non_snapshot_models(service):
+    # Without snapshot there's no wake path, so FP8 KV cache stays.
+    cmd = service.build_command(_make(service, kv_cache_dtype="fp8", gpu_snapshot=False))
+    assert cmd[cmd.index("--kv-cache-dtype") + 1] == "fp8"
+
+
 # ── deploy script wiring ───────────────────────────────────────────────────────
 
 

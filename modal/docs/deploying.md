@@ -233,6 +233,14 @@ uv run scripts/deploy_modal.py nvidia --quantization none
 > `curl <url>/v1/models`); if a model won't start, redeploy that provider without
 > the flag. This is why all per-model defaults stay `None` for now. See ADR-0031.
 
+> **FP8 KV cache (`--kv-cache-dtype fp8`) is silently dropped for snapshot models.**
+> On the pinned vLLM it crashes the `/wake_up` path (`init_fp8_kv_scales` →
+> `'list' object has no attribute 'zero_'`), so an FP8-KV snapshot model boots but
+> can never wake. `build_command` drops the flag for any `gpu_snapshot=True` model
+> and logs a `⚠️` line at deploy; the endpoint serves with full-precision KV cache.
+> FP8 *weights* (`--quantization fp8`) are unaffected. To run FP8 KV cache on such a
+> model, set its `gpu_snapshot=False`. See ADR-0031.
+
 ## Auth
 
 Modal web endpoints are public by default. Secrets are supplied as environment
