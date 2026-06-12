@@ -375,6 +375,19 @@ techniques:
   the same "decorate the emitted event" move `FortuneTeller` uses for `omen`. Riding the
   real ledger, the reveal scrubs and replays like any other event.
 
+- **Ground truth gets a code-stamped scoreboard.** The scenario declares a
+  [`competition:` block](../schema/scenario-config.md#competition-who-can-win-and-who-decides)
+  (`kind: versus`, ADR-0029) naming the teams — `spy: [spy-nil]` vs the herd. The
+  judge's `winner` field (a well-known typed extra field, validated with one re-ask)
+  is its *accusation*; the `SpyHost` handler then scores it in code: the herd wins
+  iff the accused really is the spy, and the verdict payload gains `accused`,
+  `correct`, and a team-label `winner`. This is the load-bearing split — the model
+  provides the judgment drama, code stamps the bookkeeping where truth exists.
+  (Contrast `mystery-roots`, `kind: judged`: no ground truth, so the model's
+  validated `winner` *is* the result, no handler needed.) Offline, the handler
+  recovers the accusation from the verdict text, so the no-API-key demo still
+  produces a full deterministic scoreboard.
+
 Offline, curated lines + a per-role mood bias in `src/models/provider.py` (`_STUB_*`,
 keyed by agent name) give the bluff a coherent arc with no API key; live, a real small
 model improvises from the personas. Either way the cast never calls each other — they
@@ -390,6 +403,7 @@ only post to the shared log, and the seam shows.
 |---|---|---|
 | a new cast on existing patterns | agent + scenario YAML | none |
 | a hidden-role / secret-info game | secret in each `persona`; reveal via a verdict `handler` | none (handler in `agents/`) |
+| a scenario that produces a *winner* | a `competition:` block; `winner` in the judge's `output_extra_fields` (+ a scoring `handler` if ground truth exists) | none (ADR-0029) |
 | a new event kind | just use it in `may_emit` | none |
 | an agent that calls an existing tool | a `handler` + `tools:` grant | none (handler in `agents/`) |
 | an agent that calls a *new* tool | register it in `builtins.py` + grant it | tool registration only |
@@ -468,8 +482,9 @@ competition:
     herd: [spy-cara, spy-bex, spy-ovo]
 ```
 
-**`versus` with symmetric seats** — identical manifests, different models; the
-cleanest "which model plays better" arena (`config/scenarios/debate-duel.yaml`):
+**`versus` with symmetric seats** ([ADR-0030](../adr/0030-arena-scenarios-and-offline-winners.md)) —
+identical manifests, different models; the cleanest "which model plays better" arena
+(`config/scenarios/debate-duel.yaml`):
 
 ```yaml
 competition:
@@ -503,14 +518,16 @@ Token Wood (none) · 🔮 Oracle Grove (none, tool-use showcase).
 
 ### The checklist is enforced, not aspirational
 
-`tests/test_scenario_contract.py` loads every YAML under `config/scenarios/`,
-composes a full `WorldConfig` (this matters — the cross-cast competition rules run on
-`WorldConfig`, **not** on the per-file `validate_scenario` path, so a lone-YAML check
-cannot catch a missing judge), and asserts:
+`tests/test_scenario_contract.py` loads every YAML under `config/scenarios/` and
+composes a full `WorldConfig` (this matters — the cross-cast competition rules, e.g.
+team/seat members must be in the cast and team labels must not collide with agent
+names, run on `WorldConfig`, **not** on the per-file `validate_scenario` path). It
+then asserts:
 
 - an **explicit** `competition` block is present on every shipped scenario;
 - `judged`/`versus` scenarios include a cast member with `role: judge` that emits
-  `judge.verdict`;
+  `judge.verdict` (a *test-level* check — the schema stays permissive so a partial
+  world from the Lab still validates);
 - every team member and symmetric seat is in the scenario's `cast`;
 - symmetric seats are *actually* symmetric — their manifests are identical except
   `name`, `hue`, `archetype`, `model_profile`, and `model_endpoint`, so a seat win

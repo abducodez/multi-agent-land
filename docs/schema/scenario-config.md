@@ -21,6 +21,8 @@ cast:                          # agent names, resolved via the agent registry
   - devils-advocate
   - mystery-judge
 genesis_text: "A mystery settles over the wood: {seed}"   # '{seed}' substituted
+competition:                   # optional contest contract (ADR-0029); absent == none
+  kind: judged                 # versus | judged | none
 governor:                      # optional per-scenario budget (else defaults)
   max_turns: 2000
   max_calls_per_turn: 16
@@ -38,7 +40,44 @@ governor:                      # optional per-scenario budget (else defaults)
 | `example_seeds` | Seed gallery for the UI dropdown. |
 | `cast` | Agent names that participate.  **Selecting who participates is editing this list.**  Each must exist in `config/agents/`. |
 | `genesis_text` | Template for the opening `world.observed`; `{seed}` is replaced. |
+| `competition` | Optional `CompetitionConfig` — does this scenario produce a winner, and how?  See below. |
 | `governor` | Optional `GovernorConfig`; omit for engine defaults. |
+
+## Competition: who can win, and who decides
+
+A scenario declares whether it produces a winner with the optional `competition:`
+block (`CompetitionConfig`, ADR-0029).  Absent block == `kind: none` — full sessions
+and history, but nobody wins.
+
+```yaml
+competition:
+  kind: versus | judged | none   # default none
+  teams:                         # versus only
+    spy: [spy-nil]
+    herd: [spy-cara, spy-bex, spy-ovo]
+```
+
+The three kinds split *who derives the winner*:
+
+| kind | ground truth? | winner derived by | shipped example |
+|---|---|---|---|
+| `versus` | yes — the team map | **code** — the scenario's handler scores the judge's accusation against `teams` | `the-steeped` |
+| `judged` | no — judgment *is* the result | **the model** — the judge's validated `winner` field | `mystery-roots` |
+| `none` | n/a | nobody — judges don't declare `winner` at all | everything else |
+
+Validation rules (enforced in `CompetitionConfig` and `WorldConfig`,
+`src/core/config.py` — a bad block fails loudly at load, per ADR-0011):
+
+- `teams` is permitted only when `kind: versus`, and is required (non-empty) there.
+- Member lists must be non-empty and **mutually disjoint** — no double agents.
+- Every team member must appear in the scenario's `cast`.
+- **No team label may equal an agent name.**  The `winner` payload key carries either
+  an agent name or a team label; this rule keeps that union unambiguous.
+
+The registry injects the competition context into the cast's agents at build time
+(the same seam as `agent.manifest`), which arms verdict validation in the base agent.
+The machine-readable verdict and run-summary keys this produces are documented in
+[events.md](events.md#verdict-and-run-payloads-adr-0029).
 
 ## Scheduling lives on the agents
 

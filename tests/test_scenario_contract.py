@@ -116,15 +116,15 @@ def test_world_rejects_team_member_not_in_cast(registry: Registry) -> None:
     """The cross-cast guard must actually fire on a broken competition block."""
     good = registry.scenarios["the-steeped"].model_dump()
     good["competition"] = {"kind": "versus", "teams": {"spy": ["nobody-here"], "herd": ["spy-cara"]}}
-    with pytest.raises(ValueError, match="non-cast members"):
+    with pytest.raises(ValueError, match="not in its cast"):
         WorldConfig(agents=list(registry.agents.values()), scenarios=[good])
 
 
-def test_world_rejects_competitive_scenario_without_a_judge(registry: Registry) -> None:
-    bad = registry.scenarios["open-table"].model_dump()
-    bad["cast"] = ["chat-curious", "chat-skeptic", "chat-host"]  # drop the table-judge
-    bad["competition"] = {"kind": "judged"}
-    with pytest.raises(ValueError, match="requires a cast member"):
+def test_world_rejects_versus_without_teams_or_seats(registry: Registry) -> None:
+    """A versus contest must describe itself with either teams or symmetric seats."""
+    bad = registry.scenarios["debate-duel"].model_dump()
+    bad["competition"] = {"kind": "versus"}  # neither teams nor symmetric_seats
+    with pytest.raises(ValueError, match="requires either a 'teams' mapping or 'symmetric_seats'"):
         WorldConfig(agents=list(registry.agents.values()), scenarios=[bad])
 
 

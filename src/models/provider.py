@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from src import observability as obs
 
@@ -327,7 +328,7 @@ class DeterministicTinyModel(ModelProvider):
             allowed_kinds, fields = schema
             extra = [f for f in fields if f not in ("kind", "text")]
             if extra:  # only agents that opted into extra fields take the JSON path
-                obj: dict[str, str] = {
+                obj: dict[str, Any] = {
                     "kind": allowed_kinds[int(digest[2:4], 16) % len(allowed_kinds)],
                     "text": text,
                 }
@@ -364,7 +365,7 @@ class DeterministicTinyModel(ModelProvider):
         obs.log("llm.exchange", level="debug", role=role, model=self.variant, prompt=prompt, completion=out)
         return out
 
-    def _synth_field(self, name: str, role: str, digest: str) -> str:
+    def _synth_field(self, name: str, role: str, digest: str) -> Any:
         """Deterministically synthesise a value for one requested extra field."""
         if name == "mood":
             moods = _STUB_MOODS_BY_ROLE.get(role, _STUB_MOODS)
@@ -372,11 +373,13 @@ class DeterministicTinyModel(ModelProvider):
         if name == "thought":
             opts = _STUB_THOUGHTS.get(role, _STUB_THOUGHT_DEFAULT)
             return opts[int(digest[6:8], 16) % len(opts)]
-        if name in ("winner", "scores"):
-            # The stub can't know the live cast, so it must NOT invent a fake winner
-            # name (it would surface as junk in the verdict).  Leave it empty: the
-            # judge's handler (JudgedCompetition / ground-truth subclasses) derives the
-            # real winner from the on-stage cast.  See ADR-0029.
-            return ""
+        # Well-known verdict fields (ADR-0029) get their real types, not a placeholder:
+        # the stub names no winner (the field is optional, and a versus / judged handler
+        # recovers the winner from the verdict text), and emits an empty score map — so
+        # the offline path stays validation-clean and deterministic with no wasted re-ask.
+        if name == "winner":
+            return None
+        if name == "scores":
+            return {}
         # Unknown extra field: a short, stable placeholder keeps the output valid.
         return f"{name}:{digest[:4]}"

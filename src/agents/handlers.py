@@ -9,8 +9,6 @@ manifest; the manifest still supplies all declarative fields.
 
 from __future__ import annotations
 
-import re
-
 from src.agents.base import ManifestAgent
 from src.core.events import Event
 from src.core.projections import StageProjection
@@ -19,23 +17,18 @@ from src.core.registry import register_handler
 
 @register_handler("spy-host")
 class SpyHost(ManifestAgent):
-    """The word-pair bluff host: delivers a verdict, scores the game, unmasks every word.
+    """The word-pair bluff host: delivers a verdict and unmasks every secret word.
 
     The generic turn produces the verdict *text* (who the host accuses).  This handler
-    then does two things on the emitted ``judge.verdict`` payload:
+    then attaches the dramatic ``reveal`` — one ``{agent, secret, role}`` row per player —
+    onto the emitted ``judge.verdict`` payload, exactly the shape the Fishbowl verdict
+    banner renders (``view_model``/``render_verdict``).  The reveal is recorded on the real
+    ledger, so the unmasking is a genuine engine event, not a UI overlay.
 
-      * **Scoreboard (W2.2).**  Ground truth lives in code, not the model: it parses the
-        accused name out of the prose, compares it to the *actual* spy, and stamps
-        ``winner = "herd"`` (caught) or ``"spy"`` (escaped) plus ``correct: bool``.  The
-        ``winner`` is a *team* label (matching ``competition.teams`` in the scenario);
-        ``FishbowlSession.finalize`` reconciles a single-member team to its model.
-      * **Reveal.**  One ``{agent, secret, role}`` row per on-stage player — exactly the
-        shape the Fishbowl verdict banner renders (``view_model``/``render_verdict``).
-
-    Both ride the real ledger, so the unmasking and the score are genuine engine events,
-    not a UI overlay.  The secret-word map is curated demo content for ``the-steeped``
-    (mirroring the words baked into each player's persona); only players actually present
-    on stage are revealed, so editing the cast in the Lab never produces a phantom row.
+    The secret-word map below is curated demo content for ``the-steeped`` (the same way the
+    offline stub carries curated lines) — it mirrors the words baked into each player's
+    persona.  Only players actually present on stage are revealed, so editing the cast in
+    the Lab never produces a phantom row.
     """
 
     # agent name → (secret word, table role) for the shipped "the-steeped" cast.
@@ -46,11 +39,6 @@ class SpyHost(ManifestAgent):
         "spy-nil": ("TEA", "SPY — CAUGHT"),
     }
 
-    @property
-    def _true_spy(self) -> str | None:
-        """The agent who actually holds the odd word — the ground truth the prose is scored against."""
-        return next((name for name, (_, role) in self._REVEAL.items() if "SPY" in role), None)
-
     def act(
         self,
         run_id: str,
@@ -60,28 +48,59 @@ class SpyHost(ManifestAgent):
     ) -> Event:
         event = super().act(run_id, turn, projection, recent_events)
         on_stage = {e.actor for e in recent_events}
-        present = [name for name in self._REVEAL if name in on_stage]
-        if present:
-            event.payload["reveal"] = [
-                {"agent": name, "secret": self._REVEAL[name][0], "role": self._REVEAL[name][1]} for name in present
-            ]
-            accused = self._accused(event.payload.get("text", ""), present)
-            correct = accused is not None and accused == self._true_spy
-            event.payload["correct"] = correct
-            event.payload["winner"] = "herd" if correct else "spy"
+        reveal = [
+            {"agent": name, "secret": secret, "role": role}
+            for name, (secret, role) in self._REVEAL.items()
+            if name in on_stage
+        ]
+        if reveal:
+            event.payload["reveal"] = reveal
+        self._stamp_scoreboard(event)
         return event
 
-    @staticmethod
-    def _accused(text: str, present: list[str]) -> str | None:
-        """Which on-stage player the host's prose names as the spy.
+    def _stamp_scoreboard(self, event: Event) -> None:
+        """Score the verdict in code — the load-bearing split of ADR-0029.
 
-        Personas/verdicts name players by their bare handle in caps ("NIL is the spy"),
-        so match each present agent's tail segment (``spy-nil`` → ``NIL``) as a whole word."""
-        words = set(re.findall(r"[a-z]+", text.lower()))
-        for name in present:
-            if name.rsplit("-", 1)[-1].lower() in words:
-                return name
-        return None
+        The judge's prose names a suspect (``payload['winner']`` on the live path);
+        this handler turns that *accusation* into the ground-truth *result* using the
+        scenario's ``competition.teams``: the herd wins when the named player really is
+        a spy, the spy wins otherwise.  The accusation is preserved as ``accused`` and a
+        ``correct`` flag rides alongside, so the trace stays auditable.  Offline (no
+        ``winner`` field) the accusation is recovered from the verdict text, so the
+        no-API-key demo still ends on a full, deterministic scoreboard.  With no spy
+        team declared, or no recoverable accusation, the round is a ``no_contest``.
+        """
+        comp = self.competition
+        spies = set((getattr(comp, "teams", None) or {}).get("spy", []))
+        if getattr(comp, "kind", "none") != "versus" or not spies:
+            return
+        accused = event.payload.get("winner") or self._scan_accusation(str(event.payload.get("text", "")))
+        if not accused:
+            event.payload.pop("winner", None)
+            event.payload["no_contest"] = True
+            return
+        correct = accused in spies
+        event.payload["accused"] = accused
+        event.payload["correct"] = correct
+        event.payload["winner"] = "herd" if correct else "spy"
+
+    def _scan_accusation(self, text: str) -> str | None:
+        """Recover the accused player from verdict *text* — the first cast name named.
+
+        Matches each player by the distinctive tail of its agent name (``spy-cara`` →
+        ``cara``), case-insensitively, and returns the one mentioned earliest.  The host
+        itself is excluded so it never accuses the judge."""
+        low = text.lower()
+        best: str | None = None
+        best_at = len(low) + 1
+        for name in self.cast_names:
+            if name == self.name:
+                continue
+            token = name.split("-")[-1].lower()
+            at = low.find(token) if token else -1
+            if at != -1 and at < best_at:
+                best, best_at = name, at
+        return best
 
 
 @register_handler("fortune-teller")

@@ -140,6 +140,9 @@ They're useful for:
 - Routing decisions (e.g. "if emotion=desperate, escalate to judge")
 - Downstream agent context (the Echo agent could read the emitting agent's "wants")
 
+Most extra fields are required strings, but two names are **well-known and
+engine-typed** — see *Well-known typed fields* below.
+
 ---
 
 ## Testing structured output
@@ -177,6 +180,36 @@ The `may_emit` boundary that the parser *coerced* is now enforced by the type: a
 model literally cannot validate with a kind it isn't authorised to emit. The
 function is pure Pydantic — no provider, no network — so it is unit-tested
 directly and importable with the structured-output dependency absent.
+
+### Well-known typed fields
+
+`output_extra_fields` stays a plain `list[str]` — no manifest syntax change — but
+`src/core/structured.py` carries a small table of names the engine knows how to
+type (ADR-0029):
+
+| field    | type                | required            |
+|----------|---------------------|---------------------|
+| `winner` | `str \| None`       | no (default `None`) |
+| `scores` | `dict[str, float]`  | no (default `{}`)   |
+| *other*  | `str`               | yes (unchanged)     |
+
+`winner` and `scores` are not arbitrary scenario fields — they are the verdict
+contract that `run.finished` already names (ADR-0026), so giving them engine-known
+types is the same move as `CORE_EVENT_KINDS`: open surface, curated core. A judge
+manifest lists them like any extra field (`output_extra_fields: [mood, winner,
+scores]` — see `config/agents/mystery-judge.yaml`).
+
+Both halves of the contract honour the table. `build_output_model` makes the typed
+fields optional with defaults, and `json_instruction` renders a typed schema hint
+instead of the generic string slot — `"winner": "<a player's name, or null>"`,
+`"scores": {"<player>": 0-10}` — so a small model knows it may answer `null`.
+Back-compat is total: every existing manifest (`[mood]`, `[thought]`, …) hits the
+*other* row and behaves exactly as before, and the tolerant offline parser already
+passed non-string values through untouched.
+
+What happens to a *validated-but-wrong* `winner` (a name outside the cast) is the
+verdict-validation story — one re-ask, then `no_contest` — documented in
+[events.md](../schema/events.md#verdict-and-run-payloads-adr-0029) and ADR-0029.
 
 ### The structured call
 

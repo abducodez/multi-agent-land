@@ -22,15 +22,7 @@ from src.ui.fishbowl.view_model import view_model_at
 
 # Preferred display order, mirroring root app.py.  Any other scenarios dropped into
 # config/ follow in sorted order.
-_PREFERRED = [
-    "thousand-token-wood",
-    "mystery-roots",
-    "oracle-grove",
-    "the-steeped",
-    "debate-duel",
-    "twenty-sprouts",
-    "beat-battle",
-]
+_PREFERRED = ["thousand-token-wood", "mystery-roots", "oracle-grove"]
 
 
 def _ordered_names(registry: Registry) -> list[str]:
@@ -123,15 +115,15 @@ class FishbowlSession:
     def finalize(self, reason: str) -> None:
         """Close the current run with a ``run.finished`` event (idempotent-safe).
 
-        On a verdict we derive ``winner`` from the judge's ruling (the ``winner``
-        payload key) and ``winning_model`` from the run.started cast map.  The winner
-        may be a cast *agent name* (judged scenarios → maps straight to its model) or a
-        *team label* (versus scenarios, e.g. ``"herd"``).  For a team we attribute the
-        model only when the team has exactly one member; multi-member teams have no
-        single winning model (the seat, not a model, won) — the leaderboard credits the
-        team.  Everything falls back to ``None`` when unknown."""
+        On a verdict we derive ``winner`` from the judge's ruling and resolve its kind
+        (ADR-0029): a cast agent name → ``winner_kind: "agent"`` with that agent's
+        ``winning_model``; a team label → ``winner_kind: "team"`` with every member's
+        endpoint in ``winning_models`` (``winning_model`` left ``None``, never guessed).
+        All fall back to ``None`` / empty when unknown."""
         winner: str | None = None
+        winner_kind: str | None = None
         winning_model: str | None = None
+        winning_models: list[str] = []
         run_events = self.conductor.ledger.events_for_run(self.conductor.run_id)
         if reason == "verdict":
             verdict = next((e for e in reversed(run_events) if e.kind == "judge.verdict"), None)
@@ -139,14 +131,27 @@ class FishbowlSession:
                 winner = verdict.payload.get("winner") or None
             if winner:
                 started = next((e for e in run_events if e.kind == "run.started"), None)
-                started_payload = started.payload if started is not None else {}
-                cast = started_payload.get("cast") or {}
-                teams = (started_payload.get("competition") or {}).get("teams") or {}
+                cast = (started.payload.get("cast") or {}) if started is not None else {}
+                scenario = self._registry.scenarios.get(self._scenario_name)
+                teams = getattr(getattr(scenario, "competition", None), "teams", None) or {}
                 if winner in cast:
+                    winner_kind = "agent"
                     winning_model = (cast.get(winner) or {}).get("model_endpoint")
-                elif winner in teams and len(teams[winner]) == 1:
-                    winning_model = (cast.get(teams[winner][0]) or {}).get("model_endpoint")
-        self.conductor.finalize(reason, winner=winner, winning_model=winning_model)
+                    winning_models = [winning_model] if winning_model else []
+                elif winner in teams:
+                    winner_kind = "team"
+                    winning_models = [
+                        endpoint
+                        for member in teams[winner]
+                        if (endpoint := (cast.get(member) or {}).get("model_endpoint"))
+                    ]
+        self.conductor.finalize(
+            reason,
+            winner=winner,
+            winner_kind=winner_kind,
+            winning_model=winning_model,
+            winning_models=winning_models,
+        )
 
     @property
     def cast(self) -> list[AgentManifest]:

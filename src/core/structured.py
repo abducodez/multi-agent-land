@@ -40,6 +40,34 @@ class AgentOutputError(ValueError):
     """Raised when output cannot be normalised to a valid event payload."""
 
 
+# ── well-known typed extra fields ──────────────────────────────────────────────
+
+
+# A small, curated table of *engine-known* extra fields (ADR-0029).  Most
+# ``output_extra_fields`` are arbitrary scenario fields (``mood``, ``wants``, …) and
+# remain required strings, but ``winner`` and ``scores`` are the verdict contract
+# ADR-0026 already names in ``run.finished`` — so the engine gives them real types:
+# an *optional* cast name and an *optional* ``{player: score}`` map.  Each entry pairs
+# the Pydantic field spec (built lazily so ``Field`` stays a local import) with the
+# JSON-schema hint ``json_instruction`` renders for that field.  Anything not in this
+# table hits the *other* row and behaves exactly as before — back-compat is total.
+def _well_known_specs() -> dict[str, tuple[Any, str]]:
+    """Return ``{field: (pydantic_spec, json_hint)}`` for engine-known extra fields.
+
+    Built behind a function so ``Field`` is a local import (matching the lazy-import
+    idiom of ``build_output_model``) and never touched on the offline path that
+    doesn't construct a validated model.
+    """
+    from pydantic import Field
+
+    # The hint is the literal JSON value to render after ``"<field>": `` — a quoted
+    # string for ``winner``, a bare object for ``scores`` (it is not a string value).
+    return {
+        "winner": ((str | None, None), '"<a player\'s name, or null>"'),
+        "scores": ((dict[str, float], Field(default_factory=dict)), '{"<player>": 0-10}'),
+    }
+
+
 # ── validated output model (live path) ─────────────────────────────────────────
 
 
@@ -50,22 +78,27 @@ def build_output_model(
     """Build a Pydantic model for an agent's validated output.
 
     ``kind`` is constrained to *allowed_kinds* via a ``Literal``, so the model
-    cannot emit a kind it is not authorised for; ``text`` plus any *extra_fields*
-    are required strings.  Used on the live path with structured output: the
-    provider retries on validation failure and returns a valid instance, which
-    means the malformed-prose ``_raw_fallback`` path is never taken.
+    cannot emit a kind it is not authorised for; ``text`` is a required string.
+    *extra_fields* are required strings too, *except* the **well-known typed
+    fields** of ADR-0029: ``winner`` becomes ``str | None`` (default ``None``) and
+    ``scores`` becomes ``dict[str, float]`` (default ``{}``).  Used on the live path
+    with structured output: the provider retries on validation failure and returns a
+    valid instance, which means the malformed-prose ``_raw_fallback`` path is never
+    taken.
 
     Args:
         allowed_kinds: event kinds this agent may emit (the ``may_emit`` grant,
             reflection excluded).  Must be non-empty.
-        extra_fields: optional additional payload fields (e.g. ``"emotion"``),
-            each a required string alongside ``text``.
+        extra_fields: optional additional payload fields (e.g. ``"emotion"``).  Each
+            is a required string alongside ``text`` unless it is a well-known typed
+            field (``winner``, ``scores``), which is optional with a typed default.
     """
     if not allowed_kinds:
         raise AgentOutputError("build_output_model requires at least one allowed kind")
 
     from pydantic import create_model
 
+    well_known = _well_known_specs()
     # A single-element Literal is legal and still constrains to that one kind.
     kind_type = Literal[tuple(allowed_kinds)]  # type: ignore[valid-type]
     fields: dict[str, Any] = {
@@ -73,7 +106,8 @@ def build_output_model(
         "text": (str, ...),
     }
     for name in extra_fields or []:
-        fields[name] = (str, ...)
+        spec, _hint = well_known.get(name, ((str, ...), None))
+        fields[name] = spec
 
     return create_model(
         "AgentOutput",
@@ -88,17 +122,40 @@ def build_output_model(
 def json_instruction(allowed_kinds: list[str], extra_fields: list[str] | None = None) -> str:
     """Return the JSON constraint block appended to every agent prompt.
 
+    For ordinary fields the schema hint is the uniform ``"...": "..."`` shape.  When
+    a **well-known typed field** of ADR-0029 is present, that field gets a typed hint
+    instead (``"winner": "<a player's name, or null>"``,
+    ``"scores": {"<player>": 0-10}``) so a small model knows it may answer ``null`` or
+    a number map rather than a sentence.  Manifests with no well-known field render
+    byte-identically to the original uniform schema.
+
     Args:
         allowed_kinds: event kinds this agent may emit.
         extra_fields: optional additional payload fields (e.g. "emotion", "wants").
     """
-    field_list = '", "'.join(["kind", "text"] + (extra_fields or []))
+    fields = extra_fields or []
+    well_known = _well_known_specs()
     kinds_str = " | ".join(allowed_kinds)
+
+    if any(name in well_known for name in fields):
+        # Richer per-field schema: typed hints for known fields, "..." for the rest.
+        # Only taken when a well-known field is present, so the common case below
+        # stays byte-identical to the original uniform-schema output.
+        hints = {"kind": '"..."', "text": '"..."'}
+        for name in fields:
+            _spec, hint = well_known.get(name, (None, None))
+            hints[name] = hint if hint is not None else '"..."'
+        schema_body = ", ".join(f'"{name}": {hints[name]}' for name in ["kind", "text", *fields])
+        schema_line = f"Schema: {{{schema_body}}}\n"
+    else:
+        field_list = '", "'.join(["kind", "text"] + list(fields))
+        schema_line = f'Schema: {{"{field_list}": "..."}}\n'
+
     return (
         "\n\nOUTPUT FORMAT\n"
         "Reply with a single JSON object and NOTHING else. No analysis, no reasoning, "
         "no <think> blocks, no markdown fences, no text before or after the JSON.\n"
-        f'Schema: {{"{field_list}": "..."}}\n'
+        f"{schema_line}"
         f"kind must be one of: {kinds_str}\n"
         "text must be one or two sentences, vivid and specific — your line, never your reasoning.\n"
         "If you were given a secret word, never spell or quote it; describe it only.\n"

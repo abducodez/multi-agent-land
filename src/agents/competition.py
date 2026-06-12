@@ -1,24 +1,26 @@
 """Competition handlers — turning a judge's ruling into a machine-readable winner.
 
 The arena contract (ADR-0029) says a winner is *data*, not prose: a
-``judge.verdict`` event should carry ``payload["winner"]`` naming a cast member,
-so the leaderboard can attribute the win to that agent's model.  Two layers make
-that true:
+``judge.verdict`` carries ``payload["winner"]`` naming a cast member (or team), so
+the leaderboard can attribute the win to a model.  Responsibilities split cleanly:
 
-  * **The LLM provides the drama.**  A judge manifest lists ``winner`` in
-    ``output_extra_fields`` (``src/core/structured.py``), so on the live path the
-    model is *required* to emit a ``winner`` string alongside its verdict text.
-  * **Code provides the scoreboard.**  :class:`JudgedCompetition` validates that
-    string against the agents actually on stage and, on any miss (a hallucinated
-    name, or the offline stub which can't know the cast), falls back to a
-    deterministic real candidate — so the verdict *always* names a genuine player.
-    This keeps the no-API-key offline demo watchable: the winner is real even when
-    the model never produced a usable one.
+  * **The model + the engine handle the live path.**  A judge manifest lists
+    ``winner`` in ``output_extra_fields`` (a well-known typed field,
+    ``src/core/structured.py``), and :class:`~src.agents.base.ManifestAgent`
+    validates that name against the injected ``cast_names`` — one corrective re-ask,
+    then ``no_contest`` if the model still won't name a real player.
+  * **This handler keeps the OFFLINE demo watchable.**  The deterministic stub never
+    emits a ``winner`` (the field is optional, ADR-0029), so without help an offline
+    judged run would crown no one.  :class:`JudgedCompetition` fills an *empty* winner
+    by reading the name out of the verdict prose, then falling back to the most active
+    competitor — deterministic, so offline runs are reproducible.  It defers entirely
+    when the engine already forfeited the round (``no_contest``).
 
-A judge with a known ground truth (The Steeped's :class:`SpyHost`, Twenty Sprouts'
-``SproutJudge``) computes the winner in code instead — those subclass this and
-override :meth:`decide_winner`.  This is the best-practice split the roadmap calls
-for: AI is load-bearing for judgment, code is load-bearing for bookkeeping.
+A judge with a known ground truth (The Steeped's :class:`~src.agents.handlers.SpyHost`,
+Twenty Sprouts' :class:`~src.agents.twenty_sprouts.SproutJudge`) computes the winner in
+code instead — ``SproutJudge`` subclasses this and overrides :meth:`decide_winner`.
+The best-practice split the roadmap calls for: AI is load-bearing for judgment, code is
+load-bearing for bookkeeping.
 """
 
 from __future__ import annotations
@@ -37,13 +39,13 @@ _COMPETITOR_KINDS = frozenset({"agent.spoke", "agent.thought", "oracle.spoke"})
 
 @register_handler("judged-competition")
 class JudgedCompetition(ManifestAgent):
-    """A judge whose ``winner`` is validated against the live cast (and repaired offline).
+    """A judge that fills an empty offline ``winner`` so the stub demo still crowns one.
 
-    The generic turn produces the verdict text plus a ``winner`` field (because the
-    manifest lists it in ``output_extra_fields``).  This handler then guarantees
-    ``payload["winner"]`` is a real on-stage competitor: if the model's value isn't
-    one (offline stub, or a live hallucination), it derives one — first by reading a
-    name out of the verdict prose, then by falling back to the most active competitor.
+    The generic turn (and the engine's live validation) handle a model-named winner.
+    This handler runs *after* that: when the verdict carries no winner — the offline
+    stub, which never emits the field — it derives one from the verdict prose, then
+    from the most active competitor.  It honours a model-named winner that is already a
+    real competitor, and defers when the engine forfeited the round (``no_contest``).
     Deterministic, so offline runs are reproducible.
     """
 
@@ -61,6 +63,9 @@ class JudgedCompetition(ManifestAgent):
         winner = self.decide_winner(event, candidates, recent_events)
         if winner:
             event.payload["winner"] = winner
+            # We crowned someone — clear any forfeit the engine stamped (a ground-truth
+            # judge overrides no-contest; a repaired offline winner supersedes the empty).
+            event.payload.pop("no_contest", None)
         return event
 
     # ── decision (override for ground-truth judges) ──────────────────────────────
@@ -71,16 +76,26 @@ class JudgedCompetition(ManifestAgent):
         candidates: list[str],
         recent_events: tuple[Event, ...],
     ) -> str | None:
-        """Return the winning cast name.
+        """Return the winning cast name (or team label).
 
-        Honours the model's ``winner`` when it names a real competitor; otherwise
-        repairs it deterministically (prose mention → most-active fallback)."""
+        Honours the model's ``winner`` when it already names a real competitor or team;
+        otherwise repairs it deterministically (prose mention → most-active fallback).
+        Defers when the engine forfeited the round (``no_contest``) — a live model that
+        refused to name a real player keeps its forfeit; only the offline empty-winner
+        path (no forfeit) is repaired.  Ground-truth judges override this and ignore
+        ``no_contest`` so their code-decided winner always lands."""
+        if event.payload.get("no_contest"):
+            return None
         named = (event.payload.get("winner") or "").strip()
-        if named in candidates:
+        if named and (named in candidates or named in self._team_labels()):
             return named
         return self._winner_from_prose(event, candidates) or self._most_active(candidates, recent_events)
 
     # ── helpers ──────────────────────────────────────────────────────────────────
+
+    def _team_labels(self) -> set[str]:
+        """Valid team labels for this scenario (empty for judged / symmetric-seat duels)."""
+        return set((getattr(self.competition, "teams", None) or {}).keys())
 
     def _candidates(self, recent_events: tuple[Event, ...]) -> list[str]:
         """On-stage competitors: actors who actually spoke, minus this judge.

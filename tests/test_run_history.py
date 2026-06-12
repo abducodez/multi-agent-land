@@ -130,6 +130,28 @@ class TestRunFinished:
         assert len(finished) == 1
         assert finished[0].payload["reason"] == "user_stop"
 
+    def test_versus_session_finalizes_with_team_winner(self):
+        # End-to-end offline: the SpyHost stamps a team winner ("herd"/"spy") on the
+        # verdict, and FishbowlSession.finalize must resolve winner_kind == "team"
+        # (a team label, not a cast agent), never guessing a single winning_model.
+        session = FishbowlSession("the-steeped")
+        session.reset()
+        for _ in range(session.autoplay_tick_cap):
+            if session.has_verdict():
+                break
+            session.step()
+        assert session.has_verdict(), "the stub spy-host should reach a verdict"
+
+        session.finalize("verdict")
+        finished = [
+            e for e in session.conductor.ledger.events_for_run(session.conductor.run_id) if e.kind == "run.finished"
+        ]
+        assert len(finished) == 1
+        payload = finished[0].payload
+        assert payload["winner"] in ("herd", "spy")  # a team label, code-stamped
+        assert payload["winner_kind"] == "team"
+        assert payload["winning_model"] is None  # never guessed for a team win
+
     def test_session_finalize_derives_winner_and_model_from_verdict(self):
         scenario = _verdict_scenario()
         # Build a session-like conductor manually so we control the cast verdict.
@@ -302,13 +324,51 @@ def _bookended_runs() -> list[Event]:
             payload={
                 "reason": "verdict",
                 "winner": "judge",
+                "winner_kind": "agent",
                 "winning_model": "model://j",
+                "winning_models": ["model://j"],
                 "turns": 2,
                 "tokens": 1234,
             },
         ),
         # r2 starts but never finishes — its finished_* fields stay None/0.
         Event(run_id="r2", turn=1, kind="agent.spoke", actor="x", payload={"text": "t"}),
+    ]
+
+
+def _team_win_run() -> list[Event]:
+    """A single versus run finishing on a TEAM win (winner_kind 'team', no single model)."""
+    return [
+        Event(
+            run_id="v1",
+            turn=0,
+            kind="run.started",
+            actor="conductor",
+            payload={
+                "seed": "leaf",
+                "scenario": "the-steeped",
+                "cast": {
+                    "spy-cara": {"model_endpoint": "model://cara", "model_profile": "fast"},
+                    "spy-bex": {"model_endpoint": "model://bex", "model_profile": "fast"},
+                    "spy-ovo": {"model_endpoint": None, "model_profile": "fast"},
+                },
+            },
+        ),
+        Event(
+            run_id="v1",
+            turn=2,
+            kind="run.finished",
+            actor="conductor",
+            payload={
+                "reason": "verdict",
+                "winner": "herd",
+                "winner_kind": "team",
+                "winning_model": None,  # never guessed for a team win
+                "winning_models": ["model://cara", "model://bex"],  # None member endpoint dropped
+                "turns": 2,
+                "tokens": 50,
+            },
+        ),
     ]
 
 
@@ -323,6 +383,9 @@ class TestRunIndexModule:
         assert r1.cast["judge"].model_endpoint == "model://j"
         assert r1.cast["judge"].model_profile == "strong"
         assert (r1.reason, r1.winner, r1.winning_model) == ("verdict", "judge", "model://j")
+        # ADR-0029 attribution keys round-trip through the projection (agent win).
+        assert r1.winner_kind == "agent"
+        assert r1.winning_models == ["model://j"]
         assert (r1.turns, r1.tokens) == (2, 1234)
         assert r1.started_at is not None and r1.finished_at is not None
 
@@ -331,12 +394,26 @@ class TestRunIndexModule:
         assert r2.reason is None and r2.winner is None
         assert (r2.turns, r2.tokens) == (0, 0)
         assert r2.finished_at is None
+        # An unfinished run carries the additive ADR-0029 defaults, never a stale guess.
+        assert r2.winner_kind is None
+        assert r2.winning_models == []
+
+    def test_index_runs_round_trips_a_team_win(self):
+        # winner_kind 'team' carries no single winning_model, only the member endpoints —
+        # and a None member endpoint is dropped from winning_models.
+        (summary,) = index_runs(_team_win_run())
+        assert summary.winner == "herd"
+        assert summary.winner_kind == "team"
+        assert summary.winning_model is None
+        assert summary.winning_models == ["model://cara", "model://bex"]
 
     @pytest.mark.parametrize("make_ledger", [Ledger, lambda: SqlAlchemyLedger("sqlite://")])
-    def test_from_ledger_matches_pure_oracle(self, make_ledger):
-        events = _bookended_runs()
+    @pytest.mark.parametrize("events_factory", [_bookended_runs, _team_win_run])
+    def test_from_ledger_matches_pure_oracle(self, make_ledger, events_factory):
+        events = events_factory()
         ledger = make_ledger()
         for e in events:
             ledger.append(e)
-        # The indexed-query path must produce exactly what the pure oracle does.
+        # The indexed-query path must produce exactly what the pure oracle does —
+        # including the additive ADR-0029 attribution keys (agent win and team win).
         assert index_runs_from_ledger(ledger) == index_runs(events)
