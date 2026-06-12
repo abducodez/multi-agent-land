@@ -72,6 +72,18 @@ class ModelConfig:
     max_model_len: int | None = None  # cap context to fit memory / task
     trust_remote_code: bool = False  # required by MiniCPM / Nemotron custom code
 
+    # Precision / quantization (vLLM serve flags). Both default to full precision
+    # (BF16 weights, model-dtype KV cache); set them to shrink the memory footprint
+    # so a model fits a smaller GPU or leaves more room for KV cache. A deploy-time
+    # env override (``MODAL_LLM_QUANTIZATION`` / ``MODAL_LLM_KV_CACHE_DTYPE``, read in
+    # ``service.py``) wins over these per-model values for a whole deploy. CAVEAT:
+    # on-the-fly FP8 needs an Ada/Hopper GPU (our L4/L40S/H200 all qualify) AND vLLM
+    # support for the architecture — custom-code / hybrid-mamba archs (Nemotron-H,
+    # MiniCPM) and the Transformers-backend Gemmas may fail to start under it, so these
+    # stay ``None`` until a model is verified to serve quantized. See ADR-0031.
+    quantization: str | None = None  # vLLM --quantization, on-the-fly weight quant (e.g. "fp8"); None = full BF16
+    kv_cache_dtype: str | None = None  # vLLM --kv-cache-dtype (e.g. "fp8"); None = auto (model dtype)
+
     # Performance / throughput (vLLM serve flags). Defaults target high
     # steady-state throughput on the common single-GPU path; tune per model.
     # See ``service.build_command`` for how each maps to a flag.

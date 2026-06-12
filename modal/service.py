@@ -87,6 +87,22 @@ LOG_LEVEL = os.environ.get("MODAL_LLM_LOG_LEVEL", "INFO").upper()
 #   MODAL_LLM_KEEP_WARM=1 modal deploy modal/app_nvidia.py
 KEEP_WARM = int(os.environ.get("MODAL_LLM_KEEP_WARM", "0") or "0")
 
+# Deploy-time precision overrides. When set, each wins over the matching per-model
+# ``ModelConfig`` field for *every* model in the deploy — so you flip a whole
+# provider to FP8 without editing the catalogue (deploys are per-provider, so the
+# blast radius is one app):
+#   MODAL_LLM_QUANTIZATION=fp8 modal deploy modal/app_nvidia.py
+#   MODAL_LLM_QUANTIZATION=fp8 MODAL_LLM_KV_CACHE_DTYPE=fp8 uv run scripts/deploy_modal.py nvidia
+# A disable token (``none``/``off``/``bf16``/…) forces full precision even if a model
+# defaults to a quantized mode. Read at deploy time and baked into each model's argv
+# (see build_command). CAVEAT: not every architecture serves under on-the-fly FP8 —
+# verify per provider; a model that can't will fail to boot. See ADR-0031.
+QUANTIZATION = os.environ.get("MODAL_LLM_QUANTIZATION", "").strip()
+KV_CACHE_DTYPE = os.environ.get("MODAL_LLM_KV_CACHE_DTYPE", "").strip()
+# Override values that mean "no quantization / model-default precision" — they make
+# the resolver omit the flag rather than pass a bogus value to vLLM.
+_PRECISION_DISABLE = frozenset({"none", "off", "false", "0", "no", "bf16", "fp16", "auto"})
+
 # Where the structured-logging module + its generated config live in the
 # container. The module dir goes on PYTHONPATH so vLLM can import the formatter
 # the dictConfig references (``vllm_logging.JsonFormatter``).
@@ -159,6 +175,20 @@ def build_image(cfg: ModelConfig) -> modal.Image:
     return image
 
 
+def _resolve_precision(override: str, model_value: str | None) -> str | None:
+    """Effective precision flag: a deploy-time *override* wins over *model_value*.
+
+    A disable token in the override (``none``/``off``/``bf16``/…) returns ``None`` so
+    the caller omits the flag and vLLM keeps full / model-default precision; an empty
+    override falls back to the per-model value. Reads its inputs as arguments (the
+    callers pass the module globals) so tests can monkeypatch ``QUANTIZATION`` /
+    ``KV_CACHE_DTYPE`` and see the change without reimporting.
+    """
+    if override:
+        return None if override.lower() in _PRECISION_DISABLE else override
+    return model_value
+
+
 def build_command(cfg: ModelConfig) -> list[str]:
     """Assemble the ``vllm serve`` argv for a model. Returned as a list so we can
     launch with ``subprocess.Popen`` without a shell (no quoting pitfalls)."""
@@ -183,6 +213,15 @@ def build_command(cfg: ModelConfig) -> list[str]:
         cmd += ["--max-model-len", str(cfg.max_model_len)]
     if cfg.trust_remote_code:
         cmd += ["--trust-remote-code"]
+    # Precision / quantization. A deploy-time env override (QUANTIZATION /
+    # KV_CACHE_DTYPE) wins over the per-model ModelConfig field; both default to
+    # full precision (no flag). On-the-fly FP8 needs Ada/Hopper + arch support.
+    quantization = _resolve_precision(QUANTIZATION, cfg.quantization)
+    if quantization:
+        cmd += ["--quantization", quantization]
+    kv_cache_dtype = _resolve_precision(KV_CACHE_DTYPE, cfg.kv_cache_dtype)
+    if kv_cache_dtype:
+        cmd += ["--kv-cache-dtype", kv_cache_dtype]
     # Performance / throughput knobs (all data-driven from ModelConfig).
     if cfg.gpu_memory_utilization is not None:
         cmd += ["--gpu-memory-utilization", str(cfg.gpu_memory_utilization)]

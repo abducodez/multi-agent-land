@@ -197,6 +197,42 @@ edits — it reads the same `catalogue.py`.
    `app = modal.App(PROVIDERS["<provider>"].app)` then
    `register_all(app, PROVIDERS["<provider>"].models)`.
 
+## Quantization (lower precision)
+
+Every model repo ships **BF16** weights. To shrink the memory footprint — fit a
+model on a smaller GPU, or free VRAM for a longer context / more concurrency — you
+can serve it at lower precision. This is purely serving-side: it only adds
+`--quantization` / `--kv-cache-dtype` to the vLLM argv, and `--served-model-name`
+is unchanged, so the engine, endpoint URLs, and the running cast are untouched.
+
+Two controls, env override wins:
+
+- **Per model** — set `quantization` (and/or `kv_cache_dtype`) on a `ModelConfig`
+  in `catalogue.py`. This is the baseline a model serves at by default.
+- **Per deploy (no code edits)** — `MODAL_LLM_QUANTIZATION` / `MODAL_LLM_KV_CACHE_DTYPE`
+  override every model in the deploy. A disable token (`none`/`off`/`bf16`/…) forces
+  full precision even on a model that defaults to quantized.
+
+```bash
+# On-the-fly FP8 weights for one provider (via the deploy helper):
+uv run scripts/deploy_modal.py nvidia --quantization fp8
+
+# FP8 weights + FP8 KV cache, raw modal CLI:
+MODAL_LLM_QUANTIZATION=fp8 MODAL_LLM_KV_CACHE_DTYPE=fp8 modal deploy modal/app_nvidia.py
+
+# Force full precision back (overrides any per-model default):
+uv run scripts/deploy_modal.py nvidia --quantization none
+```
+
+> **Not every architecture serves under on-the-fly FP8.** It needs an Ada/Hopper
+> GPU (our L4/L40S/H200 all qualify) *and* vLLM support for the model's arch.
+> Custom-code / hybrid-mamba archs (Nemotron-H = `nemotron-3-nano-4b`/`-30b`,
+> MiniCPM) and the Transformers-backend Gemmas may **fail to boot** under it — a
+> failed boot surfaces as `modal-http: invalid function call` (no healthy
+> container). Verify a provider after flipping it on (`modal/healthcheck.py` or
+> `curl <url>/v1/models`); if a model won't start, redeploy that provider without
+> the flag. This is why all per-model defaults stay `None` for now. See ADR-0031.
+
 ## Auth
 
 Modal web endpoints are public by default. Secrets are supplied as environment
