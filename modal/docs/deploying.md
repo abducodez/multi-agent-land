@@ -31,6 +31,17 @@ modal deploy modal/app_google.py     # Gemma 4 26B + 12B
 
 Use `modal serve modal/app_<provider>.py` for a hot-reloading dev session.
 
+Or deploy one, several, or all providers with a single uv command — a thin
+wrapper that exposes the deploy-time env knobs below as flags:
+
+```bash
+uv run scripts/deploy_modal.py                      # all providers
+uv run scripts/deploy_modal.py nvidia openbmb       # just these
+uv run scripts/deploy_modal.py nvidia --keep-warm   # = MODAL_LLM_KEEP_WARM=1
+# --auth → MODAL_LLM_REQUIRE_AUTH=1, --json-logs → MODAL_LLM_JSON_LOGS=1,
+# --log-level LEVEL → MODAL_LLM_LOG_LEVEL, --dry-run to preview the commands.
+```
+
 Run these from the repo root; the script's own directory (`modal/`) is on
 `sys.path`, so `from service import ...` / `from registry import ...` resolve,
 and `import modal` still binds the installed SDK (the folder name does not

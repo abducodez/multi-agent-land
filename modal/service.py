@@ -333,8 +333,12 @@ def _register_snapshot_model(
     offloaded to host RAM, KV cache dropped), and let Modal snapshot the
     container (CPU + GPU state). Every later cold start restores the snapshot
     and wakes the engine — seconds instead of minutes. The web URL label is
-    pinned to ``cfg.endpoint_name`` so the public URL is identical to the plain
-    function path (``…--<app>-<endpoint_name>.modal.run``).
+    pinned to ``<app>-<endpoint_name>`` so the public URL is identical to the
+    plain function path (``…--<app>-<endpoint_name>.modal.run``) the catalogue's
+    ``endpoint_url`` builds. A ``@modal.web_server`` ``label`` becomes the URL as
+    ``<workspace>--<label>.modal.run`` *without* the app prefix Modal adds to a
+    plain function's URL, so the app name must be folded into the label by hand
+    or snapshot models answer at the wrong host (``…--<endpoint_name>``).
     """
     served_name = cfg.served_name
 
@@ -405,7 +409,7 @@ def _register_snapshot_model(
             _post("/wake_up", timeout=120.0)
             _wait_ready(self.vllm_proc)
 
-        @modal.web_server(port=VLLM_PORT, startup_timeout=cfg.startup_timeout, label=cfg.endpoint_name)
+        @modal.web_server(port=VLLM_PORT, startup_timeout=cfg.startup_timeout, label=f"{app.name}-{cfg.endpoint_name}")
         def serve(self):
             pass  # vLLM (already running) is the web server; Modal just exposes the port.
 
