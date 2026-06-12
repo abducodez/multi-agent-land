@@ -119,6 +119,18 @@ def render_verdict(vm: dict) -> str:
     text = html.escape(str(verdict.get("text", "")))
     reveal = verdict.get("reveal") or []
 
+    # Winner ribbon — rendered only when the run declared a winner (ADR-0029).  A
+    # ``none``-kind scenario (Wood, Oracle) and any legacy verdict carry no ``winner``,
+    # so this is empty and the banner is byte-identical to before.
+    ribbon = ""
+    label = verdict.get("winner_label")
+    if label:
+        correct = verdict.get("correct")
+        flair = "&#127942;"  # 🏆
+        if correct is False:
+            flair = "&#129399;"  # 🦝 — the spy slipped away (ground-truth miss)
+        ribbon = f'<div class="vb-winner disp">{flair} {html.escape(str(label))}</div>'
+
     lines = ""
     for r in reveal:
         agent = html.escape(str(r.get("agent", "")))
@@ -135,6 +147,7 @@ def render_verdict(vm: dict) -> str:
     return (
         '<div class="verdict banner">'
         '<div class="eyebrow">&#9878; Verdict</div>'
+        f"{ribbon}"
         f'<div class="disp vb-text">{text}</div>'
         f"{lines}"
         "</div>"

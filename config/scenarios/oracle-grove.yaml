@@ -18,3 +18,8 @@ governor:
   max_total_calls: 600
   max_total_tokens: 60000
   hourly_budget_usd: 5.0
+# The arena contract (ADR-0029): a showcase, not a contest — it exists to demonstrate a
+# tool-using agent (the fortune-teller, granted the oracle) beside one with no tools.
+# There is no meaningful winner to crown, so kind:none keeps it honest (no judge needed).
+competition:
+  kind: none

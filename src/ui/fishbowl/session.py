@@ -22,7 +22,15 @@ from src.ui.fishbowl.view_model import view_model_at
 
 # Preferred display order, mirroring root app.py.  Any other scenarios dropped into
 # config/ follow in sorted order.
-_PREFERRED = ["thousand-token-wood", "mystery-roots", "oracle-grove"]
+_PREFERRED = [
+    "thousand-token-wood",
+    "mystery-roots",
+    "oracle-grove",
+    "the-steeped",
+    "debate-duel",
+    "twenty-sprouts",
+    "beat-battle",
+]
 
 
 def _ordered_names(registry: Registry) -> list[str]:
@@ -115,9 +123,13 @@ class FishbowlSession:
     def finalize(self, reason: str) -> None:
         """Close the current run with a ``run.finished`` event (idempotent-safe).
 
-        On a verdict we derive ``winner`` from the judge's ruling (best-effort: the
-        ``winner`` payload key when present) and ``winning_model`` from the run.started
-        cast map; both fall back to ``None`` when unknown."""
+        On a verdict we derive ``winner`` from the judge's ruling (the ``winner``
+        payload key) and ``winning_model`` from the run.started cast map.  The winner
+        may be a cast *agent name* (judged scenarios → maps straight to its model) or a
+        *team label* (versus scenarios, e.g. ``"herd"``).  For a team we attribute the
+        model only when the team has exactly one member; multi-member teams have no
+        single winning model (the seat, not a model, won) — the leaderboard credits the
+        team.  Everything falls back to ``None`` when unknown."""
         winner: str | None = None
         winning_model: str | None = None
         run_events = self.conductor.ledger.events_for_run(self.conductor.run_id)
@@ -127,8 +139,13 @@ class FishbowlSession:
                 winner = verdict.payload.get("winner") or None
             if winner:
                 started = next((e for e in run_events if e.kind == "run.started"), None)
-                cast = (started.payload.get("cast") or {}) if started is not None else {}
-                winning_model = (cast.get(winner) or {}).get("model_endpoint")
+                started_payload = started.payload if started is not None else {}
+                cast = started_payload.get("cast") or {}
+                teams = (started_payload.get("competition") or {}).get("teams") or {}
+                if winner in cast:
+                    winning_model = (cast.get(winner) or {}).get("model_endpoint")
+                elif winner in teams and len(teams[winner]) == 1:
+                    winning_model = (cast.get(teams[winner][0]) or {}).get("model_endpoint")
         self.conductor.finalize(reason, winner=winner, winning_model=winning_model)
 
     @property

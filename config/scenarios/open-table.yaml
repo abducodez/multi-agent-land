@@ -14,9 +14,16 @@ cast:
   - chat-curious
   - chat-skeptic
   - chat-host
+  - table-judge
 governor:
   max_turns: 40
   max_calls_per_turn: 8
   max_total_calls: 400
   max_total_tokens: 30000
   hourly_budget_usd: 3.0
+# The arena contract (ADR-0029): a judged competition. After several rounds the
+# table-judge names the most persuasive voice as the winner (a balanced-tier judge so
+# the conversational seats can run on smaller models). The judged-competition handler
+# validates the named winner against the speakers actually at the table.
+competition:
+  kind: judged

@@ -16,7 +16,10 @@ to "emit JSON, validate it, run it."  See ADR-0011.
 The agent schema itself is :class:`AgentManifest` (``src/core/manifest.py``) — we
 reuse it here rather than duplicating, so the four stable contracts stay singular.
 """
+
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -75,6 +78,60 @@ class GovernorConfig(BaseModel):
     hourly_budget_usd: float | None = None
 
 
+# ── competition ──────────────────────────────────────────────────────────────────
+
+CompetitionKind = Literal["versus", "judged", "none"]
+
+
+class CompetitionConfig(BaseModel):
+    """How (and whether) a scenario produces a winner — the arena contract (ADR-0029).
+
+    Three kinds:
+      * ``versus`` — a head-to-head between symmetric seats or named teams; the
+        winner is decided either by ground-truth code (The Steeped, Twenty Sprouts)
+        or by a judge naming a side.  Use ``teams`` for asymmetric sides and
+        ``symmetric_seats`` for "same manifest, different model" duels (Debate Duel,
+        Beat Battle) — the latter is what makes the model-leaderboard meaningful.
+      * ``judged`` — a judge in the cast names the winning *agent* via its
+        ``judge.verdict`` payload ``winner`` field (Mystery Roots, Open Table).
+      * ``none`` — collaborative or showcase; no winner, no leaderboard rows, but
+        still a full session/history (Thousand Token Wood, Oracle Grove).
+
+    The block is stamped onto ``run.started`` so a run is self-describing forever —
+    the leaderboard (W6) reads it to know which runs produce winners and how to
+    attribute them.  Team / seat members are validated against the scenario cast in
+    :meth:`WorldConfig._check_cast_references`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: CompetitionKind = "none"
+
+    teams: dict[str, list[str]] | None = None
+    """Named sides, e.g. ``{spy: [spy-nil], herd: [spy-cara, spy-bex, spy-ovo]}``.
+    Each member must be in the scenario cast.  ``versus`` only."""
+
+    symmetric_seats: list[str] | None = None
+    """Cast members occupying *identical* seats that differ only by model — the
+    "which model argues better" comparison.  ``versus`` only; needs ≥2 entries."""
+
+    @model_validator(mode="after")
+    def _check_kind_shape(self) -> "CompetitionConfig":
+        if self.kind == "none":
+            if self.teams or self.symmetric_seats:
+                raise ValueError("competition.kind 'none' must not declare teams or symmetric_seats")
+        elif self.kind == "versus":
+            n_teams = len(self.teams or {})
+            n_seats = len(self.symmetric_seats or [])
+            if n_teams < 2 and n_seats < 2:
+                raise ValueError(
+                    "competition.kind 'versus' needs ≥2 teams or ≥2 symmetric_seats "
+                    f"(got teams={n_teams}, symmetric_seats={n_seats})"
+                )
+        # 'judged' carries no required structural fields — the judge names the winner.
+        return self
+
+
 # ── scenario ─────────────────────────────────────────────────────────────────────
 
 
@@ -95,6 +152,12 @@ class ScenarioConfig(BaseModel):
 
     genesis_text: str | None = None
     governor: GovernorConfig | None = None
+
+    competition: CompetitionConfig = Field(default_factory=CompetitionConfig)
+    """The arena contract: how this scenario produces a winner (ADR-0029).  Defaulted
+    to ``kind: none`` so a scenario without a block still validates, but the authoring
+    checklist (and ``tests/test_scenario_contract.py``) requires an explicit block on
+    every shipped scenario."""
 
 
 # ── the whole world ──────────────────────────────────────────────────────────────
@@ -117,7 +180,8 @@ class WorldConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_cast_references(self) -> "WorldConfig":
-        defined = {a.name for a in self.agents}
+        by_name = {a.name: a for a in self.agents}
+        defined = set(by_name)
         for scenario in self.scenarios:
             missing = [name for name in scenario.cast if name not in defined]
             if missing:
@@ -125,7 +189,39 @@ class WorldConfig(BaseModel):
                     f"scenario {scenario.name!r} references undefined agents: {missing}. "
                     f"Defined agents: {sorted(defined)}"
                 )
+            self._check_competition(scenario, by_name)
         return self
+
+    @staticmethod
+    def _check_competition(scenario: ScenarioConfig, by_name: dict[str, AgentManifest]) -> None:
+        """Cross-cast rules for the competition contract (ADR-0029).
+
+        Self-contained shape rules live on :class:`CompetitionConfig`; the checks that
+        need the cast + agent registry live here: team/seat members must be in the
+        cast, and a winner-bearing kind (versus / judged) must include a judge that
+        actually emits ``judge.verdict``.  ``none`` scenarios require no judge.
+        """
+        comp = scenario.competition
+        cast = set(scenario.cast)
+        members: list[str] = list(scenario.competition.symmetric_seats or [])
+        for team in (comp.teams or {}).values():
+            members.extend(team)
+        stray = sorted(m for m in members if m not in cast)
+        if stray:
+            raise ValueError(
+                f"scenario {scenario.name!r} competition references non-cast members: {stray}. Cast: {sorted(cast)}"
+            )
+        if comp.kind in ("versus", "judged"):
+            judges = [
+                name
+                for name in scenario.cast
+                if (m := by_name.get(name)) and m.role == "judge" and "judge.verdict" in m.may_emit
+            ]
+            if not judges:
+                raise ValueError(
+                    f"scenario {scenario.name!r} competition.kind {comp.kind!r} requires a cast member "
+                    "with role 'judge' that emits 'judge.verdict' to decide the winner"
+                )
 
 
 # ── validation entrypoints (the 'configure from a prompt' surface) ───────────────

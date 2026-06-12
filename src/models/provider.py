@@ -91,6 +91,18 @@ _STUB_MOODS_BY_ROLE: dict[str, tuple[str, ...]] = {
     "spy-cara": ("calm", "smug", "calm"),
     "spy-ovo": ("thinking", "calm", "calm"),
     "spy-host": ("smug", "calm", "truth"),
+    # ── arena judges + competitors (ADR-0029) ──────────────────────────────────
+    "mystery-judge": ("thinking", "truth", "calm"),
+    "table-judge": ("calm", "thinking", "truth"),
+    "debater-a": ("smug", "panic", "smug", "calm"),
+    "debater-b": ("calm", "smug", "thinking", "smug"),
+    "debate-judge": ("smug", "calm", "truth"),
+    "storyteller-a": ("thinking", "calm", "smug", "truth"),
+    "storyteller-b": ("calm", "thinking", "gossip", "truth"),
+    "beat-judge": ("thinking", "calm", "truth"),
+    "secret-keeper": ("smug", "calm", "gossip", "thinking"),
+    "sprout-guesser": ("thinking", "thinking", "calm", "smug"),
+    "sprout-judge": ("calm", "truth", "thinking"),
 }
 
 # Curated private monologue per role, paired with the public ``text`` lines to make the
@@ -246,6 +258,65 @@ class DeterministicTinyModel(ModelProvider):
                 "Let me nudge us forward: what does the square need most, right now?",
                 "Lovely tension here — say more about who this is really for.",
             ],
+            # ── mystery roots / open table judges (ADR-0029) ────────────────────
+            "mystery-judge": [
+                "Verdict: the most likely truth is hypothesis-former's — the clue and the cause line up, and that ordering is what convinces me.",
+                "Verdict: I endorse hypothesis-former's reading; it is the one explanation that leaves no clue stranded.",
+                "Verdict: the evidence bends toward hypothesis-former's account — specific, testable, and unbroken by the doubt raised against it.",
+            ],
+            "table-judge": [
+                "Verdict: chat-skeptic was the most persuasive voice — the point about who tends it after dark is the one I can't argue away.",
+                "Verdict: I crown chat-curious; the question of what the village still loves in ten years reframed the whole table.",
+                "Verdict: chat-skeptic takes it — turning comfort-today against shade-we-never-sit-under was the sharpest cut of the hour.",
+            ],
+            # ── debate duel (symmetric seats, different models) ─────────────────
+            "debater-a": [
+                "The bold path is always the right one — hesitation is just defeat in a slower coat.",
+                "My opponent mistakes caution for wisdom; history rewards the daring, not the timid.",
+                "Strip away the fear and what remains is obvious: we must act, and act now.",
+            ],
+            "debater-b": [
+                "Every reckless 'yes' has a graveyard of consequences my opponent conveniently forgets.",
+                "Restraint is not weakness — it is the only argument that survives the morning after.",
+                "You call it boldness; I call it a beautifully worded mistake.",
+            ],
+            "debate-judge": [
+                "Verdict: debater-a takes it — that line about history rewarding the daring landed clean and never wavered.",
+                "Verdict: debater-b wins on the strength of 'the morning after,' the sharpest blow of the duel.",
+                "Verdict: debater-a, by a hair — the closing call to act now outpunched every rebuttal.",
+            ],
+            # ── beat battle (symmetric seats, different models) ─────────────────
+            "storyteller-a": [
+                "The lighthouse keeper unfolds a wave that has signed its name in foam and three patient question marks.",
+                "By dawn the gulls are reciting the sea's letters aloud, and one of them has started to weep with joy.",
+                "A single drop climbs the spiral stair, knocks politely, and asks to borrow the lamp for a love note.",
+            ],
+            "storyteller-b": [
+                "The tide leaves a sealed envelope of kelp on the top step, still warm from somewhere far below.",
+                "Tonight the beam writes back in light, and the whole bay holds its breath to read the reply.",
+                "The keeper discovers the sea has been practicing his own handwriting, only kinder, only braver.",
+            ],
+            "beat-judge": [
+                "Verdict: storyteller-a wins — their beats turned a single wave into a character we ached for, surprising and warm in one breath.",
+                "Verdict: storyteller-b takes it, every line opening a door the last one only hinted at, delight stacked on delight.",
+                "Verdict: storyteller-a, by a whisper — the weeping gull was the kind of impossible detail that makes a tale sing.",
+            ],
+            # ── twenty sprouts (code-dealt secret word) ─────────────────────────
+            "secret-keeper": [
+                "Yes — you could hold it in one hand, if your hand were patient enough.",
+                "No, it was never alive, though plenty of living things have leaned on it.",
+                "Warmer now — it does belong to the wood, but not to any creature in it.",
+            ],
+            "sprout-guesser": [
+                "Is the thing you're holding something a traveller would carry on the path?",
+                "Does it make a sound, or is it silent until someone uses it?",
+                "Then is it older than the trees, or younger than this morning's dew?",
+            ],
+            "sprout-judge": [
+                "Verdict: the keeper kept its secret — the guesser circled close but never named the word.",
+                "Verdict: a clean catch — the guesser cornered the word before the questions ran dry.",
+                "Verdict: the grove falls quiet; the secret held, and the keeper smiles.",
+            ],
         }
         options = choices.get(role, ["The wood hums and waits."])
         text = options[int(digest[:2], 16) % len(options)]
@@ -301,5 +372,11 @@ class DeterministicTinyModel(ModelProvider):
         if name == "thought":
             opts = _STUB_THOUGHTS.get(role, _STUB_THOUGHT_DEFAULT)
             return opts[int(digest[6:8], 16) % len(opts)]
+        if name in ("winner", "scores"):
+            # The stub can't know the live cast, so it must NOT invent a fake winner
+            # name (it would surface as junk in the verdict).  Leave it empty: the
+            # judge's handler (JudgedCompetition / ground-truth subclasses) derives the
+            # real winner from the on-stage cast.  See ADR-0029.
+            return ""
         # Unknown extra field: a short, stable placeholder keeps the output valid.
         return f"{name}:{digest[:4]}"

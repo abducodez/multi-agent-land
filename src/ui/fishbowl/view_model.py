@@ -35,6 +35,18 @@ from src.ui.fishbowl.cast_state import derive_cast_state
 _SPEAKING_KINDS = frozenset({"agent.spoke", "agent.thought", "oracle.spoke", "judge.verdict"})
 
 
+def _winner_label(winner: str | None, teams: dict) -> str | None:
+    """Human-readable winner for the banner ribbon.
+
+    A team label reads as "Team Herd"; an agent slug reads as "Hypothesis Former".
+    Returns ``None`` when there is no winner, so ``none``-kind scenarios stay ribbon-less.
+    """
+    if not winner:
+        return None
+    pretty = winner.replace("-", " ").replace("_", " ").title()
+    return f"Team {pretty}" if winner in teams else pretty
+
+
 def _estimate_tokens_through(events: Sequence[Event]) -> int:
     """A real-text token estimate for the scrubber meter (grows as you advance)."""
     total = 0
@@ -111,13 +123,25 @@ def view_model_at(
             item["turn"] = e.turn
             feed.append(item)
 
+    # The arena contract for this run (ADR-0029), stamped on run.started — lets the
+    # verdict banner label a team win ("herd wins") apart from an agent win.
+    competition = next((e.payload.get("competition") for e in prefix if e.kind == "run.started"), None) or {}
+    teams = competition.get("teams") or {}
+
     verdict = None
     for e in prefix:
         if e.kind == "judge.verdict":
+            winner = e.payload.get("winner") or None
             verdict = {
                 "text": e.payload.get("text", ""),
                 "reveal": e.payload.get("reveal", []),
                 "agent": e.actor,
+                "winner": winner,
+                # A team win names a side; an agent win names a mind. ``correct`` (when a
+                # ground-truth judge set it) drives the win/miss flavour in the banner.
+                "winner_label": _winner_label(winner, teams),
+                "winner_kind": "team" if winner in teams else ("agent" if winner else None),
+                "correct": e.payload.get("correct"),
             }
 
     # "Round" = the live iteration count, i.e. the sim-turn at the play-head, so the

@@ -9,6 +9,8 @@ manifest; the manifest still supplies all declarative fields.
 
 from __future__ import annotations
 
+import re
+
 from src.agents.base import ManifestAgent
 from src.core.events import Event
 from src.core.projections import StageProjection
@@ -17,18 +19,23 @@ from src.core.registry import register_handler
 
 @register_handler("spy-host")
 class SpyHost(ManifestAgent):
-    """The word-pair bluff host: delivers a verdict and unmasks every secret word.
+    """The word-pair bluff host: delivers a verdict, scores the game, unmasks every word.
 
     The generic turn produces the verdict *text* (who the host accuses).  This handler
-    then attaches the dramatic ``reveal`` — one ``{agent, secret, role}`` row per player —
-    onto the emitted ``judge.verdict`` payload, exactly the shape the Fishbowl verdict
-    banner renders (``view_model``/``render_verdict``).  The reveal is recorded on the real
-    ledger, so the unmasking is a genuine engine event, not a UI overlay.
+    then does two things on the emitted ``judge.verdict`` payload:
 
-    The secret-word map below is curated demo content for ``the-steeped`` (the same way the
-    offline stub carries curated lines) — it mirrors the words baked into each player's
-    persona.  Only players actually present on stage are revealed, so editing the cast in
-    the Lab never produces a phantom row.
+      * **Scoreboard (W2.2).**  Ground truth lives in code, not the model: it parses the
+        accused name out of the prose, compares it to the *actual* spy, and stamps
+        ``winner = "herd"`` (caught) or ``"spy"`` (escaped) plus ``correct: bool``.  The
+        ``winner`` is a *team* label (matching ``competition.teams`` in the scenario);
+        ``FishbowlSession.finalize`` reconciles a single-member team to its model.
+      * **Reveal.**  One ``{agent, secret, role}`` row per on-stage player — exactly the
+        shape the Fishbowl verdict banner renders (``view_model``/``render_verdict``).
+
+    Both ride the real ledger, so the unmasking and the score are genuine engine events,
+    not a UI overlay.  The secret-word map is curated demo content for ``the-steeped``
+    (mirroring the words baked into each player's persona); only players actually present
+    on stage are revealed, so editing the cast in the Lab never produces a phantom row.
     """
 
     # agent name → (secret word, table role) for the shipped "the-steeped" cast.
@@ -39,6 +46,11 @@ class SpyHost(ManifestAgent):
         "spy-nil": ("TEA", "SPY — CAUGHT"),
     }
 
+    @property
+    def _true_spy(self) -> str | None:
+        """The agent who actually holds the odd word — the ground truth the prose is scored against."""
+        return next((name for name, (_, role) in self._REVEAL.items() if "SPY" in role), None)
+
     def act(
         self,
         run_id: str,
@@ -48,14 +60,28 @@ class SpyHost(ManifestAgent):
     ) -> Event:
         event = super().act(run_id, turn, projection, recent_events)
         on_stage = {e.actor for e in recent_events}
-        reveal = [
-            {"agent": name, "secret": secret, "role": role}
-            for name, (secret, role) in self._REVEAL.items()
-            if name in on_stage
-        ]
-        if reveal:
-            event.payload["reveal"] = reveal
+        present = [name for name in self._REVEAL if name in on_stage]
+        if present:
+            event.payload["reveal"] = [
+                {"agent": name, "secret": self._REVEAL[name][0], "role": self._REVEAL[name][1]} for name in present
+            ]
+            accused = self._accused(event.payload.get("text", ""), present)
+            correct = accused is not None and accused == self._true_spy
+            event.payload["correct"] = correct
+            event.payload["winner"] = "herd" if correct else "spy"
         return event
+
+    @staticmethod
+    def _accused(text: str, present: list[str]) -> str | None:
+        """Which on-stage player the host's prose names as the spy.
+
+        Personas/verdicts name players by their bare handle in caps ("NIL is the spy"),
+        so match each present agent's tail segment (``spy-nil`` → ``NIL``) as a whole word."""
+        words = set(re.findall(r"[a-z]+", text.lower()))
+        for name in present:
+            if name.rsplit("-", 1)[-1].lower() in words:
+                return name
+        return None
 
 
 @register_handler("fortune-teller")

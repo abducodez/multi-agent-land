@@ -32,3 +32,8 @@ governor:
   max_total_calls: 600
   max_total_tokens: 60000
   hourly_budget_usd: 5.0
+# The arena contract (ADR-0029): collaborative, not competitive. The mischief-critic's
+# reckoning records what became real — it crowns no winner. A full session/history is
+# still kept; it just produces no leaderboard rows.
+competition:
+  kind: none

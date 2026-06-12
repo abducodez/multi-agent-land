@@ -1,0 +1,27 @@
+name: debate-duel
+title: "⚔️ Debate Duel"
+goal: >
+  Two debaters in matched seats trade forceful one-line arguments on a single
+  motion, round after round, until the adjudicator crowns the sharper voice. The
+  point is a watchable clash that reveals which model argues best.
+default_seed: This house believes the forest should never be mapped.
+example_seeds:
+  - This house believes the forest should never be mapped.
+  - This house would let the oldest tree fall where it stands.
+  - This house believes every animal deserves a name.
+genesis_text: "The duelling stage is set. The motion: '{seed}'"
+cast:
+  - debater-a
+  - debater-b
+  - debate-judge
+governor:
+  max_turns: 24
+  max_calls_per_turn: 8
+  max_total_calls: 300
+  max_total_tokens: 40000
+  hourly_budget_usd: 4.0
+competition:
+  kind: versus
+  symmetric_seats:
+    - debater-a
+    - debater-b

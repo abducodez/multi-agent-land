@@ -253,6 +253,7 @@ class Registry:
             example_seeds=cfg.example_seeds,
             goal=cfg.goal,
             genesis_text=cfg.genesis_text,
+            competition=cfg.competition,
         )
 
     def governor_for(self, name: str) -> Governor:
@@ -292,4 +293,6 @@ def default_registry() -> Registry:
 
 # Load behaviour handlers so their @register_handler side effects run.  Imported
 # at the bottom, after register_handler is defined, so there is no import cycle.
+from src.agents import competition as _competition  # noqa: E402,F401
 from src.agents import handlers as _handlers  # noqa: E402,F401
+from src.agents import twenty_sprouts as _twenty_sprouts  # noqa: E402,F401

@@ -22,6 +22,6 @@ memory:
   use_salience: true
   salience_top_k: 8
 tools: []
-output_extra_fields: [mood]
+output_extra_fields: [mood, winner]
 hue: 300
 archetype: the host

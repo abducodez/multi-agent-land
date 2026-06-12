@@ -15,8 +15,10 @@ from src.core.registry import default_registry
 from src.ui.fishbowl.scenario_caps import scenario_ui_caps
 
 # Scenarios with / without a judge in their stock cast (per the capability matrix).
-_JUDGED = ["thousand-token-wood", "mystery-roots", "the-steeped"]
-_JUDGELESS = ["open-table", "oracle-grove"]
+# Open Table gained a table-judge with the arena verdict (ADR-0029); Oracle Grove stays
+# a judge-less tool-use showcase.
+_JUDGED = ["thousand-token-wood", "mystery-roots", "the-steeped", "open-table"]
+_JUDGELESS = ["oracle-grove"]
 
 
 @pytest.mark.parametrize("name", _JUDGELESS)

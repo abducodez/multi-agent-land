@@ -308,7 +308,15 @@ def build_telemetry() -> None:
 _registry = default_registry()
 _tools = default_tool_registry()
 
-_PREFERRED = ["thousand-token-wood", "mystery-roots", "oracle-grove"]
+_PREFERRED = [
+    "thousand-token-wood",
+    "mystery-roots",
+    "oracle-grove",
+    "the-steeped",
+    "debate-duel",
+    "twenty-sprouts",
+    "beat-battle",
+]
 _names = [n for n in _PREFERRED if n in _registry.scenarios] + [
     n for n in sorted(_registry.scenarios) if n not in _PREFERRED
 ]

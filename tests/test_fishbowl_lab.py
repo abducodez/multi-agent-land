@@ -334,9 +334,10 @@ def test_collect_world_config_honours_roster_genesis_and_governor():
 
 
 def test_collect_world_config_judgeless_world_is_valid_without_judge_knobs():
-    # open-table has no judge; composing it with no judge model must still validate.
+    # oracle-grove is a judge-less tool-use showcase; composing it with no judge model
+    # must still validate. (Open Table gained a table-judge with the arena verdict.)
     registry = default_registry()
-    scenario = registry.scenarios["open-table"]
+    scenario = registry.scenarios["oracle-grove"]
     world = lab.collect_world_config(
         scenario=scenario.name,
         premise="",
