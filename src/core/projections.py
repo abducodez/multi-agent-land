@@ -43,8 +43,10 @@ class StageProjection:
             self.agent_notes = self.agent_notes[-8:]
 
 
-def rebuild_stage(events: tuple[Event, ...]) -> StageProjection:
+def rebuild_stage(events: tuple[Event, ...], run_id: str | None = None) -> StageProjection:
     projection = StageProjection()
+    if run_id is not None:
+        events = tuple(e for e in events if e.run_id == run_id)
     for event in events:
         projection.apply(event)
     return projection

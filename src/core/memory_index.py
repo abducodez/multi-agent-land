@@ -91,8 +91,13 @@ class MemoryIndex(Protocol):
         """Derive/refresh index entries for *events* (idempotent by ``event.id``)."""
         ...
 
-    def search(self, query: str, k: int) -> list[Event]:
-        """Return up to *k* indexed events most semantically relevant to *query*."""
+    def search(self, query: str, k: int, run_id: str | None = None) -> list[Event]:
+        """Return up to *k* indexed events most semantically relevant to *query*.
+
+        When *run_id* is given, hits MUST be scoped to that run — the ledger holds
+        every run, and recall across runs would leak one show's (or one user's)
+        discussion into another's context.
+        """
         ...
 
 
@@ -134,7 +139,7 @@ class _Mem0BackendBase:
         """Upsert one event verbatim into *mem* (``infer=False``; ledger is truth)."""
         raise NotImplementedError
 
-    def _query(self, mem: object, query: str, k: int) -> list[dict]:
+    def _query(self, mem: object, query: str, k: int, run_id: str | None) -> list[dict]:
         """Run semantic search on *mem*; return raw hit dicts (carrying metadata)."""
         raise NotImplementedError
 
@@ -160,8 +165,13 @@ class _Mem0BackendBase:
             self._store(mem, event)
             self._indexed.add(event.id)
 
-    def search(self, query: str, k: int) -> list[Event]:
-        """Semantic search; map hits back to :class:`Event` via stored metadata."""
+    def search(self, query: str, k: int, run_id: str | None = None) -> list[Event]:
+        """Semantic search; map hits back to :class:`Event` via stored metadata.
+
+        *run_id* scopes recall to one run, filtered both natively (mem0's own
+        ``run_id`` identity, pushed down to the vector store) and defensively
+        here on the reconstructed event — belt and suspenders against backends
+        that ignore unknown filters."""
         if not query or k <= 0:
             return []
         with obs.span(
@@ -171,10 +181,13 @@ class _Mem0BackendBase:
             started = time.perf_counter()
             mem = self._memory()
             events: list[Event] = []
-            for hit in self._query(mem, query, k):
+            for hit in self._query(mem, query, k, run_id):
                 event = _event_from_metadata(hit.get("metadata"))
-                if event is not None:
-                    events.append(event)
+                if event is None:
+                    continue
+                if run_id is not None and event.run_id != run_id:
+                    continue
+                events.append(event)
             elapsed_ms = (time.perf_counter() - started) * 1000
             obs.add_span_attrs(**{"memory.hits": len(events), "memory.latency_ms": round(elapsed_ms, 2)})
             obs.observe("memory.index.hits", len(events))
@@ -228,12 +241,20 @@ class Mem0MemoryIndex(_Mem0BackendBase):
         mem.add(  # type: ignore[attr-defined]
             _event_text(event),
             user_id=self._NAMESPACE,
+            # mem0's native identity scopes: run_id partitions recall per run and
+            # agent_id per actor, so filtering happens in the vector store rather
+            # than post-hoc in Python (mem0 best practice).
+            run_id=event.run_id,
+            agent_id=event.actor or None,
             metadata=_event_metadata(event),
             infer=False,  # store verbatim; the ledger, not a model, is truth
         )
 
-    def _query(self, mem: object, query: str, k: int) -> list[dict]:
-        return _result_items(mem.search(query, top_k=k, filters={"user_id": self._NAMESPACE}))  # type: ignore[attr-defined]
+    def _query(self, mem: object, query: str, k: int, run_id: str | None) -> list[dict]:
+        filters: dict = {"user_id": self._NAMESPACE}
+        if run_id:
+            filters["run_id"] = run_id
+        return _result_items(mem.search(query, top_k=k, filters=filters))  # type: ignore[attr-defined]
 
 
 # ── hosted (opt-in) backend ────────────────────────────────────────────────────
@@ -302,12 +323,17 @@ class Mem0CloudIndex(_Mem0BackendBase):
         mem.add(  # type: ignore[attr-defined]
             [{"role": "user", "content": _event_text(event)}],
             user_id=self._NAMESPACE,
+            run_id=event.run_id,  # native per-run scope (see local backend)
+            agent_id=event.actor or None,
             metadata=_event_metadata(event),
             infer=False,
         )
 
-    def _query(self, mem: object, query: str, k: int) -> list[dict]:
-        return _result_items(mem.search(query, top_k=k, filters={"user_id": self._NAMESPACE}))  # type: ignore[attr-defined]
+    def _query(self, mem: object, query: str, k: int, run_id: str | None) -> list[dict]:
+        filters: dict = {"user_id": self._NAMESPACE}
+        if run_id:
+            filters["run_id"] = run_id
+        return _result_items(mem.search(query, top_k=k, filters=filters))  # type: ignore[attr-defined]
 
 
 # ── metadata round-trip (event ⇄ vector entry) ────────────────────────────────
@@ -324,6 +350,7 @@ def _event_metadata(event: Event) -> dict:
         "payload": event.payload,
         "created_at": event.created_at.isoformat(),
         "schema_version": event.schema_version,
+        "session_id": event.session_id,
     }
 
 
@@ -340,6 +367,7 @@ def _event_from_metadata(metadata: dict | None) -> Event | None:
             actor=str(metadata.get("actor", "")),
             payload=dict(metadata.get("payload") or {}),
             schema_version=int(metadata.get("schema_version", 1)),
+            session_id=metadata.get("session_id") or None,
         )
     except (KeyError, ValueError, TypeError):  # pragma: no cover - defensive
         return None

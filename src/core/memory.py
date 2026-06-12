@@ -88,7 +88,9 @@ class EpisodicMemory:
     agent_name: str
     max_recent: int = 8
 
-    def visible(self, events: tuple[Event, ...]) -> list[Event]:
+    def visible(self, events: tuple[Event, ...], run_id: str | None = None) -> list[Event]:
+        if run_id is not None:
+            events = tuple(e for e in events if e.run_id == run_id)
         result = [e for e in events if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE]
         return result[-self.max_recent :]
 
@@ -181,12 +183,19 @@ class SalienceMemory:
         """
         if self.index is None or not query or not candidates:
             return None
+        # Scope the semantic search to the candidates' run: the index spans every
+        # run in the shared store, and unscoped hits from other runs (other users'
+        # shows) would crowd the recall budget out of this run's events.  Derived
+        # from the candidates so callers that already pass a single-run slice (the
+        # conductor does) get scoping for free.
+        run_ids = {e.run_id for e in candidates}
+        run_id = next(iter(run_ids)) if len(run_ids) == 1 else None
         # The index is a derived, rebuildable lens (ADR-0018) — never load-bearing.
         # If it hiccups (a flaky hosted backend, a transient mem0 error), degrade to
         # keyword relevance rather than let one agent's recall crash its whole turn.
         try:
             self.index.index(tuple(candidates))
-            hits = self.index.search(query, k=len(candidates))
+            hits = self.index.search(query, k=len(candidates), run_id=run_id)
         except Exception as exc:  # noqa: BLE001 — relevance is best-effort, never fatal
             logger.warning("memory index unavailable, using keyword relevance: %s", exc)
             obs.log("memory.index.fallback", level="warning", agent=self.agent_name, error=str(exc))
@@ -198,7 +207,11 @@ class SalienceMemory:
         n = len(ranked)
         return {eid: (n - i) / n for i, eid in enumerate(ranked)}
 
-    def visible(self, events: tuple[Event, ...], current_turn: int, query: str) -> list[Event]:
+    def visible(
+        self, events: tuple[Event, ...], current_turn: int, query: str, run_id: str | None = None
+    ) -> list[Event]:
+        if run_id is not None:
+            events = tuple(e for e in events if e.run_id == run_id)
         candidates = self._candidates(events)
         relevance = self._relevance_map(candidates, query)
         scored = sorted(

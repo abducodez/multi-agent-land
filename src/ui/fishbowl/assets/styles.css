@@ -1248,3 +1248,85 @@ footer { display: none !important; }
   .feed-jump.show { transform: translate(-50%, 0); }
   .feed-jump .fj-pulse { animation: none; }
 }
+
+/* ── Archive drawer: "my past sessions" (Lab → Load → read-only replay) ──────────
+   The accordion + cards are real Gradio components (not inside the `.fishbowl`
+   scope root), so these rules target their `elem_classes` directly and lean on
+   `!important` to win over Gradio's own cascade, like the seed-edit rules above. */
+.gradio-container .archive-drawer {
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--r-lg) !important;
+  background: linear-gradient(180deg, rgba(10,34,43,0.55), rgba(5,18,26,0.35)) !important;
+  margin-top: 4px !important;
+}
+.gradio-container .archive-drawer > .label-wrap,
+.gradio-container .archive-drawer button.label-wrap,
+.gradio-container .archive-drawer span.label-wrap {
+  font-family: var(--font-display) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.16em !important;
+  text-transform: uppercase !important;
+  color: var(--ink-mid) !important;
+}
+
+.gradio-container .archive-refresh {
+  min-width: 0 !important;
+  align-self: flex-end !important;
+  font-family: var(--font-display) !important;
+  font-size: 9.5px !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  color: var(--ink-dim) !important;
+  background: transparent !important;
+  border: 1px solid var(--line-soft) !important;
+  border-radius: var(--r) !important;
+}
+.gradio-container .archive-refresh:hover {
+  color: var(--cyan) !important;
+  border-color: var(--line-hot) !important;
+  box-shadow: var(--glow) !important;
+}
+
+/* Each past run is a full-width, left-aligned monospace card with a phosphor
+   spine.  The whole row is the click target (it loads the replay). */
+.gradio-container .archive-card {
+  display: block !important;
+  width: 100% !important;
+  text-align: left !important;
+  font-family: var(--font-body) !important;
+  font-size: 12px !important;
+  letter-spacing: 0.02em !important;
+  color: var(--ink) !important;
+  background: var(--panel) !important;
+  border: 1px solid var(--line-soft) !important;
+  border-left: 2px solid var(--teal) !important;
+  border-radius: var(--r) !important;
+  padding: 10px 12px !important;
+  margin: 6px 0 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease !important;
+}
+.gradio-container .archive-card:hover {
+  border-color: var(--line-hot) !important;
+  border-left-color: var(--cyan) !important;
+  color: var(--cyan) !important;
+  box-shadow: var(--glow) !important;
+  transform: translateX(2px) !important;
+}
+
+.fishbowl .archive-empty {
+  border: 1px dashed var(--line-soft);
+  border-radius: var(--r-lg);
+  padding: 18px 16px;
+  background: rgba(5, 18, 26, 0.35);
+}
+.fishbowl .archive-empty .ae-body {
+  font-family: var(--font-body);
+  font-size: 12px;
+  color: var(--ink-dim);
+  margin-top: 6px;
+  line-height: 1.5;
+  max-width: 46ch;
+}

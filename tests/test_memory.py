@@ -83,7 +83,7 @@ class _RaisingIndex:
     def index(self, events):
         raise RuntimeError("backend down")
 
-    def search(self, query, k):
+    def search(self, query, k, run_id=None):
         raise RuntimeError("backend down")
 
 

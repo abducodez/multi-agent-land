@@ -34,3 +34,14 @@ class Ledger:
         obs.log("ledger.reset", level="debug", events=len(self._events))
         self._events.clear()
         self._seen_ids.clear()
+
+    def events_for_run(self, run_id: str) -> tuple[Event, ...]:
+        """Return the events of *run_id* in append/offset order."""
+        return tuple(e for e in self._events if e.run_id == run_id)
+
+    def runs(self) -> tuple[str, ...]:
+        """Return the distinct run_ids in first-seen order."""
+        seen: dict[str, None] = {}
+        for e in self._events:
+            seen.setdefault(e.run_id, None)
+        return tuple(seen)

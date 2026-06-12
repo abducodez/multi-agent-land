@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from src import observability as obs
-from src.core.events import Event
+from src.core.events import Event, normalize_session_id
 from src.core.governor import BudgetExceeded, Governor
 from src.core.ledger import Ledger
 from src.core.projections import StageProjection, rebuild_stage
@@ -69,6 +69,9 @@ class Conductor:
         self.snapshot_every = snapshot_every
         self.snapshot_path = snapshot_path
         self.run_id = str(uuid4())
+        # The browser/user session driving the current run (normalized, untrusted
+        # input) — stamped onto every event this conductor appends (see _append).
+        self.session_id: str | None = None
         self.turn = 0
         self._trigger_queue: deque[tuple["Agent", Event]] = deque()
         # Actors still to act in the CURRENT turn — the queue ``step_one`` drains one
@@ -84,32 +87,108 @@ class Conductor:
 
     @property
     def projection(self) -> StageProjection:
-        return rebuild_stage(self.ledger.events)
+        # Run-scoped: the live stage shows only the current run, even though the
+        # ledger is a shared, append-only store of every run (ADR-0009).
+        return rebuild_stage(self.ledger.events, self.run_id)
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
-    def reset(self, seed: str) -> None:
-        self.ledger.reset()
+    def _cast_map(self) -> dict[str, dict[str, str | None]]:
+        """Snapshot of each agent's model binding, keyed by agent name.
+
+        Recorded on ``run.started`` so a run is self-describing — the trace alone
+        says which models played which parts (handy for sponsor-track receipts).
+        Agents without a manifest (Phase-0/1 fallback) are reported as unbound.
+        """
+        cast: dict[str, dict[str, str | None]] = {}
+        for agent in self.scenario.agents:
+            name = getattr(agent, "name", agent.__class__.__name__)
+            manifest = getattr(agent, "manifest", None)
+            cast[name] = {
+                "model_endpoint": getattr(manifest, "model_endpoint", None),
+                "model_profile": getattr(manifest, "model_profile", None),
+            }
+        return cast
+
+    def reset(self, seed: str, *, session_id: str | None = None) -> None:
+        # NOTE: we no longer wipe the ledger — it is a shared, persistent, append-only
+        # store (ADR-0009), so a reset mints a *new* run rather than destroying prior
+        # ones.  Only the in-conductor transient state for the old run is cleared.
+        #
+        # ``session_id`` (optional) attributes the run to the browser/user that started
+        # it — stamped onto ``run.started`` so the per-user Archive can list "my runs"
+        # without a side table (ADR-0014: every view is a projection of the log).
         if self.observer:
             self.observer.reset()
         self._trigger_queue.clear()
         self._pending.clear()
         self.agent_errors.clear()
         self.run_id = str(uuid4())
+        # Normalize at the engine boundary: the id originates client-side
+        # (localStorage), so malformed/oversized values degrade to None here
+        # rather than reaching the ledger or the memory index.
+        self.session_id = normalize_session_id(session_id)
         self.turn = 0
         self.governor.reset()
+        goal = getattr(self.scenario, "goal", "")
+        scenario_name = getattr(self.scenario, "name", type(self.scenario).__name__)
+        cast = self._cast_map()
         obs.set_context(run_id=self.run_id, turn=self.turn)
-        obs.log("run.started", run_id=self.run_id, seed=seed, goal=getattr(self.scenario, "goal", ""))
+        obs.log("run.started", run_id=self.run_id, seed=seed, goal=goal, scenario=scenario_name)
+        payload: dict = {"seed": seed, "goal": goal, "scenario": scenario_name, "cast": cast}
+        if self.session_id:
+            payload["session_id"] = self.session_id
         genesis_start = Event(
             run_id=self.run_id,
             turn=self.turn,
             kind="run.started",
             actor="conductor",
-            payload={"seed": seed, "goal": getattr(self.scenario, "goal", "")},
+            payload=payload,
         )
         self._append(genesis_start)
         for event in self.scenario.genesis(self.run_id, self.turn, seed):
             self._append(event)
+
+    def finalize(
+        self,
+        reason: str,
+        *,
+        winner: str | None = None,
+        winning_model: str | None = None,
+    ) -> Event | None:
+        """Close the current run with a ``run.finished`` event.
+
+        Idempotent-safe: if this run already has a ``run.finished`` event we return
+        the existing one rather than emitting a duplicate.  ``turns`` and ``tokens``
+        are read from the governor's live counters.
+        """
+        existing = [e for e in self.ledger.events_for_run(self.run_id) if e.kind == "run.finished"]
+        if existing:
+            return existing[0]
+        stats = self.governor.stats
+        finished = Event(
+            run_id=self.run_id,
+            turn=self.turn,
+            kind="run.finished",
+            actor="conductor",
+            payload={
+                "reason": reason,
+                "winner": winner,
+                "winning_model": winning_model,
+                "turns": int(stats.get("current_turn", self.turn) or self.turn),
+                "tokens": int(stats.get("total_tokens", 0) or 0),
+            },
+        )
+        obs.log(
+            "run.finished",
+            run_id=self.run_id,
+            reason=reason,
+            winner=winner,
+            winning_model=winning_model,
+            turns=finished.payload["turns"],
+            tokens=finished.payload["tokens"],
+        )
+        return self._append(finished)
 
     def restore(self) -> bool:
         """Resume a persisted run: adopt the ledger's run_id and last turn.
@@ -134,10 +213,16 @@ class Conductor:
         With an empty ledger, the first tick performs genesis instead of acting
         (preserving the original auto-reset behaviour)."""
         for _ in range(max(1, n_ticks)):
-            if not self.ledger.events:
+            if not self.ledger.events_for_run(self.run_id):
                 self.reset(self.scenario.default_seed)
                 continue
-            self._tick()
+            try:
+                self._tick()
+            except BudgetExceeded:
+                # Close the run on the ledger before the stop propagates — a headless
+                # run that hits a budget bound should still be self-describing.
+                self.finalize("budget")
+                raise
             self._maybe_snapshot()
 
     def step_one(self) -> bool:
@@ -154,23 +239,27 @@ class Conductor:
 
         Returns True when it produced an event (or performed genesis), False when the
         opened turn had no actors.  May raise :class:`BudgetExceeded` like ``step``."""
-        if not self.ledger.events:
+        if not self.ledger.events_for_run(self.run_id):
             self.reset(self.scenario.default_seed)
             return True
 
-        if not self._pending:
-            self.turn += 1
-            self.governor.begin_turn(self.turn)
-            self.governor.check(self.turn)
-            obs.set_context(turn=self.turn)
-            self._pending.extend(agent for agent, _ in self._trigger_queue)
-            self._trigger_queue.clear()
-            self._pending.extend(self._tick_scheduled_agents())
+        try:
             if not self._pending:
-                return False
+                self.turn += 1
+                self.governor.begin_turn(self.turn)
+                self.governor.check(self.turn)
+                obs.set_context(turn=self.turn)
+                self._pending.extend(agent for agent, _ in self._trigger_queue)
+                self._trigger_queue.clear()
+                self._pending.extend(self._tick_scheduled_agents())
+                if not self._pending:
+                    return False
 
-        agent = self._pending.popleft()
-        self._run_agent(agent, self.projection)
+            agent = self._pending.popleft()
+            self._run_agent(agent, self.projection)
+        except BudgetExceeded:
+            self.finalize("budget")
+            raise
         # Absorb subscribers this agent's event just triggered into the current turn,
         # so a subscription cascade still resolves within the turn (as in ``_tick``).
         while self._trigger_queue:
@@ -224,7 +313,10 @@ class Conductor:
                     run_id=self.run_id,
                     turn=self.turn,
                     projection=projection,
-                    recent_events=self.ledger.events,
+                    # Run-scoped: the ledger holds EVERY run (shared store, ADR-0026);
+                    # an agent's memory/context must never recall another run's — or
+                    # another user's — discussion.
+                    recent_events=self.ledger.events_for_run(self.run_id),
                 )
             except BudgetExceeded:
                 raise  # an intentional stop from the governor — never swallow it
@@ -261,6 +353,11 @@ class Conductor:
             snapshot_to(self.snapshot_path)
 
     def _append(self, event: Event) -> Event:
+        # Stamp the session onto the envelope at the single append chokepoint, so
+        # *every* action in a run is attributable/filterable by who drove it —
+        # agents and scenarios never have to know sessions exist.
+        if self.session_id and event.session_id is None:
+            event = event.model_copy(update={"session_id": self.session_id})
         appended = self.ledger.append(event)
         obs.log(
             "event.append", level="debug", id=appended.id, kind=appended.kind, actor=appended.actor, turn=appended.turn
