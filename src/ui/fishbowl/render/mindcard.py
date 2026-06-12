@@ -70,7 +70,9 @@ def render_mindcard(
 
     name = html.escape(str(card.get("name", "")))
     archetype = html.escape(str(card.get("archetype", "")))
-    model_profile = html.escape(str(card.get("model_profile", "")))
+    # The real model the cast member is running (ADR-0022 endpoint override), falling back
+    # to the profile tier name when it routes purely by profile.
+    model = html.escape(str(card.get("model") or card.get("model_profile", "")))
     mood_label = html.escape(str(card.get("mood_label", "")))
     tier = card.get("tier", "mid")
     tier_color = TIER_COLOR.get(tier, "var(--cyan)")
@@ -103,7 +105,7 @@ def render_mindcard(
         f'<div class="mind-arch">{archetype}</div>'
         "</div>"
         '<div class="mind-meta">'
-        f'<span class="mind-model"><span class="tier-dot" style="background:{tier_color}"></span>{model_profile}</span>'
+        f'<span class="mind-model" title="model"><span class="tier-dot" style="background:{tier_color}"></span>{model}</span>'
         f'<span class="mind-mood">{mood_label}</span>'
         "</div>"
         "</div>"

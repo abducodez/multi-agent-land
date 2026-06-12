@@ -91,7 +91,7 @@ def render_split(vm: dict) -> str:
     for member in cast:
         name = html.escape(str(member.get("name") or member.get("id") or ""))
         archetype = html.escape(str(member.get("archetype") or ""))
-        model = html.escape(str(member.get("model_profile") or ""))
+        model = html.escape(str(member.get("model") or member.get("model_profile") or ""))
         speaking = " on" if member.get("speaking") else ""
         leak = " leak" if member.get("mood") == "panic" else ""
         said_cell = _split_cell(member.get("said"), placeholder="— hasn't spoken —", think=False)

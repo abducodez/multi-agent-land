@@ -1182,6 +1182,73 @@ footer { display: none !important; }
   box-shadow: 0 0 14px -4px rgba(79,230,210,0.5) !important;
 }
 
+/* ============================================================
+   ✦ JUMP TO LIVE — the feed's "you've scrolled away" affordance
+   ------------------------------------------------------------
+   Lives on the #feed-html / #stage-html Gradio islands (a sibling of the
+   `.fishbowl` inner wrapper, NOT inside it), so these rules are intentionally
+   UNSCOPED and read the palette from :root. The pill auto-follows the live edge
+   and only surfaces when the viewer has scrolled up to read history — see the
+   feed auto-follow script in assets/head.html.
+   ============================================================ */
+.feed-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translate(-50%, 14px);
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px 7px 11px;
+  font-family: var(--font-display, "Martian Mono", monospace);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bg, #05121a);
+  background: var(--cyan, #4fe6d2);
+  border: 1px solid color-mix(in oklab, var(--cyan, #4fe6d2) 70%, #fff 0%);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 6px 22px -6px rgba(79, 230, 210, 0.7), 0 0 0 1px rgba(5, 18, 26, 0.4) inset;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.2, 1.2, 0.3, 1);
+}
+.feed-jump.show {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+.feed-jump:hover {
+  background: color-mix(in oklab, var(--cyan, #4fe6d2) 85%, #fff 15%);
+  box-shadow: 0 8px 26px -5px rgba(79, 230, 210, 0.85);
+}
+.feed-jump:active { transform: translate(-50%, 1px); }
+.feed-jump:focus-visible { outline: 2px solid var(--bg, #05121a); outline-offset: 2px; }
+.feed-jump .fj-label { font-weight: 700; line-height: 1; }
+.feed-jump .fj-arrow { font-size: 12px; line-height: 1; transform: translateY(0.5px); }
+.feed-jump .fj-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bg, #05121a);
+  box-shadow: 0 0 0 0 rgba(5, 18, 26, 0.55);
+  animation: fjPulse 1.6s ease-in-out infinite;
+}
+@keyframes fjPulse {
+  0% { box-shadow: 0 0 0 0 rgba(5, 18, 26, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(5, 18, 26, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(5, 18, 26, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-jump { transition: opacity 0.2s ease; }
+  .feed-jump.show { transform: translate(-50%, 0); }
+  .feed-jump .fj-pulse { animation: none; }
+}
+
 /* ── Archive drawer: "my past sessions" (Lab → Load → read-only replay) ──────────
    The accordion + cards are real Gradio components (not inside the `.fishbowl`
    scope root), so these rules target their `elem_classes` directly and lean on
