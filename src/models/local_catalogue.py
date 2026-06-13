@@ -66,6 +66,9 @@ class LocalModel:
     None for an alternate the cast can still pin explicitly. ``source`` is a friendly
     family/org label for the picker. ``trust_remote_code`` is forwarded to
     ``from_pretrained`` for repos that ship custom modelling code (e.g. MiniCPM).
+    ``use_cache`` toggles the generation KV cache; set it False for a repo whose custom
+    modelling code mishandles transformers 5.x's cache API (e.g. MiniCPM4.1, whose v4-era
+    attention builds mismatched key/value lengths during incremental decode).
     """
 
     repo_id: str
@@ -73,6 +76,7 @@ class LocalModel:
     params_b: float | None = None
     source: str = "Hugging Face"
     trust_remote_code: bool = False
+    use_cache: bool = True
 
     @property
     def key(self) -> str:
@@ -108,13 +112,17 @@ LOCAL_MODELS: tuple[LocalModel, ...] = (
         params_b=4.0,
         source="NVIDIA Nemotron",
     ),
-    # Fast tier — OpenBMB MiniCPM 4.1 8B. Ships custom modelling code (trust_remote_code).
+    # Fast tier — OpenBMB MiniCPM 4.1 8B. Ships v4-era custom modelling code
+    # (trust_remote_code), whose incremental-decode attention mishandles transformers 5.x's
+    # KV cache ("Key and Value must have the same sequence length"); use_cache=False forces
+    # a full-sequence forward each step, sidestepping the bug (slower, fine for short lines).
     LocalModel(
         repo_id="openbmb/MiniCPM4.1-8B",
         profile="fast",
         params_b=8.0,
         source="OpenBMB MiniCPM",
         trust_remote_code=True,
+        use_cache=False,
     ),
     # Balanced tier — Cohere Labs Aya Expanse 8B (Command family, native transformers arch).
     # NOTE: this repo is *gated* — the Space's HF account must accept its licence and an

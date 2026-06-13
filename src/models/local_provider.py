@@ -125,7 +125,7 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
     return _LOADED[repo_id]
 
 
-def _gpu_duration(repo_id, trust_remote_code, system, prompt, max_new_tokens, temperature, top_p) -> int:
+def _gpu_duration(repo_id, trust_remote_code, use_cache, system, prompt, max_new_tokens, temperature, top_p) -> int:
     """Dynamic ``@spaces.GPU`` duration (seconds) for one generation.
 
     Scales with the token budget and stays short so the Space keeps high queue priority on
@@ -136,7 +136,7 @@ def _gpu_duration(repo_id, trust_remote_code, system, prompt, max_new_tokens, te
 
 
 @spaces.GPU(duration=_gpu_duration)
-def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temperature, top_p):
+def _generate(repo_id, trust_remote_code, use_cache, system, prompt, max_new_tokens, temperature, top_p):
     """Run one chat completion on the GPU; return ``(text, prompt_tokens, completion_tokens)``.
 
     Module-level and decorated so ZeroGPU registers it and grants a GPU for the call. The
@@ -171,6 +171,8 @@ def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temper
             do_sample=bool(do_sample),
             temperature=float(temperature) if do_sample else None,
             top_p=float(top_p) if do_sample else None,
+            # Per-model: False for repos whose custom code mishandles the 5.x KV cache.
+            use_cache=bool(use_cache),
             pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
         )
     generated = output[0][input_len:]
@@ -213,6 +215,7 @@ class LocalTransformersProvider(ModelProvider):
                 text, prompt_tokens, completion_tokens = _generate(
                     self.model,
                     self._trust_remote_code(),
+                    self._use_cache(),
                     system,
                     prompt,
                     self.max_tokens,
@@ -239,6 +242,18 @@ class LocalTransformersProvider(ModelProvider):
 
         entry = local_catalogue.model_by_key(self.model)
         return bool(entry.trust_remote_code) if entry is not None else False
+
+    def _use_cache(self) -> bool:
+        """Whether to use the generation KV cache for this repo (from the catalogue).
+
+        Defaults to True (the fast path); the catalogue sets it False for a repo whose
+        custom modelling code mishandles transformers 5.x's cache API (e.g. MiniCPM4.1). An
+        off-catalogue id keeps the cache on — the ordinary, correct case.
+        """
+        from src.models import local_catalogue
+
+        entry = local_catalogue.model_by_key(self.model)
+        return bool(entry.use_cache) if entry is not None else True
 
     def _record_usage(self, prompt_tokens: int, completion_tokens: int, prompt: str, text: str) -> None:
         # Generation returns exact token counts; fall back to an estimate only if a count

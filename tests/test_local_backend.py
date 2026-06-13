@@ -163,6 +163,14 @@ def test_provider_resolves_trust_remote_code_from_catalogue():
     assert LocalTransformersProvider(model="some/random-repo")._trust_remote_code() is False
 
 
+def test_provider_resolves_use_cache_from_catalogue():
+    # MiniCPM disables the KV cache (its v4-era code mishandles transformers 5.x's cache);
+    # native-arch models keep it on, and an off-catalogue repo defaults to the cached path.
+    assert LocalTransformersProvider(model="openbmb/MiniCPM4.1-8B")._use_cache() is False
+    assert LocalTransformersProvider(model="nvidia/Nemotron-Mini-4B-Instruct")._use_cache() is True
+    assert LocalTransformersProvider(model="some/random-repo")._use_cache() is True
+
+
 # ── ZeroGPU contract: CUDA only inside @spaces.GPU, never in the parent ───────────────
 # Regression guard for the production crash "Low-level CUDA init (torch._C._cuda_init)
 # reached … ZeroGPU's emulation did not intercept": the parent process gets no GPU, so any
@@ -273,3 +281,6 @@ def test_generate_unpacks_batchencoding_never_passes_a_positional_dict():
     gen_call = next(c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "generate")
     assert not gen_call.args, "generate() must take no positional arg (the old bug passed the dict positionally)"
     assert any(k.arg is None and isinstance(k.value, ast.Name) and k.value.id == "inputs" for k in gen_call.keywords)
+    # use_cache is threaded through so a model with broken 5.x cache handling (MiniCPM) can
+    # disable it ("Key and Value must have the same sequence length").
+    assert any(k.arg == "use_cache" for k in gen_call.keywords)
