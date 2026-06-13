@@ -651,7 +651,10 @@ footer { display: none !important; }
 .fishbowl .stage { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); padding: 22px; gap: 10px; overflow: auto; min-height: 0; place-items: center; }
 .fishbowl .core { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; pointer-events: none; z-index: 1; }
 .fishbowl .core-glyph { font-size: 64px; color: var(--cyan); text-shadow: var(--glow-hot); line-height: 1; opacity: 0.85; animation: coreFloat 6s ease-in-out infinite; }
-@keyframes coreFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+/* Gentle amplitude: the stage HTML is replaced every tick, restarting this float mid-cycle,
+   so a large drift would snap the central glyph each time. A small rise keeps the drift
+   alive in static/scrub views without a visible jump during live autoplay. */
+@keyframes coreFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
 .fishbowl .core-title { font-size: 16px; letter-spacing: 0.1em; color: var(--ink); }
 .fishbowl .core-round { font-size: 9px; color: var(--ink-dim); }
 /* Audience-only secret peek (Twenty Sprouts) — a dashed "director's view" chip the cast
@@ -685,7 +688,7 @@ footer { display: none !important; }
 /* head: avatar · identity · the live mood pill (the one datum that changes turn to turn) */
 .fishbowl .mind-head { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
 .fishbowl .mind-id { min-width: 0; }
-.fishbowl .mind-name { font-size: 14.5px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink); line-height: 1.15; display: flex; align-items: center; gap: 7px; }
+.fishbowl .mind-name { font-size: 14.5px; font-weight: 700; letter-spacing: 0.04em; color: var(--ac, var(--ink)); text-shadow: 0 0 9px color-mix(in oklab, var(--ac, var(--ink)) 35%, transparent); line-height: 1.15; display: flex; align-items: center; gap: 7px; }
 .fishbowl .mic { color: var(--coral); font-size: 9px; animation: livePulse 0.9s ease-in-out infinite; }
 .fishbowl .mind-arch { margin-top: 3px; font-size: 10.5px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -728,17 +731,21 @@ footer { display: none !important; }
 /* keep the narrator rail feed compact — minimal height, scroll stays as-is */
 .fishbowl .rail .feed { flex: none; max-height: 220px; }
 .fishbowl .feed.dense { gap: 9px; }
-.fishbowl .fe { animation: feIn 0.3s ease; }
+/* Only the newest line slides in. The Show re-renders the whole feed HTML every tick
+   (Gradio replaces innerHTML wholesale), so animating every .fe re-played the entrance on
+   the entire transcript each time — reading as a full-screen reload. Scoping the entrance
+   to :last-child keeps the "new message" cue while the rest of the log stays still. */
+.fishbowl .fe:last-child { animation: feIn 0.3s ease; }
 @keyframes feIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .fishbowl .fe.narr { border-left: 2px solid var(--violet); padding-left: 12px; }
 .fishbowl .narr-voice { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--violet); display: block; margin-bottom: 4px; }
 .fishbowl .fe.narr p { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink); opacity: 0.92; font-style: italic; }
-.fishbowl .fe.say { background: rgba(3,12,18,0.6); border-left: 2px solid var(--ac); border-radius: 0 var(--r) var(--r) 0; padding: 8px 11px; }
+.fishbowl .fe.say { background: rgba(3,12,18,0.6); border-left: 2px solid var(--ac, var(--cyan)); border-radius: 0 var(--r) var(--r) 0; padding: 8px 11px; }
 .fishbowl .say-line { font-size: 12.5px; line-height: 1.45; }
-.fishbowl .say-line b { color: var(--ac); margin-right: 7px; letter-spacing: 0.04em; }
+.fishbowl .say-line b { color: var(--ac, var(--cyan)); text-shadow: 0 0 8px color-mix(in oklab, var(--ac, var(--cyan)) 40%, transparent); margin-right: 7px; font-weight: 700; letter-spacing: 0.04em; }
 .fishbowl .say-line span { color: var(--ink); }
-.fishbowl .say-think { margin-top: 5px; font-size: 11px; color: var(--ac); opacity: 0.85; }
-.fishbowl .say-think i { color: color-mix(in oklab, var(--ac) 75%, var(--ink)); }
+.fishbowl .say-think { margin-top: 5px; font-size: 11px; color: var(--ac, var(--cyan)); opacity: 0.85; }
+.fishbowl .say-think i { color: color-mix(in oklab, var(--ac, var(--cyan)) 75%, var(--ink)); }
 .fishbowl .fe.poke, .fishbowl .fe.verdict-fe { border: 1px solid var(--amber); border-radius: var(--r); padding: 9px 11px; background: rgba(255,207,107,0.07); }
 .fishbowl .poke-tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); border: 1px solid rgba(255,207,107,0.4); border-radius: 999px; padding: 2px 8px; margin-bottom: 6px; }
 .fishbowl .fe.poke p, .fishbowl .fe.verdict-fe p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink); }
@@ -757,7 +764,7 @@ footer { display: none !important; }
 .fishbowl .roster { border-right: 1px solid var(--line); padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; background: rgba(6,20,27,0.4); overflow: auto; }
 .fishbowl .roster-chip { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--r); transition: all 0.2s ease; }
 .fishbowl .roster-chip.on { border-color: var(--ac); box-shadow: 0 0 14px color-mix(in oklab, var(--ac) 35%, transparent); background: color-mix(in oklab, var(--ac) 6%, transparent); }
-.fishbowl .rc-name { font-size: 12.5px; letter-spacing: 0.05em; color: var(--ink); }
+.fishbowl .rc-name { font-size: 12.5px; letter-spacing: 0.05em; color: var(--ac, var(--ink)); }
 .fishbowl .rc-mood { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; }
 .fishbowl .feedview-main { min-height: 0; display: flex; }
 .fishbowl .feedview-main .feed { max-width: 720px; margin: 0 auto; width: 100%; }
@@ -770,7 +777,7 @@ footer { display: none !important; }
 .fishbowl .split-row { display: grid; grid-template-columns: 230px 1fr 1fr; gap: 16px; align-items: stretch; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-lg); margin-bottom: 12px; background: var(--panel); transition: all 0.2s ease; }
 .fishbowl .split-row.on { border-color: var(--ac); box-shadow: 0 0 18px color-mix(in oklab, var(--ac) 30%, transparent); }
 .fishbowl .split-id { display: flex; gap: 12px; align-items: center; }
-.fishbowl .split-name { font-size: 14px; letter-spacing: 0.06em; color: var(--ink); }
+.fishbowl .split-name { font-size: 14px; letter-spacing: 0.06em; font-weight: 700; color: var(--ac, var(--ink)); text-shadow: 0 0 8px color-mix(in oklab, var(--ac, var(--ink)) 32%, transparent); }
 .fishbowl .split-arch { font-size: 10.5px; color: var(--ink-dim); }
 .fishbowl .split-model { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--ink-mid); margin-top: 3px; }
 .fishbowl .split-said, .fishbowl .split-think { border-radius: var(--r); padding: 12px 14px; display: flex; align-items: center; }
@@ -845,7 +852,7 @@ footer { display: none !important; }
 .fishbowl .wf-sub { display: flex; align-items: center; justify-content: center; gap: 9px; flex-wrap: wrap; margin-top: -2px; }
 .fishbowl .wf-arch { font-style: italic; font-size: 12px; color: var(--ink-dim); letter-spacing: 0.02em; }
 .fishbowl .wf-roster { display: flex; align-items: center; justify-content: center; gap: 7px; flex-wrap: wrap; }
-.fishbowl .wf-chip { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--win-hue) 70% 78%); border: 1px solid hsl(var(--win-hue) 70% 60% / 0.4); background: hsl(var(--win-hue) 70% 50% / 0.1); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.fishbowl .wf-chip { font-family: var(--font-display); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--ch, var(--win-hue)) 80% 80%); border: 1px solid hsl(var(--ch, var(--win-hue)) 75% 62% / 0.45); background: hsl(var(--ch, var(--win-hue)) 75% 50% / 0.12); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
 .fishbowl .wf-cheer { font-size: 12.5px; color: var(--ink); opacity: 0.92; margin-top: 4px; }
 .fishbowl .wf-loser { font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); }
 
@@ -998,15 +1005,13 @@ footer { display: none !important; }
 .fishbowl.fb-constellation .core-round { color: var(--ink-faint); }
 
 /* ---- MindCard depth + life: entrance, hover lift, richer speaking glow ---- */
-@keyframes mindIn { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: none; } }
+/* The stage HTML is rebuilt every tick (wholesale innerHTML swap), so a per-card entrance
+   replayed the full staggered cascade on the whole cast each time — the dominant "screen
+   reload" flicker. Instead, only the card that just acted gives a small settle, drawing the
+   eye to the active speaker while the rest of the cast holds perfectly still. */
+@keyframes mindSpeakIn { from { opacity: 0.6; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: no-preference) {
-  .fishbowl.fb-constellation .ring-slot { animation: mindIn 0.5s cubic-bezier(0.2,0.7,0.2,1) both; }
-  .fishbowl.fb-constellation .ring-slot:nth-child(1) { animation-delay: 0.04s; }
-  .fishbowl.fb-constellation .ring-slot:nth-child(2) { animation-delay: 0.10s; }
-  .fishbowl.fb-constellation .ring-slot:nth-child(3) { animation-delay: 0.16s; }
-  .fishbowl.fb-constellation .ring-slot:nth-child(4) { animation-delay: 0.22s; }
-  .fishbowl.fb-constellation .ring-slot:nth-child(5) { animation-delay: 0.28s; }
-  .fishbowl.fb-constellation .ring-slot:nth-child(6) { animation-delay: 0.34s; }
+  .fishbowl.fb-constellation .mind.speaking { animation: mindSpeakIn 0.3s cubic-bezier(0.2,0.7,0.2,1) both; }
 }
 .fishbowl .mind-front {
   transition: border-color 0.22s ease, box-shadow 0.22s ease, transform 0.22s ease;

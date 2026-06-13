@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import html
 
+from src.ui.fishbowl.adapter import agent_color, agent_color_dim
+
 # Fixed, evocative core glyph for the stage centre.  The prototype uses the scenario's
 # own glyph; the view-model carries no glyph field, so we fall back to this (and honour
 # a ``glyph`` key if a future view-model provides one).
@@ -117,8 +119,14 @@ def render_split(vm: dict) -> str:
         leak = " leak" if member.get("mood") == "panic" else ""
         said_cell = _split_cell(member.get("said"), placeholder="— hasn't spoken —", think=False)
         think_cell = _split_cell(member.get("thought"), placeholder="— quiet —", think=True)
+        # Each row carries its mind's own phosphor so the omniscient table is colour-keyed
+        # to the same hue the cast wears on stage and in the transcript.
+        hue = member.get("hue")
+        row_style = (
+            f' style="--ac:{agent_color(int(hue))};--acd:{agent_color_dim(int(hue))}"' if hue is not None else ""
+        )
         rows.append(
-            f'<div class="split-row{speaking}">'
+            f'<div class="split-row{speaking}"{row_style}>'
             '<div class="split-id">'
             f'<div class="disp split-name">{name}</div>'
             f'<div class="split-arch">{archetype}</div>'

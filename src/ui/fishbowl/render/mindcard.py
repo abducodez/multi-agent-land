@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import html
 
-from src.ui.fishbowl.adapter import TIER_COLOR, mood_color
-from src.ui.fishbowl.render.avatar import agent_color, agent_color_dim, render_avatar
+from src.ui.fishbowl.adapter import TIER_COLOR, agent_color, agent_color_dim, mood_color
+from src.ui.fishbowl.render.avatar import render_avatar
 
 __all__ = ["render_mindcard"]
 

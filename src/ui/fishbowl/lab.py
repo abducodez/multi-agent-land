@@ -414,9 +414,7 @@ def build_lab() -> dict[str, gr.components.Component]:
                     )
 
                 if workers and not choices:
-                    gr.Markdown(
-                        f"_No {backend_label} models in the catalogue — the cast runs the deterministic stub._"
-                    )
+                    gr.Markdown(f"_No {backend_label} models in the catalogue — the cast runs the deterministic stub._")
 
         # The Judge.  Static handles (the app shell reads them on Summon and the picker
         # offers the catalogue), wrapped in a Group whose visibility tracks the effective

@@ -64,6 +64,25 @@ def agent_hue(manifest) -> int:
     return int(digest[:4], 16) % 360
 
 
+# ── agent colour (one phosphor per hue; every cast member is mapped the same way) ─
+# Lives here, with the other design-vocabulary mappings (hue/tier/mood colour), so every
+# surface — avatar, MindCard, feed line, split row — derives the *same* colour from the
+# *same* hue. That single source is what lets the eye map a name to a face to a transcript
+# line at a glance. Lightness/chroma are shared across the cast; only the hue varies.
+_AC_LIGHTNESS = 0.82  # high enough to stay legible as name text on the dark tank
+_AC_CHROMA = 0.17  # vivid enough that adjacent hues read as distinct identities
+
+
+def agent_color(hue: int, lightness: float = _AC_LIGHTNESS, chroma: float = _AC_CHROMA) -> str:
+    """The agent's phosphor colour — all cast share L/C, only the hue varies."""
+    return f"oklch({lightness} {chroma} {hue})"
+
+
+def agent_color_dim(hue: int) -> str:
+    """The dimmed companion colour (used for sealed / inactive surfaces)."""
+    return f"oklch(0.5 0.1 {hue})"
+
+
 def agent_archetype(manifest) -> str:
     """The manifest's ``archetype``, or a fallback derived from its role."""
     return getattr(manifest, "archetype", None) or f"the {manifest.role}"

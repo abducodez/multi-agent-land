@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import html
 
+from src.ui.fishbowl.adapter import agent_color, agent_color_dim
+
 _BOLT = "⚡"  # poke lines carry a lightning bolt
 _SCALES = "⚖"  # the verdict line carries the scales of judgement
 
@@ -49,7 +51,12 @@ def _say_line(item: dict, *, mind_reader: bool) -> str:
     if mind_reader and thought:
         thought_html = html.escape(thought)
         line += f'<div class="say-think">↳ <i class="thought">{thought_html}</i></div>'
-    return f'<div class="fe say">{line}</div>'
+    # The line wears the speaker's own phosphor (name, accent border, thought tint) so the
+    # transcript is colour-coded to the cast — the same hue as their MindCard and avatar.
+    # A hue-less line (e.g. an un-cast actor) falls back to the CSS default accent.
+    hue = item.get("hue")
+    style = f' style="--ac:{agent_color(int(hue))};--acd:{agent_color_dim(int(hue))}"' if hue is not None else ""
+    return f'<div class="fe say"{style}>{line}</div>'
 
 
 def _poke_line(item: dict) -> str:

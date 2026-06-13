@@ -116,11 +116,17 @@ def view_model_at(
             }
         )
 
+    # The hue a name maps to, so a feed/transcript line can wear the same phosphor as the
+    # speaker's MindCard and avatar — the colour is what lets the eye tie line to face.
+    hue_by_name = {m.name: agent_hue(m) for m in cast}
+
     feed = []
     for e in prefix:
         item = event_to_feed_item(e, names)
         if item is not None:
             item["turn"] = e.turn
+            if item.get("agent") in hue_by_name:
+                item["hue"] = hue_by_name[item["agent"]]
             feed.append(item)
 
     # The arena contract for this run (ADR-0029), stamped on run.started — lets the

@@ -40,7 +40,7 @@ def test_avatar_is_svg_with_hue_colour():
     out = render_avatar(120, "smug")
     assert out.startswith("<div")
     assert "<svg" in out
-    assert "oklch(0.82 0.14 120)" in out
+    assert "oklch(0.82 0.17 120)" in out
     assert "av-smug" in out
 
 

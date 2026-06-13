@@ -9,17 +9,12 @@ Unit 1's CSS animates the emitted ``av-*`` classes.
 
 from __future__ import annotations
 
+# Colour helpers live in the design-vocabulary layer (``adapter``) so the avatar, MindCard,
+# feed line, and split row all derive one phosphor from one hue. Re-exported here for the
+# renderers that have always reached for them via this module.
+from src.ui.fishbowl.adapter import agent_color, agent_color_dim
+
 __all__ = ["render_avatar", "agent_color", "agent_color_dim"]
-
-
-def agent_color(hue: int, lightness: float = 0.82, chroma: float = 0.14) -> str:
-    """The agent's phosphor colour — all cast share L/C, only the hue varies."""
-    return f"oklch({lightness} {chroma} {hue})"
-
-
-def agent_color_dim(hue: int) -> str:
-    """The dimmed companion colour (used for sealed / inactive surfaces)."""
-    return f"oklch(0.5 0.09 {hue})"
 
 
 # mouth path per mood (panic is drawn as an open 'o' instead of a path)

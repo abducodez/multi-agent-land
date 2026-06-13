@@ -55,8 +55,11 @@ def _confetti() -> str:
     return f'<div class="wf-confetti" aria-hidden="true">{"".join(bits)}</div>'
 
 
-def _chip(text: str) -> str:
-    return f'<span class="wf-chip">{html.escape(text)}</span>'
+def _chip(text: str, hue: int | None = None) -> str:
+    # A roster chip wears its own member's hue so a teammate's name matches the colour
+    # they wore on stage; hue-less chips (e.g. the model chip) keep the winner's tint.
+    style = f' style="--ch:{int(hue)}"' if hue is not None else ""
+    return f'<span class="wf-chip"{style}>{html.escape(text)}</span>'
 
 
 def render_winner(vm: dict) -> str:
@@ -90,7 +93,7 @@ def render_winner(vm: dict) -> str:
         members = [by_id[m] for m in (teams.get(winner) or []) if m in by_id]
         if members:
             hue = int(members[0].get("hue", hue))
-            chips = "".join(_chip(str(m.get("name", ""))) for m in members)
+            chips = "".join(_chip(str(m.get("name", "")), m.get("hue")) for m in members)
             roster = f'<div class="wf-roster">{chips}</div>'
     else:  # an individual mind took it
         card = by_id.get(winner)
