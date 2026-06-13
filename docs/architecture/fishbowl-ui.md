@@ -218,6 +218,8 @@ renderer binds to**. It is a pure function of `events[:k]`. Top-level keys:
 | `voice` | `str` | the active narrator key |
 | `voice_meta` | `{name, desc}` | the resolved narrator persona |
 | `speaking_id` | `str \| None` | the head event's actor, when it just spoke |
+| `secret` | `str \| None` | audience-only ground truth for a hidden-word run (Twenty Sprouts); `None` otherwise. Rendered on the stage core, never placed in an agent prompt |
+| `secret_holder` | `str \| None` | the actor holding `secret` (e.g. `secret-keeper`), or `None` |
 | `verdict` | `{text, reveal, agent} \| None` | the latest `judge.verdict` |
 | `rounds` | `int` | `1 + count(user.injected)` |
 | `max_rounds` | `int \| None` | the round ceiling, if set |

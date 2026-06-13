@@ -33,11 +33,20 @@ def build_show() -> dict[str, object]:
     handles: dict[str, object] = {}
 
     with gr.Column(elem_id="show", elem_classes=["show"]):
-        # ---- SHOW BAR : back-to-lab · mind-reader · layout selector -------
+        # ---- SHOW BAR : PLAY/PAUSE · RESTART · mind-reader · layout -------
+        # The Play/Pause control rides up here at the top of the Show, front-and-centre:
+        # it is the one thing a visitor needs.  Its label flips "▶ Play"⇄"❚❚ Pause"; the
+        # app shell owns the toggle, auto-starts it on Summon, and begins the conversation
+        # the instant it's pressed.  Restart wipes the run and begins a fresh context.
         with gr.Row(elem_classes=["showbar"]):
-            handles["back_to_lab"] = gr.Button(
-                "← back to the Lab",
-                elem_classes=["icon-btn", "back-to-lab"],
+            handles["play_btn"] = gr.Button(
+                "▶ Play",
+                elem_classes=["icon-btn", "play", "play-hero"],
+                scale=0,
+            )
+            handles["restart_btn"] = gr.Button(
+                "↺ Restart",
+                elem_classes=["icon-btn", "restart-btn"],
                 scale=0,
             )
             handles["mind_reader"] = gr.Checkbox(
@@ -101,37 +110,10 @@ def build_show() -> dict[str, object]:
                     scale=0,
                 )
 
-        # ---- TRANSPORT : ⏮/▶/⏭ · scrubber · speed · autoplay clock -------
-        with gr.Row(elem_classes=["transport"]):
-            with gr.Row(elem_classes=["tp-btns"]):
-                handles["back_btn"] = gr.Button("⏮", elem_classes=["icon-btn"], scale=0)
-                handles["play_btn"] = gr.Button("▶", elem_classes=["icon-btn", "play"], scale=0)
-                handles["fwd_btn"] = gr.Button("⏭", elem_classes=["icon-btn"], scale=0)
-                # Curtain call: stop the cast and hand the floor to the judge, which
-                # reads the whole ledger and rules.  The app shell wires it to
-                # ``force_verdict`` and disables it for casts with no judge.
-                handles["judge_btn"] = gr.Button(
-                    "⚖ Start judging",
-                    elem_classes=["icon-btn", "judge-now"],
-                    scale=0,
-                )
-            handles["step_slider"] = gr.Slider(
-                minimum=0,
-                maximum=1,
-                value=0,
-                step=1,
-                label="step",
-                elem_classes=["scrub"],
-                scale=4,
-            )
-            handles["speed"] = gr.Radio(
-                ["live", "1×", "fast"],
-                value="1×",
-                label="speed",
-                elem_classes=["seg", "speed-seg"],
-            )
-
         # ---- AUTOPLAY CLOCK : app shell toggles ``active`` + interval -----
+        # Play/Pause + Restart live in the showbar; the manual "start judging" and speed
+        # controls are gone — the judge is brought on automatically at the end of a run,
+        # and the clock runs at a single comfortable cadence.
         handles["timer"] = gr.Timer(value=1.9, active=False)
 
     return handles

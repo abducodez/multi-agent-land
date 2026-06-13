@@ -2,8 +2,10 @@
 
 Memory architecture (three layers):
 
-  1. EpisodicMemory — filtered view over the ledger; agents see only events
-     they witnessed.  This is the simplest and always-on layer.
+  1. EpisodicMemory — filtered view over the ledger; an agent sees its own events
+     plus the public record everyone witnesses: world beats, verdicts, visitor
+     pokes, reflections, and peers' spoken lines (``agent.spoke`` / ``oracle.spoke``).
+     Private ``agent.thought`` stays out — minds aren't read by peers.  Always-on.
 
   2. SalienceMemory — ranks visible events by a composite score:
        salience(e) = w_rel·relevance(e,query) + w_rec·recency(e,turn) + w_imp·importance(e.kind)
@@ -61,6 +63,7 @@ _KIND_IMPORTANCE: dict[str, float] = {
     "run.started": 0.3,
     "world.observed": 0.7,
     "agent.spoke": 0.5,
+    "oracle.spoke": 0.5,  # a custom public-speech kind (oracle-grove); ranks like agent.spoke
     "agent.thought": 0.4,
     "agent.reflected": 0.85,  # reflections are high-value compact memories
     "judge.verdict": 0.9,
@@ -70,7 +73,33 @@ _KIND_IMPORTANCE: dict[str, float] = {
     "verdict.final": 1.0,
 }
 
+# What an agent can RECALL of others: globally-visible kinds (plus its own events).
+# The split is public vs. private SPEECH. A spoken line (``agent.spoke`` / the custom
+# ``oracle.spoke``) is table talk — every mind hears it, so it must be recallable across
+# the whole run, not just this round's blackboard tail. Without this a judge that fires
+# late (it has no own events yet) recalls *none* of the discussion it must rule on, and a
+# worker forgets every peer line older than the 6-line blackboard window. A private
+# ``agent.thought`` is deliberately NOT here: it rides only its own event payload (the
+# mind-reader UI), so peers never read another mind's thinking. Secrets ride non-``text``
+# payload keys and ``_displayable`` shows ``text`` only, so sharing speech leaks nothing.
 _GLOBALLY_VISIBLE: frozenset[str] = frozenset(
+    {
+        "world.observed",
+        "judge.verdict",
+        "user.injected",
+        "run.started",
+        "agent.reflected",
+        "agent.spoke",
+        "oracle.spoke",
+    }
+)
+
+# What COUNTS toward an agent's reflection cadence (ReflectionTracker). Deliberately the
+# narrower set *without* peer speech: reflection compacts "what I have been through" —
+# my own arc plus the world beats — so its rhythm shouldn't lurch just because the table
+# got chatty this round. Keeping it separate from _GLOBALLY_VISIBLE leaves reflection
+# timing exactly as tuned while recall gains the shared discussion.
+_REFLECTION_VISIBLE: frozenset[str] = frozenset(
     {"world.observed", "judge.verdict", "user.injected", "run.started", "agent.reflected"}
 )
 
@@ -81,8 +110,10 @@ _GLOBALLY_VISIBLE: frozenset[str] = frozenset(
 class EpisodicMemory:
     """Per-agent filtered view over the ledger — the always-on memory layer.
 
-    An agent sees its own events plus globally-visible event kinds.
-    The window is capped at max_recent to stay within small-model context budgets.
+    An agent sees its own events plus globally-visible kinds (the public record —
+    world beats, verdicts, visitor pokes, reflections, and peers' *spoken* lines;
+    never peers' private thoughts).  The window is capped at max_recent to stay
+    within small-model context budgets.
     """
 
     agent_name: str
@@ -291,7 +322,7 @@ class ReflectionTracker:
 
     def observe(self, events: tuple[Event, ...]) -> bool:
         """Return True when a reflection should be emitted this turn."""
-        visible_count = sum(1 for e in events if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE)
+        visible_count = sum(1 for e in events if e.actor == self.agent_name or e.kind in _REFLECTION_VISIBLE)
         due = visible_count > 0 and visible_count != self._seen_count and visible_count % self.threshold == 0
         self._seen_count = visible_count
         return due

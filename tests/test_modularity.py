@@ -6,6 +6,7 @@ The new agent even mints its own namespaced event kind, and it still renders on
 stage via the generic projection fallback.  If this passes, "config over code" is
 real, not aspirational.
 """
+
 from __future__ import annotations
 
 from collections import Counter

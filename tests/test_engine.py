@@ -31,4 +31,3 @@ def test_conductor_runs_vertical_slice() -> None:
 
     assert len(conductor.ledger.events) >= 3
     assert conductor.projection.current_scene != "The curtain has not risen."
-

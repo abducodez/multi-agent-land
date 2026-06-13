@@ -654,6 +654,11 @@ footer { display: none !important; }
 @keyframes coreFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 .fishbowl .core-title { font-size: 16px; letter-spacing: 0.1em; color: var(--ink); }
 .fishbowl .core-round { font-size: 9px; color: var(--ink-dim); }
+/* Audience-only secret peek (Twenty Sprouts) — a dashed "director's view" chip the cast
+   never sees. Dimmed by default so it reads as a backstage aside, brightening the held
+   word so the human can actually read it at a glance. */
+.fishbowl .core-secret { margin-top: 4px; font-size: 9px; color: var(--ink-faint); border: 1px dashed var(--ink-faint); border-radius: 999px; padding: 3px 9px; background: color-mix(in srgb, var(--cyan) 6%, transparent); pointer-events: auto; }
+.fishbowl .core-secret-word { color: var(--cyan); letter-spacing: 0.14em; text-shadow: var(--glow-hot); }
 .fishbowl .ring { display: contents; }
 .fishbowl .ring-slot { display: grid; place-items: center; z-index: 2; }
 .fishbowl .show-constellation .ring-slot:nth-child(1) { grid-area: 1 / 2; }
@@ -1432,4 +1437,119 @@ footer { display: none !important; }
   margin-top: 6px;
   line-height: 1.5;
   max-width: 46ch;
+}
+
+/* ============================================================
+   ✦ LIVE-SHOW UX — auto-start cue, single-control transport, loud end-card
+   ------------------------------------------------------------
+   Three small surfaces, big clarity wins:
+     1. a broadcast "lower third" naming who we're waiting on — model calls
+        take seconds, and silence reads as a freeze;
+     2. the lone Play/Pause hero button reads as the one thing to press;
+     3. the end-of-show card is impossible to miss (it used to inherit as ~12px
+        text with no card of its own).
+   ============================================================ */
+
+/* ---- 1 · "who's thinking" badge — pinned to the TOP of the stage so it's in view
+   the instant a model starts working, no scrolling required (it used to sit at the
+   bottom of a tall stage and slip below the fold) ---- */
+.fishbowl.fb-stage { position: relative; }
+.fishbowl .thinking-strip {
+  position: sticky; top: 10px; z-index: 40; pointer-events: none;
+  width: fit-content; max-width: calc(100% - 24px); margin: 2px auto 12px;
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 17px 9px 14px;
+  font-family: var(--font-display); font-size: 11.5px; letter-spacing: 0.06em;
+  color: var(--cyan);
+  background: rgba(6, 20, 27, 0.94);
+  border: 1px solid var(--line-hot, rgba(79, 230, 210, 0.5));
+  border-radius: 999px;
+  box-shadow: 0 10px 34px -12px rgba(0, 0, 0, 0.85), 0 0 22px rgba(79, 230, 210, 0.3);
+  backdrop-filter: blur(8px);
+  animation: tsIn 0.35s ease both;
+}
+@keyframes tsIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.fishbowl .thinking-strip .ts-orb {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--cyan); box-shadow: 0 0 10px var(--cyan), inset 0 0 4px #fff;
+  animation: tsPulse 1.1s ease-in-out infinite;
+}
+@keyframes tsPulse { 0%, 100% { opacity: 0.45; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }
+.fishbowl .thinking-strip .ts-label {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-shadow: 0 0 10px rgba(79, 230, 210, 0.4);
+}
+.fishbowl .thinking-strip .ts-dots { display: inline-flex; gap: 3px; flex: none; }
+.fishbowl .thinking-strip .ts-dots i {
+  width: 4px; height: 4px; border-radius: 50%; background: var(--cyan); opacity: 0.3;
+  animation: tsDot 1.1s ease-in-out infinite;
+}
+.fishbowl .thinking-strip .ts-dots i:nth-child(2) { animation-delay: 0.18s; }
+.fishbowl .thinking-strip .ts-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes tsDot { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+/* ---- 2 · single Play/Pause hero button — the obvious thing to press, up in the
+   showbar (native gr.Button → reach it via the container, not the .fishbowl scope) ---- */
+.gradio-container .play-hero,
+.gradio-container .play-hero button {
+  min-width: 132px !important;
+  padding: 10px 22px !important;
+  font-family: var(--font-display) !important;
+  font-size: 13px !important; font-weight: 800 !important;
+  letter-spacing: 0.16em !important; text-transform: uppercase !important;
+  color: #04221c !important;
+  background: linear-gradient(180deg, var(--cyan), #2bc4b4) !important;
+  border: 1px solid var(--cyan) !important; border-radius: 999px !important;
+  box-shadow: 0 0 20px rgba(79, 230, 210, 0.5) !important;
+  animation: playBreath 2.4s ease-in-out infinite;
+}
+@keyframes playBreath {
+  0%, 100% { box-shadow: 0 0 16px rgba(79, 230, 210, 0.38); }
+  50% { box-shadow: 0 0 28px rgba(79, 230, 210, 0.72); }
+}
+.gradio-container .play-hero:hover,
+.gradio-container .play-hero button:hover {
+  box-shadow: 0 0 32px rgba(79, 230, 210, 0.85) !important;
+  filter: brightness(1.1) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gradio-container .play-hero,
+  .gradio-container .play-hero button { animation: none; }
+}
+
+/* ---- 3 · the end-of-show card (verdict ruling + STOPPED both reuse .verdict.banner) ---- */
+.fishbowl .verdict.banner {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  margin: 14px auto; max-width: 560px; padding: 22px 30px 24px; text-align: center;
+  border: 1px solid var(--lime); border-radius: 16px;
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(155, 232, 107, 0.18), transparent 62%),
+    rgba(6, 20, 27, 0.96);
+  box-shadow: 0 0 50px rgba(155, 232, 107, 0.32), inset 0 0 30px rgba(155, 232, 107, 0.08);
+  backdrop-filter: blur(10px);
+  animation: endCard 0.55s cubic-bezier(0.18, 1.3, 0.35, 1) both;
+}
+@keyframes endCard { from { opacity: 0; transform: translateY(-14px) scale(0.96); } to { opacity: 1; transform: none; } }
+.fishbowl .verdict.banner .eyebrow {
+  font-size: 12px; letter-spacing: 0.34em; color: var(--lime);
+  text-shadow: 0 0 14px rgba(155, 232, 107, 0.6);
+}
+.fishbowl .verdict.banner .vb-text { font-size: 15.5px; line-height: 1.5; color: var(--ink); max-width: 48ch; }
+.fishbowl .verdict.banner .vb-winner { font-size: 18px; letter-spacing: 0.12em; }
+/* the STOPPED / ended-without-verdict variant: coral, not celebratory lime */
+.fishbowl .verdict.banner.stopped {
+  border-color: var(--coral);
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(255, 143, 125, 0.16), transparent 62%),
+    rgba(6, 20, 27, 0.96);
+  box-shadow: 0 0 50px rgba(255, 143, 125, 0.28), inset 0 0 30px rgba(255, 143, 125, 0.08);
+}
+.fishbowl .verdict.banner.stopped .eyebrow { color: var(--coral); text-shadow: 0 0 14px rgba(255, 143, 125, 0.6); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fishbowl .thinking-strip,
+  .fishbowl .thinking-strip .ts-orb,
+  .fishbowl .thinking-strip .ts-dots i,
+  .fishbowl .verdict.banner { animation: none; }
 }

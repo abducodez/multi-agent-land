@@ -11,6 +11,7 @@ Three tiers, mirroring the optional-dependency tests elsewhere:
   * A guarded stdio round-trip asserts ``oracle`` returns an omen over MCP
     (skipped if ``mcp`` is absent or the server can't be spawned quickly).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -41,6 +42,7 @@ class _SpyResolver:
 
 
 # ── capability enforcement wraps the transport (no mcp required) ────────────────
+
 
 class TestCapabilityWrapsTransport:
     def test_denied_grant_raises_before_resolver_is_touched(self):
@@ -99,6 +101,7 @@ class TestCapabilityWrapsTransport:
 
 # ── the config gate flips in-process ↔ MCP (no mcp required) ────────────────────
 
+
 class TestConfigGate:
     def test_default_is_in_process(self, monkeypatch):
         monkeypatch.delenv("MCP_SERVERS", raising=False)
@@ -123,9 +126,7 @@ class TestConfigGate:
     def test_mcp_servers_gate_parses_multiple(self):
         from src.tools.mcp_client import server_configs_from_env
 
-        configs = server_configs_from_env(
-            {"MCP_SERVERS": "python -m src.tools.mcp_server :: node other.js --flag"}
-        )
+        configs = server_configs_from_env({"MCP_SERVERS": "python -m src.tools.mcp_server :: node other.js --flag"})
         assert len(configs) == 2
         assert configs[0].command == "python"
         assert configs[1].command == "node"
@@ -134,9 +135,7 @@ class TestConfigGate:
     def test_mcp_servers_takes_precedence_over_oracle_flag(self):
         from src.tools.mcp_client import server_configs_from_env
 
-        configs = server_configs_from_env(
-            {"MCP_SERVERS": "python -m custom.server", "MCP_ORACLE": "1"}
-        )
+        configs = server_configs_from_env({"MCP_SERVERS": "python -m custom.server", "MCP_ORACLE": "1"})
         assert len(configs) == 1
         assert configs[0].args == ("-m", "custom.server")
 
@@ -147,6 +146,7 @@ class TestConfigGate:
 
 
 # ── result coercion (no mcp required: pure dataclass shaping) ────────────────────
+
 
 class TestResultCoercion:
     def test_prefers_structured_content(self):
@@ -189,6 +189,7 @@ class TestResultCoercion:
 
 # ── server module registers oracle (requires mcp) ───────────────────────────────
 
+
 class TestMCPServer:
     def test_server_builds_and_registers_oracle(self):
         pytest.importorskip("mcp")
@@ -216,15 +217,14 @@ class TestMCPServer:
 
 # ── guarded stdio round-trip (requires mcp + a spawnable server) ─────────────────
 
+
 class TestMCPStdioRoundTrip:
     def test_oracle_over_stdio(self):
         pytest.importorskip("mcp")
         from src.tools.builtins import oracle
         from src.tools.mcp_client import MCPServerConfig, MCPToolClient
 
-        client = MCPToolClient(
-            server=MCPServerConfig(command="python", args=("-m", "src.tools.mcp_server"))
-        )
+        client = MCPToolClient(server=MCPServerConfig(command="python", args=("-m", "src.tools.mcp_server")))
         try:
             listed = client.list_tools()
         except Exception as exc:  # pragma: no cover - environment dependent

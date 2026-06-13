@@ -21,11 +21,26 @@ class TestEpisodicMemory:
         visible = mem.visible(events)
         assert len(visible) == 1
 
-    def test_other_agent_spoke_not_visible(self):
+    def test_other_agent_spoke_is_visible(self):
+        # Peers' SPOKEN lines are the shared table — recallable across the whole run, not
+        # just this round's blackboard tail (ADR-0023 follow-up). A late-firing judge
+        # depends on this to read the discussion it rules on.
         mem = EpisodicMemory("pocket-actor")
         events = (_event("agent.spoke", actor="scene-whisperer"),)
-        visible = mem.visible(events)
-        assert len(visible) == 0
+        assert len(mem.visible(events)) == 1
+
+    def test_other_agent_thought_not_visible(self):
+        # A private thought (the mind-reader content) rides only its own event — peers
+        # never read another mind's thinking, even though spoken lines are now shared.
+        mem = EpisodicMemory("pocket-actor")
+        events = (_event("agent.thought", actor="scene-whisperer"),)
+        assert len(mem.visible(events)) == 0
+
+    def test_oracle_spoke_visible_to_all(self):
+        # The custom public-speech kind (oracle-grove) is shared like agent.spoke.
+        mem = EpisodicMemory("scene-whisperer")
+        events = (_event("oracle.spoke", actor="fortune-teller"),)
+        assert len(mem.visible(events)) == 1
 
     def test_user_injected_visible_to_all(self):
         mem = EpisodicMemory("echo")

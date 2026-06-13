@@ -193,6 +193,58 @@ A later live run surfaced three more leaks/quality issues, each fixed at its lay
   now demands a genuinely new angle. **Live only** — the offline stub's curated catalogue is
   reproducible by design, and de-duplicating its small line set would starve demos and tests.
 
+## Follow-up: recall the whole discussion, and let judges rule on all of it
+
+The original fix shared peers' lines *within a round* (the `WHAT'S BEEN SAID` blackboard,
+the last ~6 of `projection.agent_notes`). A later audit — "are we passing good context
+about the discussion for **every** scenario?" — found two gaps that the blackboard tail
+hid:
+
+- **Memory never carried the discussion.** `agent.spoke` was not in `_GLOBALLY_VISIBLE`,
+  so an agent's recall (episodic *and* salience) contained only its own lines plus world
+  beats/verdicts — never a peer's spoken line. The blackboard's recent tail was the
+  *only* window onto the conversation.
+- **Judges ruled on a 6-line tail.** A judge fires late and has no own-events yet, so its
+  salience candidates were just the globally-visible kinds — i.e. **zero** of the
+  discussion. Measured across the shipped casts, every judge recalled `0` spoken lines and
+  saw only the last 6 via the blackboard: `open-table` 6 of 18, `the-steeped` 6 of 16
+  (missing half the clues that locate the seam), and so on.
+
+Three changes, each at the layer that owns the concern:
+
+1. **Public speech is recallable; private thought is not.** `_GLOBALLY_VISIBLE` gains
+   `agent.spoke` and `oracle.spoke` (`src/core/memory.py`). A spoken line is the shared
+   table — every mind can recall it across the whole run, not just this round. `agent.thought`
+   stays out (the mind-reader's alone), secrets ride non-`text` payload keys, and
+   `_displayable` shows `text` only — so sharing speech leaks nothing (verified: the spy
+   word and the sprout word never appear in a peer's prompt). Reflection cadence is kept on
+   a separate, narrower `_REFLECTION_VISIBLE` set so a chatty table doesn't change how often
+   an agent compacts memory.
+
+2. **The discussion block is role-aware** (`ContextBuilder`, ADR-0006's "builder owns
+   assembly"). Workers still get `WHAT'S BEEN SAID` — the recent table to react to.
+   **Judges get `THE EXCHANGE TO JUDGE` — the complete, ordered public transcript**, so a
+   ruling weighs the whole debate, not its tail. `YOUR MEMORY` is deduped against whichever
+   block is shown (it holds the *earlier* arc + world/verdict beats; a line is never
+   printed twice), and shows a short pointer when the transcript already covers it. After
+   the change every judge sees 100% of the discussion (`18/18`, `16/16`, …).
+
+3. **A mis-wired scenario, and a cascade guardrail.** Mystery Roots' `clue-gatherer` and
+   `devils-advocate` emitted private `agent.thought` — so the hypothesis-former reasoning
+   "based on the clues gathered" saw none, and the judge saw nothing. Their personas are
+   plainly public contributions, so they now `agent.spoke` (keeping a private `thought` for
+   the mind-reader). That exposed a latent footgun: an agent that both subscribes to and
+   emits `agent.spoke` re-triggered itself, cascading until the per-turn call cap tripped
+   *before the judge fired*. `Conductor._notify_subscribers` now never queues an agent for
+   its **own** event — self-reaction is never intended, and a subscriber still reacts to
+   every peer's event.
+
+Consequences: judges rule on the whole exchange; workers reason over the full arc (recent
+table + recallable earlier lines) instead of a 6-line window; Mystery Roots' convergence is
+real on the live path, not hollow; and the cast can't self-cascade a turn to death. All
+additive and offline-reproducible — `agent.thought` privacy is preserved and the
+deterministic stub path is unchanged.
+
 ## References
 
 - `src/core/context.py` — `ContextBuilder._blackboard_block`
@@ -200,5 +252,10 @@ A later live run surfaced three more leaks/quality issues, each fixed at its lay
 - `src/core/memory.py` — index degradation, `_displayable`
 - `src/core/structured.py` — reasoning strip, balanced-object scan, salvage
 - `config/scenarios/the-steeped.yaml`, `config/agents/spy-*.yaml`
+- Follow-up (recall the whole discussion): `src/core/memory.py` (`_GLOBALLY_VISIBLE` /
+  `_REFLECTION_VISIBLE`), `src/core/context.py` (role-aware discussion block + dedup),
+  `src/core/conductor.py` (`_notify_subscribers` no self-trigger), `config/agents/clue-gatherer.yaml`,
+  `config/agents/devils-advocate.yaml`; tests in `test_memory.py` / `test_context.py` /
+  `test_salience_memory.py`.
 - Builds on ADR-0006 (ContextBuilder owns prompt assembly), ADR-0016 (Instructor structured
   output), ADR-0018 (memory index is a derived lens).

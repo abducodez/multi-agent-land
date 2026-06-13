@@ -48,8 +48,7 @@ def test_every_endpoint_url_is_a_valid_dns_host():
         url = cat.endpoint_url(e.app, e.endpoint_name, _SAMPLE_WORKSPACE)
         label = url.removeprefix("https://").split(".modal.run", 1)[0]
         assert len(label) <= _DNS_LABEL_MAX, (
-            f"{e.key}: DNS label is {len(label)} chars (> {_DNS_LABEL_MAX}); "
-            f"shorten endpoint_name. label={label!r}"
+            f"{e.key}: DNS label is {len(label)} chars (> {_DNS_LABEL_MAX}); shorten endpoint_name. label={label!r}"
         )
 
 

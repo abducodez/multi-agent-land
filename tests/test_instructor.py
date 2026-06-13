@@ -11,6 +11,7 @@ No network and no real credentials.  Three layers are covered:
     ``complete_structured`` (validated payload, no ``_raw_fallback``) and the
     tolerant-parser path with the deterministic stub.
 """
+
 from __future__ import annotations
 
 import sys

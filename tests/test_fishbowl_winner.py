@@ -44,10 +44,20 @@ class TestAgentWin:
     def _vm(self, **over) -> dict:
         vm = {
             "cast": [
-                {"id": "hypothesis-former", "name": "hypothesis-former", "archetype": "the analyst",
-                 "model": "Arch-Router-1.5B", "hue": 200},
-                {"id": "devil-advocate", "name": "devil-advocate", "archetype": "the skeptic",
-                 "model": "Qwen", "hue": 20},
+                {
+                    "id": "hypothesis-former",
+                    "name": "hypothesis-former",
+                    "archetype": "the analyst",
+                    "model": "Arch-Router-1.5B",
+                    "hue": 200,
+                },
+                {
+                    "id": "devil-advocate",
+                    "name": "devil-advocate",
+                    "archetype": "the skeptic",
+                    "model": "Qwen",
+                    "hue": 20,
+                },
             ],
             "teams": {},
             "verdict": {
@@ -126,6 +136,10 @@ class TestTeamWin:
 
 class TestEscaping:
     def test_label_is_escaped(self):
-        vm = {"verdict": {"winner": "x", "winner_label": "<script>x</script>", "winner_kind": "agent"}, "cast": [], "teams": {}}
+        vm = {
+            "verdict": {"winner": "x", "winner_label": "<script>x</script>", "winner_kind": "agent"},
+            "cast": [],
+            "teams": {},
+        }
         html = render_winner(vm)
         assert "<script>" not in html and "&lt;script&gt;" in html

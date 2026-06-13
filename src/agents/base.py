@@ -156,6 +156,9 @@ class ManifestAgent(Agent):
             all_events=recent_events,
             memory_window=mem_cfg.window,
             memory_text=memory_text,  # FIX: salience/episodic recall is now actually used
+            # A judge gets the COMPLETE exchange to rule on; workers get the recent table to
+            # react to (ContextBuilder picks the discussion block by role — ADR-0023 follow-up).
+            role=self.manifest.role,
         )
         extra = self._build_extra_prompt(projection, recent_events)
         tools_block = self._tools_block()

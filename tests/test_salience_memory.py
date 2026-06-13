@@ -88,6 +88,14 @@ class TestReflectionTracker:
         events6 = tuple(_event("world.observed", turn=i) for i in range(6))
         assert tracker.observe(events6)
 
+    def test_peer_speech_does_not_advance_the_reflection_clock(self):
+        # Reflection compacts "what I've been through" — its cadence keys on world beats and
+        # the agent's own events, NOT how chatty the table got (peers' spoke is recallable
+        # but excluded from the reflection count). Three peer lines must not trip threshold 3.
+        tracker = ReflectionTracker("a", threshold=3)
+        peer_chatter = tuple(_event("agent.spoke", actor="b", turn=i) for i in range(3))
+        assert not tracker.observe(peer_chatter)
+
 
 class TestKindImportanceTable:
     def test_user_injected_high(self):

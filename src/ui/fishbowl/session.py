@@ -112,6 +112,13 @@ class FishbowlSession:
         its own (no extra token spend)."""
         return any(e.kind == "judge.verdict" for e in self.conductor.ledger.events_for_run(self.conductor.run_id))
 
+    def peek_next_actor_name(self) -> str | None:
+        """Best-effort name of whoever the next :meth:`step_one` will run.
+
+        Feeds the Show's "who's thinking…" hint while a model call is in flight; a pure
+        read that never advances the run.  Returns ``None`` when nothing is queued."""
+        return self.conductor.peek_next_actor_name()
+
     def has_judge(self) -> bool:
         """True when this cast has a judge that can be asked to rule.
 
@@ -292,6 +299,10 @@ class ReplaySession:
         # A replay owns no live engine, so it can never *call* a judge — but the
         # recorded run may already carry its verdict.  Report on the recording.
         return self.has_verdict()
+
+    def peek_next_actor_name(self) -> str | None:  # pragma: no cover - inert by design
+        # A replay never generates, so nobody is ever "thinking" — no hint to show.
+        return None
 
     def force_verdict(self) -> bool:  # pragma: no cover - inert by design
         # A replay is read-only: nothing to judge, the recording stands as-is.

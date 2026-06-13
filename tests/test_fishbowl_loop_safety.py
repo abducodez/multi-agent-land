@@ -146,7 +146,8 @@ def test_autoplay_streams_one_agent_per_advance() -> None:
 def test_stopped_banner_reuses_verdict_chrome() -> None:
     html = fb_app._stopped_banner_html("Total call cap 3 reached")
     assert "verdict banner" in html  # reuses the existing banner CSS class
-    assert "Stopped" in html
+    assert "banner stopped" in html  # the coral end-card variant (distinct from a lime verdict)
+    assert "The show has ended" in html  # a loud, unmissable end-of-show headline
     assert "Total call cap 3 reached" in html  # the reason is shown
 
 

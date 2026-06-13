@@ -26,16 +26,12 @@ def test_returns_expected_keys() -> None:
         "verdict_html",
         "layout",
         "mind_reader",
-        "step_slider",
-        "back_btn",
         "play_btn",
-        "fwd_btn",
-        "speed",
+        "restart_btn",
         "timer",
         "poke_btns",
         "poke_text",
         "poke_send",
-        "back_to_lab",
     }
     assert expected <= set(handles)
 
@@ -49,7 +45,6 @@ def test_recipe_subset() -> None:
         "meters_html",
         "layout",
         "mind_reader",
-        "step_slider",
         "play_btn",
         "timer",
     } <= set(handles)
@@ -80,26 +75,33 @@ def test_mind_reader_checkbox_defaults_sealed() -> None:
     assert mr.value is False
 
 
-def test_step_slider_is_scrubber() -> None:
+def test_pared_back_transport_controls_removed() -> None:
+    # The Show is down to Play/Pause + Restart in the showbar: the step buttons,
+    # scrubber, speed radio, manual judge, and back-to-Lab button were all removed
+    # (tab nav covers Lab; the judge is now auto-summoned at the end of a run).
     handles = _build()
-    slider = handles["step_slider"]
-    assert isinstance(slider, gr.Slider)
-    assert slider.value == 0
-    assert slider.minimum == 0
-    assert slider.step == 1
+    for gone in ("step_slider", "back_btn", "fwd_btn", "speed", "judge_btn", "back_to_lab"):
+        assert gone not in handles
 
 
-def test_speed_radio_options() -> None:
+def test_play_button_defaults_to_play_label() -> None:
     handles = _build()
-    speed = handles["speed"]
-    assert isinstance(speed, gr.Radio)
-    assert speed.value == "1×"
-    assert [c[0] for c in speed.choices] == ["live", "1×", "fast"]
+    play = handles["play_btn"]
+    assert isinstance(play, gr.Button)
+    # Starts paused: the app shell flips it to "❚❚ Pause" on Summon (auto-start).
+    assert play.value == "▶ Play"
+
+
+def test_restart_button_present() -> None:
+    handles = _build()
+    restart = handles["restart_btn"]
+    assert isinstance(restart, gr.Button)
+    assert "Restart" in restart.value
 
 
 def test_transport_buttons_are_buttons() -> None:
     handles = _build()
-    for key in ("back_btn", "play_btn", "fwd_btn", "back_to_lab", "poke_send"):
+    for key in ("play_btn", "restart_btn", "poke_send"):
         assert isinstance(handles[key], gr.Button)
 
 

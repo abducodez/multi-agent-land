@@ -300,6 +300,29 @@ class Conductor:
         self._maybe_snapshot()
         return True
 
+    def peek_next_actor_name(self) -> str | None:
+        """Best-effort name of the agent the next :meth:`step_one` will run.
+
+        A pure read (it never mutates the queue or the turn) used by the UI to show a
+        "who's thinking…" hint while a model call is in flight.  Mirrors ``step_one``'s
+        own pull order: an already-queued agent first, then a subscription-triggered
+        one, then — when the queue is empty and the next call would open a fresh turn —
+        the first tick-scheduled agent for ``turn + 1``.  Returns ``None`` when nothing
+        is queued and no agent ticks on the next turn (the show is effectively idle)."""
+        if self._pending:
+            return getattr(self._pending[0], "name", None)
+        if self._trigger_queue:
+            return getattr(self._trigger_queue[0][0], "name", None)
+        next_turn = self.turn + 1
+        for agent in self.scenario.agents:
+            manifest = getattr(agent, "manifest", None)
+            if manifest is None:
+                continue
+            tick_every = manifest.schedule.tick_every
+            if tick_every is not None and (tick_every == 0 or next_turn % tick_every == 0):
+                return getattr(agent, "name", None)
+        return None
+
     def force_verdict(self) -> Event | None:
         """Cut the show short and have the judge rule *now*, on the whole run.
 
@@ -441,10 +464,17 @@ class Conductor:
         return appended
 
     def _notify_subscribers(self, event: Event) -> None:
-        """Queue agents that subscribe to this event kind."""
+        """Queue agents that subscribe to this event kind — but never an agent for its OWN
+        event.
+
+        An agent that both subscribes to and emits a kind (e.g. the devil's-advocate
+        subscribes to ``agent.spoke`` and now speaks one) would otherwise re-trigger itself
+        on its own line, cascading until the per-turn call cap trips — starving later
+        agents (the judge) of their turn. Self-reaction is never intended, so we skip it;
+        a subscriber still reacts to every *peer's* event."""
         for agent in self.scenario.agents:
             manifest = getattr(agent, "manifest", None)
-            if manifest and event.kind in manifest.subscribes_to:
+            if manifest and event.kind in manifest.subscribes_to and event.actor != getattr(agent, "name", None):
                 self._trigger_queue.append((agent, event))
 
     def _tick_scheduled_agents(self) -> list["Agent"]:

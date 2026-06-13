@@ -90,6 +90,34 @@ def test_render_show_html_returns_four_panes() -> None:
         assert isinstance(stage, str)
 
 
+def test_render_show_html_overlays_thinking_strip_on_stage() -> None:
+    # The "who's thinking…" hint rides on the always-visible stage pane (not the feed,
+    # which resets its scroll on every re-render). It appears only when asked.
+    from src.ui.fishbowl.app import SCENARIOS, _new_session, render_show_html
+
+    session = _new_session(next(iter(SCENARIOS.values())))
+    session.reset("")
+    vm = session.snapshot(session.head)
+
+    stage_plain, *_ = render_show_html(vm, layout="constellation")
+    assert "thinking-strip" not in stage_plain
+
+    stage_hint, *_ = render_show_html(vm, layout="constellation", thinking="scene-whisperer is thinking")
+    assert "thinking-strip" in stage_hint
+    assert "scene-whisperer is thinking" in stage_hint
+    # Prepended (first child) so position:sticky pins it to the TOP of the stage — in
+    # view without scrolling, rather than below the fold at the bottom.
+    assert stage_hint.index("thinking-strip") < stage_hint.index('class="constellation"')
+
+
+def test_thinking_strip_escapes_its_label() -> None:
+    from src.ui.fishbowl.app import _thinking_strip
+
+    html = _thinking_strip("<script>alert(1)</script>")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
 def test_inject_appends_a_poke() -> None:
     from src.ui.fishbowl.app import SCENARIOS, _new_session
 

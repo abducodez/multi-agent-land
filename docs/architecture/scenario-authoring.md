@@ -259,43 +259,41 @@ declarative field still comes from the YAML.
 
 `gossip` and `fact-checker` both `subscribe_to: rumor.whispered` — so the conductor
 *wakes* them when a rumour is whispered. **But subscribing does not grant reading.**
-Today an agent's memory is `own events ∪ _GLOBALLY_VISIBLE` (a hardcoded five-kind
-set in `src/core/memory.py:56`); `subscribes_to` is *not* part of it
-(`conductor.py:190` only uses it for triggering). So `gossip` is woken by a rumour it
-**cannot see** — it embellishes a void.
+An agent's memory is `own events ∪ _GLOBALLY_VISIBLE` (`src/core/memory.py`);
+`subscribes_to` is *not* part of it (the conductor only uses it for triggering). So
+`gossip`, woken by a custom `rumor.whispered` kind it cannot see, would embellish a void.
 
-You have two options:
+**If your agents just talk, there is no gotcha.** `_GLOBALLY_VISIBLE` includes the public
+speech kinds — `agent.spoke` and `oracle.spoke` — alongside `world.observed`,
+`judge.verdict`, `user.injected`, `run.started`, `agent.reflected` (ADR-0023 follow-up). So
+any agent that **speaks** is heard by every peer (recalled across the whole run) and by the
+judge (which gets the complete transcript). The gotcha bites only for a **custom,
+non-speech kind** like `rumor.whispered`. Two options:
 
-**(a) Make it collaborate today, no engine edit** — emit on a globally-visible kind.
-Change both rumour producers to `may_emit: [world.observed]` and have `gossip` /
-`fact-checker` subscribe to `world.observed`. The scene becomes the shared
-blackboard (the Thousand Token Wood trick). Cost: you lose the custom-kind clarity
-and each whisper overwrites `current_scene`.
+**(a) No engine edit** — emit the shared content on a globally-visible kind. Easiest: have
+the producers `may_emit: [agent.spoke]` (now globally visible) so the rumour is ordinary
+public speech the whole cast recalls. (Or `world.observed` for narration — the Thousand
+Token Wood trick — at the cost that each line overwrites `current_scene`.)
 
-**(b) Fix the root cause (recommended)** — make visibility declarative. This is
-finding #1 in the review; it's ~5 lines and it makes *every* future scenario's
-custom kinds collaborate:
+**(b) Make a custom kind first-class** — fold subscriptions into the visibility filter so a
+subscribed custom kind is also *readable*:
 
 ```python
-# src/core/memory.py — fold the agent's subscriptions into the visibility filter.
-# Pass `reads: frozenset[str]` (the manifest's subscribes_to) into EpisodicMemory /
-# SalienceMemory, then at each filter site (lines ~76, ~153, ~236):
+# src/core/memory.py — pass `reads: frozenset[str]` (the manifest's subscribes_to) into
+# EpisodicMemory / SalienceMemory, then at each visibility filter site:
 if e.actor == self.agent_name or e.kind in _GLOBALLY_VISIBLE or e.kind in self.reads:
 ```
 
-…and pass `reads=frozenset(self.manifest.subscribes_to)` where `base.py` constructs
-the memory layers (`_recall`, `_emit_reflection`). After that, an agent woken by a
-kind can read that kind — `gossip` builds on the rumour, the chain actually
-converges, and your custom kinds are first-class. (Optionally add a scenario-level
-`shared_kinds: [...]` so a whole cast can see a working kind without subscribing.)
+…wiring `reads=frozenset(self.manifest.subscribes_to)` where `base.py` builds the memory
+layers. Then `gossip` recalls the rumour it was woken by. (A scenario-level
+`shared_kinds: [...]` could let a whole cast see a custom kind without subscribing.)
 
-Peer content is now injected (this was review finding #2, fixed in ADR-0023):
-`ContextBuilder` surfaces `projection.agent_notes` as a **WHAT'S BEEN SAID** block
-alongside `current_scene`, the agent's own memory, and visitor lines
-(`src/core/context.py`). So within a round the cast already reasons over what its
-peers just said — the gap that made small models loop on one line. The `subscribes_to`
-visibility fix above still matters for cross-*round* recall via memory; the blackboard
-covers the live table.
+**Within a round, peers' lines are also injected directly.** `ContextBuilder` surfaces the
+recent table as a **WHAT'S BEEN SAID** block for workers, and the **complete ordered
+transcript** (`THE EXCHANGE TO JUDGE`) for judges (`src/core/context.py`, role-aware). A
+private `agent.thought` is never shared either way — it rides the mind-reader alone. So:
+make a contributor **speak** (`agent.spoke`) if peers/the judge must build on it; reserve
+`agent.thought` for genuinely private reasoning (the mind-reader UI).
 
 ### Step 7 — Rendering: free for text, custom for shapes
 
@@ -375,6 +373,34 @@ techniques:
   the same "decorate the emitted event" move `FortuneTeller` uses for `omen`. Riding the
   real ledger, the reveal scrubs and replays like any other event.
 
+### Variant: code-dealt secret, asymmetric roles (❓ Twenty Sprouts)
+
+The Steeped puts the secret in the *persona*; Twenty Sprouts shows the other end of the
+spectrum — the secret is **dealt by code** and the two seats play *different jobs*. It's
+the reference for a hidden-word game with a ground-truth answer (`src/agents/twenty_sprouts.py`):
+
+- **Code owns the word; it rides the ledger privately.** `SecretKeeper` deals a word as a
+  pure function of the seed and stamps it on every keeper event under a `secret` payload
+  key. Memory/context only ever surface an event's `text` (`_displayable`), so the word is
+  ground truth on the shared log that the guesser's prompt never sees — the same discipline
+  as the spy words, but enforced in code rather than trusted to a persona.
+- **Asymmetric handlers shape the play.** The keeper is an *answerer* that never leaks: its
+  handler hands the model the guesser's exact open question, re-asks once if the reply asks a
+  question or spells the word, and — as an absolute guarantee — scrubs the word from the
+  spoken line before it ships (a small model *will* sometimes write "a glowing ember…", so
+  code, not the prompt, is what keeps the secret). The guesser is an *asker* whose handler
+  mines the ledger into a CONFIRMED / RULED OUT / ALREADY ASKED dossier so it never repeats —
+  and it is forced to **commit a guess between questions** (when the facts converge, every few
+  questions once it knows enough, and as a hard stop near the round's end) so it actually
+  names the word instead of interrogating forever. Two handlers, one shared ledger — neither
+  agent calls the other.
+- **The audience sees the secret; the cast never does.** `view_model_at` lifts the latest
+  `secret` off the ledger into a `secret` / `secret_holder` field, which the stage core
+  renders as a dashed "🔒 only you can see" badge. It's a director's-eye peek for the human
+  watching — it is never placed in any agent's prompt (verified in
+  `tests/test_twenty_sprouts.py`). Use this field for any future hidden-information run
+  where the watcher should be in on the secret.
+
 - **Ground truth gets a code-stamped scoreboard.** The scenario declares a
   [`competition:` block](../schema/scenario-config.md#competition-who-can-win-and-who-decides)
   (`kind: versus`, ADR-0029) naming the teams — `spy: [spy-nil]` vs the herd. The
@@ -415,12 +441,15 @@ only post to the shared log, and the seam shows.
 
 ## Common pitfalls
 
-- **Subscribing ≠ reading.** The #1 surprise. An agent woken by a kind cannot read
-  that kind until the visibility fix lands (Step 6). Until then, lean on
-  globally-visible kinds for collaboration.
-- **A judge that sees nothing.** A `strong` judge emitting `judge.verdict` only sees
-  globally-visible kinds + its own. If your workers emit `agent.thought` /
-  `agent.spoke`, the judge is blind to them — same root cause as above.
+- **Subscribing ≠ reading (custom kinds only).** An agent woken by a *custom* kind
+  (e.g. `rumor.whispered`) cannot read it until you make it visible (Step 6). Public
+  speech (`agent.spoke` / `oracle.spoke`) is globally visible, so talking agents need no
+  fix.
+- **Make contributors speak, not think.** A worker that emits `agent.thought` is invisible
+  to peers and the judge (thoughts ride the mind-reader alone). If its contribution should
+  be built on or judged — a clue, a rebuttal, an argument — it must `agent.spoke`. Reserve
+  `agent.thought` for genuinely private reasoning. (This is exactly what Mystery Roots'
+  clue-gatherer / devils-advocate got wrong before the ADR-0023 follow-up.)
 - **The first `judge.verdict` ends the show.** The Fishbowl autoplay loop pauses the
   moment a verdict lands at the head (`FishbowlSession.has_verdict`). So a judge that
   `subscribes_to: [world.observed]` fires on the *genesis* event and resolves the run

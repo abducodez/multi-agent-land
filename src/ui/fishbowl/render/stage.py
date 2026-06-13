@@ -39,6 +39,27 @@ def _core(vm: dict) -> str:
         f'<div class="core-glyph disp">{glyph}</div>'
         f'<div class="core-title disp">{scene}</div>'
         f'<div class="core-round eyebrow">{html.escape(round_text)}</div>'
+        f"{_secret_badge(vm)}"
+        "</div>"
+    )
+
+
+def _secret_badge(vm: dict) -> str:
+    """Audience-only reveal of a hidden-word run's secret (Twenty Sprouts).
+
+    The view model carries ``secret`` only for hidden-word scenarios, and only the human
+    watching the show ever sees it — it is never placed in any agent's prompt (see
+    ``view_model.py``). Empty string for every other run, so the core is unchanged
+    elsewhere. The 🔒 + "only you can see this" framing tells the viewer it's a peek
+    behind the curtain, not something the cast knows.
+    """
+    secret = vm.get("secret")
+    if not secret:
+        return ""
+    return (
+        '<div class="core-secret eyebrow" title="The cast cannot see this — it never enters their prompts.">'
+        "🔒 only you can see · the keeper holds "
+        f'<b class="core-secret-word disp">{html.escape(str(secret))}</b>'
         "</div>"
     )
 

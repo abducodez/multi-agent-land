@@ -225,3 +225,33 @@ class TestConductorStepOne:
         assert c.step_one() is True
         kinds = {e.kind for e in c.ledger.events}
         assert "run.started" in kinds and "world.observed" in kinds
+
+
+class TestPeekNextActor:
+    """``peek_next_actor_name`` powers the Show's "who's thinking…" hint: a pure read
+    that names whoever the next ``step_one`` will run, without advancing the run."""
+
+    def test_peeks_the_first_queued_agent(self):
+        # Two tick-every-1 agents: after the first step_one pops the first, the second
+        # sits queued for this same turn — peek must name it, not re-open a turn.
+        scenario = Scenario(name="s", default_seed="seed", agents=(_SpeakingAgent(), _ExplodingAgent()))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")
+        c.step_one()  # pops "speaker"; "boom" remains queued for turn 1
+        assert c.peek_next_actor_name() == "boom"
+
+    def test_peek_does_not_advance_the_run(self):
+        scenario = Scenario(name="s", default_seed="seed", agents=(_SpeakingAgent(),))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")
+        before_events, before_turn = len(c.ledger.events), c.turn
+        c.peek_next_actor_name()
+        c.peek_next_actor_name()
+        assert (len(c.ledger.events), c.turn) == (before_events, before_turn)
+
+    def test_peeks_next_turns_tick_actor_when_queue_is_empty(self):
+        # Queue drained between turns: peek looks ahead to who ticks on turn+1.
+        scenario = Scenario(name="s", default_seed="seed", agents=(_SpeakingAgent(),))
+        c = Conductor(scenario=scenario, governor=Governor())
+        c.reset("seed")  # turn 0, nothing queued; "speaker" ticks every turn
+        assert c.peek_next_actor_name() == "speaker"

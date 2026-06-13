@@ -128,6 +128,14 @@ def view_model_at(
     competition = next((e.payload.get("competition") for e in prefix if e.kind == "run.started"), None) or {}
     teams = competition.get("teams") or {}
 
+    # Audience-only ground truth: a hidden-word scenario (Twenty Sprouts) deals its
+    # secret onto the keeper's events as a private ``secret`` payload key. The engine
+    # never surfaces it to any agent's prompt (``_displayable`` shows ``text`` only), but
+    # the human watching the show should see what the keeper is holding — so we lift the
+    # latest one into the view model for the stage to render. Empty for every other run.
+    secret = next((e.payload["secret"] for e in reversed(prefix) if e.payload.get("secret")), None)
+    secret_holder = next((e.actor for e in reversed(prefix) if e.payload.get("secret")), None) if secret else None
+
     verdict = None
     for e in prefix:
         if e.kind == "judge.verdict":
@@ -167,6 +175,10 @@ def view_model_at(
         "voice": chosen_voice,
         "voice_meta": {"name": voice_name, "desc": voice_desc},
         "speaking_id": speaking_id,
+        # Audience-only secret (Twenty Sprouts); None for every other scenario. Rendered on
+        # the stage for the human, never placed in an agent's context.
+        "secret": secret,
+        "secret_holder": secret_holder,
         "verdict": verdict,
         # The winning side's roster (ADR-0029) — lets the champion celebration line up a
         # team's members as chips. Empty for symmetric/judged/none-kind runs.

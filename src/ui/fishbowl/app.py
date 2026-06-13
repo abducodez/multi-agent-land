@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import socket
+import uuid
 
 # Import `spaces` before anything that could initialise CUDA: on ZeroGPU the package
 # raises if torch's CUDA is touched first (our torch is lazy via mem0, so this stays
@@ -379,14 +380,34 @@ def _fishbowl(inner: str, *, role: str) -> str:
     return f'<div class="fishbowl {role}">{inner}</div>'
 
 
+def _thinking_strip(label: str) -> str:
+    """A broadcast-style "lower third" overlaid on the stage while a model call runs.
+
+    LLM calls take seconds; without a cue the theater reads as frozen.  This strip names
+    who we're waiting on ("scene-whisperer is thinking…") with a pulsing orb + animated
+    ellipsis, anchored to the *always-visible* stage so it never hides under the feed's
+    scroll.  Pure string; rendered only while a generation is in flight."""
+    import html as _html
+
+    text = _html.escape(label or "the cast is thinking")
+    return (
+        '<div class="thinking-strip" role="status" aria-live="polite">'
+        '<span class="ts-orb"></span>'
+        f'<span class="ts-label">{text}</span>'
+        '<span class="ts-dots"><i></i><i></i><i></i></span>'
+        "</div>"
+    )
+
+
 def render_show_html(
-    vm: dict, *, layout: str = "constellation", mind_reader: bool = False
+    vm: dict, *, layout: str = "constellation", mind_reader: bool = False, thinking: str | None = None
 ) -> tuple[str, str, str, str]:
     """Compose the Show's four HTML panes from a view-model snapshot.
 
     Returns ``(stage, feed, meters, verdict)``.  The stage honours the layout radio:
     *constellation* (MindCards), *split* (omniscient table), or *feed* (feed-only).  Each
-    pane is wrapped in a ``.fishbowl`` scope root so the theater stylesheet applies."""
+    pane is wrapped in a ``.fishbowl`` scope root so the theater stylesheet applies.  When
+    ``thinking`` is set, a "who's thinking…" strip is overlaid on the stage pane."""
     cards_html_by_id: dict[str, str] = {}
     for card in vm.get("cast", []):
         cards_html_by_id[card.get("id", card.get("name", ""))] = render_mindcard(card, mind_reader=mind_reader)
@@ -397,6 +418,11 @@ def render_show_html(
         stage = render_feed(vm, mind_reader=mind_reader)
     else:  # constellation (default)
         stage = render_constellation(vm, cards_html_by_id)
+
+    if thinking:
+        # Prepend so the badge is the FIRST child of the stage pane: with position:sticky
+        # it then pins to the top and stays in view without any scrolling.
+        stage = _thinking_strip(thinking) + stage
 
     feed = render_feed(vm, mind_reader=mind_reader)
     meters = render_meters(vm)
@@ -412,10 +438,14 @@ def render_show_html(
     )
 
 
-def _render_at(session: FishbowlSession | None, k: int, *, layout: str, mind_reader: bool) -> tuple[str, str, str, str]:
-    """Render the Show at play-head *k* (pure prefix view), or empty if no session."""
+def _render_at(
+    session: FishbowlSession | None, k: int, *, layout: str, mind_reader: bool, thinking: str | None = None
+) -> tuple[str, str, str, str]:
+    """Render the Show at play-head *k* (pure prefix view), or empty if no session.
+
+    ``thinking`` (a "who's thinking…" label) overlays the stage while a model call runs."""
     vm = session.snapshot(k) if session is not None else _empty_vm()
-    return render_show_html(vm, layout=layout, mind_reader=mind_reader)
+    return render_show_html(vm, layout=layout, mind_reader=mind_reader, thinking=thinking)
 
 
 def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max_auto_ticks: int = _MAX_AUTO_TICKS):
@@ -460,8 +490,8 @@ def _stopped_banner_html(reason: str) -> str:
 
     text = _html.escape(reason or "budget exceeded")
     return _fishbowl(
-        '<div class="verdict banner">'
-        '<div class="eyebrow">&#9940; Stopped</div>'
+        '<div class="verdict banner stopped">'
+        '<div class="eyebrow">&#9209; The show has ended</div>'
         f'<div class="disp vb-text">{text}</div>'
         "</div>",
         role="fb-verdict",
@@ -532,6 +562,7 @@ def build_app() -> gr.Blocks:
         blank_state = gr.State("")  # stand-in input when a leaf widget is absent
         stopped_state = gr.State(False)  # set once the run halts (budget/backstop/verdict)
         tick_count_state = gr.State(0)  # consecutive autoplay ticks (the 40-tick backstop)
+        play_active_state = gr.State(False)  # is autoplay running? (drives the Play/Pause label)
         # Per-user session id: resolved from the browser's localStorage on load (see
         # _SESSION_ID_JS) so it survives reloads.  Stamped onto run.started so the
         # Archive can list "my sessions only"; a hidden carrier, never shown.
@@ -583,6 +614,7 @@ def build_app() -> gr.Blocks:
             blank_state=blank_state,
             stopped_state=stopped_state,
             tick_count_state=tick_count_state,
+            play_active_state=play_active_state,
             session_id_box=session_id_box,
         )
 
@@ -617,6 +649,7 @@ def _wire(
     blank_state: gr.State,
     stopped_state: gr.State,
     tick_count_state: gr.State,
+    play_active_state: gr.State,
     session_id_box: gr.Textbox | None = None,
 ) -> None:
     """Connect Lab/Show component handles to session transport + HTML re-render.
@@ -630,20 +663,54 @@ def _wire(
     verdict_out = _h(show_handles, "verdict", "verdict_html")
     show_outs = [c for c in (stage_out, feed_out, meters_out, verdict_out) if c is not None]
 
-    # Transport controls (looked up early so output lists can include the timer).
+    # Transport controls (looked up early so output lists can include the timer + the
+    # single Play/Pause hero button — its label travels in the tails so it reverts to
+    # "▶ Play" the instant the show stops on its own).
     timer = _h(show_handles, "timer")
-    # The "halt tail" appended to advancing handlers' outputs: stop the timer (when one
-    # exists) + record the stopped flag.  ``_halt_tail``/``_run_tail`` keep the returned
-    # tuple aligned to whichever of these outputs are wired.
-    _tail_outs = ([timer] if timer is not None else []) + [stopped_state]
+    play_btn = _h(show_handles, "play", "play_btn")
+
+    _PLAY_LABEL = "▶ Play"
+    _PAUSE_LABEL = "❚❚ Pause"
+
+    # The tail appended to advancing handlers' outputs, in order:
+    #   (timer?, stopped_state, play_active_state, play_btn?)
+    # ``_halt_tail``/``_run_tail`` keep the returned tuple aligned to whichever are wired.
+    _tail_outs = (
+        ([timer] if timer is not None else [])
+        + [stopped_state, play_active_state]
+        + ([play_btn] if play_btn is not None else [])
+    )
 
     def _halt_tail() -> tuple:
-        """Tail values that STOP autoplay: (timer active=False?, stopped=True)."""
-        return ((gr.update(active=False),) if timer is not None else ()) + (True,)
+        """Tail values that STOP autoplay and reset the hero button to ▶ Play."""
+        return (
+            ((gr.update(active=False),) if timer is not None else ())
+            + (True, False)
+            + ((gr.update(value=_PLAY_LABEL),) if play_btn is not None else ())
+        )
 
-    def _run_tail(stopped: bool = False) -> tuple:
-        """Tail values that leave the timer untouched: (timer no-op?, stopped flag)."""
-        return ((gr.update(),) if timer is not None else ()) + (stopped,)
+    def _run_tail(play_active: bool = False, stopped: bool = False) -> tuple:
+        """Tail values that leave autoplay running: keep the timer + button as-is."""
+        return (
+            ((gr.update(),) if timer is not None else ())
+            + (stopped, bool(play_active))
+            + ((gr.update(),) if play_btn is not None else ())
+        )
+
+    # Outputs/values that (re)set the play state when a fresh run begins — shared by
+    # Summon (auto-start) and Restart.  Order: (timer?, play_active_state, play_btn?).
+    _start_outs = (
+        ([timer] if timer is not None else []) + [play_active_state] + ([play_btn] if play_btn is not None else [])
+    )
+
+    def _start_tail(active: bool) -> tuple:
+        """Arm (or idle) the transport for a new run: timer, play_active, button label."""
+        label = _PAUSE_LABEL if active else _PLAY_LABEL
+        return (
+            ((gr.update(active=active),) if timer is not None else ())
+            + (active,)
+            + ((gr.update(value=label),) if play_btn is not None else ())
+        )
 
     def _stopped_panes(session, k: int, *, layout: str, mind_reader: bool, reason: str) -> tuple:
         """Render the Show at *k* but swap the verdict pane for the STOPPED banner.
@@ -659,15 +726,17 @@ def _wire(
             panes[1] = banner
         return _pad_values(tuple(panes), show_outs)
 
-    # Show transport controls.
+    # Show transport controls.  The scrubber/step/back handles no longer exist on the
+    # slimmed transport (one Play/Pause button); the lookups stay defensive so any wiring
+    # that references them is simply skipped.
     scrubber = _h(show_handles, "scrubber", "slider", "scrub", "step_slider")
-    play_btn = _h(show_handles, "play", "play_btn")
     step_btn = _h(show_handles, "step", "step_btn", "next", "advance", "fwd_btn")
     back_btn = _h(show_handles, "rewind", "back", "to_start", "first", "back_btn")
     judge_btn = _h(show_handles, "judge_btn", "start_judging", "judge_now", "judge")
     speed_radio = _h(show_handles, "speed", "speed_radio")
     layout_radio = _h(show_handles, "layout", "layout_radio")
     mind_toggle = _h(show_handles, "mind_reader", "read_minds", "minds")
+    restart_btn = _h(show_handles, "restart_btn", "restart", "reset_btn")
     poke_send = _h(show_handles, "poke_send", "poke_btn", "poke")
     poke_text = _h(show_handles, "poke_text", "poke_input")
     poke_buttons = show_handles.get("poke_buttons") or show_handles.get("poke_btns") or []
@@ -809,9 +878,22 @@ def _wire(
         else:
             k = 0
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        # Summon starts a fresh run: clear the stopped flag and the autoplay backstop.
-        return (session, k, title, gr.update(selected="show"), *_pad_values(out, show_outs), False, 0)
+        # Summon starts a fresh run AND begins playing immediately: clear the stopped
+        # flag, reset the autoplay backstop, arm the timer, and flip the hero button to
+        # "❚❚ Pause" so the show comes alive the moment the visitor hits Summon.
+        return (
+            session,
+            k,
+            title,
+            gr.update(selected="show"),
+            *_pad_values(out, show_outs),
+            False,
+            0,
+            *_start_tail(True),
+        )
 
+    summon_evt = None  # the Summon click event — chained to the kickoff so the show
+    # plays its first line immediately on Summon (set below when the button exists).
     if summon_btn is not None:
         summon_inputs = [
             scenario_in if scenario_in is not None else scenario_state,
@@ -836,10 +918,53 @@ def _wire(
             mind_reader_state,
             session_id_box if session_id_box is not None else blank_state,
         ]
-        summon_btn.click(
+        # The start tail (timer?, play_active, play_btn?) mirrors on_summon's return so the
+        # show auto-plays the instant it is summoned.
+        summon_evt = summon_btn.click(
             on_summon,
             inputs=summon_inputs,
-            outputs=[session_state, k_state, scenario_state, tabs, *show_outs, stopped_state, tick_count_state],
+            outputs=[
+                session_state,
+                k_state,
+                scenario_state,
+                tabs,
+                *show_outs,
+                stopped_state,
+                tick_count_state,
+                *_start_outs,
+            ],
+        )
+
+    # ── ↺ Restart → wipe the run and begin a *fresh context* on the same cast ────
+    # Unlike a scrub-to-start (pure replay), Restart opens a brand-new run: a fresh seed
+    # gives a genuinely different conversation (the deterministic stub is seed-driven), a
+    # new run_id isolates it in the ledger, and the play state re-arms so the new context
+    # starts playing at once.  No tab switch (we're already on the Show) and no cast
+    # rebuild — it reuses the session the visitor composed.  ``restart_evt`` is chained to
+    # the kickoff below so the first line lands immediately, just like Summon.
+    restart_evt = None
+    if restart_btn is not None and show_outs:
+
+        def on_restart(session, layout, mind_reader, session_id):
+            if session is None or getattr(session, "replay", False):
+                # Nothing live to restart (no Summon yet, or a read-only replay): leave
+                # the Show as-is and idle the transport rather than erroring.
+                out = _render_at(session, 0, layout=layout, mind_reader=mind_reader)
+                return (0, *_pad_values(out, show_outs), False, 0, *_start_tail(False))
+            session.reset(uuid.uuid4().hex[:8], session_id=(session_id or "").strip() or None)
+            k = session.head
+            out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
+            return (k, *_pad_values(out, show_outs), False, 0, *_start_tail(True))
+
+        restart_evt = restart_btn.click(
+            on_restart,
+            inputs=[
+                session_state,
+                layout_state,
+                mind_reader_state,
+                session_id_box if session_id_box is not None else blank_state,
+            ],
+            outputs=[k_state, *show_outs, stopped_state, tick_count_state, *_start_outs],
         )
 
     # ── Scenario picked → re-seed the dependent Lab fields from the registry ─────
@@ -968,12 +1093,31 @@ def _wire(
     # ticks (the hard backstop).  The cap tracks the scenario budget so a long show that
     # ends on a late Judge verdict is never cut off early.  Returns (k, *show_outs,
     # *halt-tail, tick_count).
-    def on_tick(session, k, layout, mind_reader, tick_count):
+    # A *generator*: when a tick is about to GENERATE a new line (vs. cheaply replay the
+    # existing prefix), it first yields a frame with a "who's thinking…" strip on the
+    # stage, then runs the (seconds-long) model call, then yields the result.  So the
+    # theater shows who we're waiting on instead of freezing silently.
+    def on_tick(session, k, layout, mind_reader, tick_count, play_active):
+        kk = int(k or 0)
         cap = session.autoplay_tick_cap if session is not None else _MAX_AUTO_TICKS
-        new_k, new_ticks, stop_reason = advance_one_tick(session, k, tick_count, max_auto_ticks=cap)
+        will_generate = (
+            session is not None
+            and not getattr(session, "replay", False)
+            and not session.has_verdict()
+            and kk >= session.head
+            and int(tick_count or 0) < cap
+        )
+        if will_generate and show_outs:
+            who = session.peek_next_actor_name()
+            phrase = f"{who} is thinking" if who else "the cast is thinking"
+            hint = _render_at(session, kk, layout=layout, mind_reader=mind_reader, thinking=phrase)
+            yield (kk, *_pad_values(hint, show_outs), *_run_tail(play_active), tick_count)
+
+        new_k, new_ticks, stop_reason = advance_one_tick(session, kk, tick_count, max_auto_ticks=cap)
         if stop_reason is None:
             out = _render_at(session, new_k, layout=layout, mind_reader=mind_reader)
-            return (new_k, *_pad_values(out, show_outs), *_run_tail(), new_ticks)
+            yield (new_k, *_pad_values(out, show_outs), *_run_tail(play_active), new_ticks)
+            return
         # The cast's run is over (budget/turn cap, a reached verdict, or replay end). If a
         # judge can still rule and hasn't, bring it on — the limit is the curtain call, so
         # the show ends on a verdict + winner rather than a silent STOPPED banner.
@@ -987,15 +1131,16 @@ def _wire(
         if session is not None and session.has_verdict():
             # Render the ruling itself (the verdict pane), timer halted.
             out = _render_at(session, new_k, layout=layout, mind_reader=mind_reader)
-            return (new_k, *_pad_values(out, show_outs), *_halt_tail(), new_ticks)
+            yield (new_k, *_pad_values(out, show_outs), *_halt_tail(), new_ticks)
+            return
         # No judge to rule (or a replay reaching its end): halt visibly with the banner.
         panes = _stopped_panes(session, new_k, layout=layout, mind_reader=mind_reader, reason=stop_reason)
-        return (new_k, *panes, *_halt_tail(), new_ticks)
+        yield (new_k, *panes, *_halt_tail(), new_ticks)
 
     if timer is not None and show_outs:
         timer.tick(
             on_tick,
-            inputs=[session_state, k_state, layout_state, mind_reader_state, tick_count_state],
+            inputs=[session_state, k_state, layout_state, mind_reader_state, tick_count_state, play_active_state],
             outputs=[k_state, *show_outs, *_tail_outs, tick_count_state],
         )
 
@@ -1008,16 +1153,45 @@ def _wire(
         speed_radio.change(on_speed, inputs=[speed_radio], outputs=[timer])
 
     if play_btn is not None and timer is not None:
-        # A tiny state tracks timer activity so the same button toggles play/pause.
-        play_active = gr.State(False)
-
+        # The single hero control: the same button plays and pauses, its label flipping
+        # between "▶ Play" and "❚❚ Pause".  Each fresh ▶ resets the autoplay backstop so
+        # the next run gets a full tick budget rather than inheriting the old one.
         def on_play(active):
-            # Toggle play/pause; each fresh ▶ resets the autoplay backstop counter so the
-            # next run gets a full _MAX_AUTO_TICKS budget rather than inheriting the old one.
             new = not bool(active)
-            return new, gr.update(active=new), 0
+            label = _PAUSE_LABEL if new else _PLAY_LABEL
+            return new, gr.update(active=new), 0, gr.update(value=label)
 
-        play_btn.click(on_play, inputs=[play_active], outputs=[play_active, timer, tick_count_state])
+        play_evt = play_btn.click(
+            on_play,
+            inputs=[play_active_state],
+            outputs=[play_active_state, timer, tick_count_state, play_btn],
+        )
+
+        if show_outs:
+            # Don't make the visitor wait a whole timer interval for the first line: the
+            # instant Play is pressed (play_active just flipped True), advance one step
+            # right away — reusing the tick path so the "who's thinking…" hint shows while
+            # the model runs.  On pause (play_active now False) we simply re-render the
+            # current frame without stepping.  Chained after the toggle so it reads the
+            # freshly-updated play_active/tick_count.
+            def kickoff(session, k, layout, mind_reader, tick_count, play_active):
+                if not play_active:
+                    out = _render_at(session, int(k or 0), layout=layout, mind_reader=mind_reader)
+                    yield (int(k or 0), *_pad_values(out, show_outs), *_run_tail(False), int(tick_count or 0))
+                    return
+                yield from on_tick(session, k, layout, mind_reader, tick_count, play_active)
+
+            _kickoff_io = dict(
+                inputs=[session_state, k_state, layout_state, mind_reader_state, tick_count_state, play_active_state],
+                outputs=[k_state, *show_outs, *_tail_outs, tick_count_state],
+            )
+            play_evt.then(kickoff, **_kickoff_io)
+            # Summon and Restart both auto-start a fresh run; kick their first line off
+            # immediately too, instead of waiting a whole timer interval.
+            if summon_evt is not None:
+                summon_evt.then(kickoff, **_kickoff_io)
+            if restart_evt is not None:
+                restart_evt.then(kickoff, **_kickoff_io)
 
     # ── layout radio + "Read their minds" → re-render the stage HTML ─────────────
     if layout_radio is not None and show_outs:
@@ -1045,29 +1219,36 @@ def _wire(
         )
 
     # ── poke buttons / poke_send → inject then render at the new head ────────────
-    # Injecting steps the conductor, so a poke can trip the governor too — wrap it.
-    def _poke_after(session, text, label_value, layout, mind_reader):
+    # Injecting steps the conductor (a full turn of model calls), so a poke can trip the
+    # governor too — wrap it.  A *generator*: yield a "the wood stirs…" hint first so the
+    # disturbance feels alive while the cast reacts, then the result (or the STOPPED card).
+    def _poke_after(session, text, label_value, layout, mind_reader, play_active):
         if session is None:
             out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
-            return (0, *_pad_values(out, show_outs), *_run_tail())
+            yield (0, *_pad_values(out, show_outs), *_run_tail(play_active))
+            return
+        if show_outs:
+            hint = _render_at(session, session.head, layout=layout, mind_reader=mind_reader, thinking="the wood stirs")
+            yield (session.head, *_pad_values(hint, show_outs), *_run_tail(play_active))
         try:
             session.inject((text or ""), label=label_value)
         except BudgetExceeded as exc:
             reason = getattr(exc, "reason", None) or str(exc)
             panes = _stopped_panes(session, session.head, layout=layout, mind_reader=mind_reader, reason=reason)
-            return (session.head, *panes, *_halt_tail())
+            yield (session.head, *panes, *_halt_tail())
+            return
         k = session.head
         out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
-        return (k, *_pad_values(out, show_outs), *_run_tail())
+        yield (k, *_pad_values(out, show_outs), *_run_tail(play_active))
 
     if poke_send is not None and poke_text is not None and show_outs:
         # Free-text poke: the textbox supplies the text; a neutral label.
-        def on_poke_send(session, text, layout, mind_reader):
-            return _poke_after(session, text, None, layout, mind_reader)
+        def on_poke_send(session, text, layout, mind_reader, play_active):
+            yield from _poke_after(session, text, None, layout, mind_reader, play_active)
 
         poke_send.click(
             on_poke_send,
-            inputs=[session_state, poke_text, layout_state, mind_reader_state],
+            inputs=[session_state, poke_text, layout_state, mind_reader_state, play_active_state],
             outputs=[k_state, *show_outs, *_tail_outs],
         )
 
@@ -1079,14 +1260,14 @@ def _wire(
         label = str(getattr(btn, "value", None) or "DISTURBANCE")
 
         def make_preset(label_value: str):
-            def _on_preset(session, layout, mind_reader):
-                return _poke_after(session, label_value, label_value, layout, mind_reader)
+            def _on_preset(session, layout, mind_reader, play_active):
+                yield from _poke_after(session, label_value, label_value, layout, mind_reader, play_active)
 
             return _on_preset
 
         btn.click(
             make_preset(label),
-            inputs=[session_state, layout_state, mind_reader_state],
+            inputs=[session_state, layout_state, mind_reader_state, play_active_state],
             outputs=[k_state, *show_outs, *_tail_outs],
         )
 
