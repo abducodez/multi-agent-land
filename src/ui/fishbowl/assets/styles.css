@@ -720,6 +720,8 @@ footer { display: none !important; }
 .fishbowl .rail { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: rgba(6,20,27,0.4); min-height: 0; }
 .fishbowl .rail-h { display: flex; justify-content: space-between; align-items: center; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); flex: none; }
 .fishbowl .feed { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+/* keep the narrator rail feed compact — minimal height, scroll stays as-is */
+.fishbowl .rail .feed { flex: none; max-height: 220px; }
 .fishbowl .feed.dense { gap: 9px; }
 .fishbowl .fe { animation: feIn 0.3s ease; }
 @keyframes feIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
