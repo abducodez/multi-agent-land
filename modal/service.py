@@ -36,7 +36,10 @@ from catalogue import ModelConfig
 # the version Modal's current vLLM example ships with.
 VLLM_VERSION = "0.21.0"
 CUDA_IMAGE = "nvidia/cuda:12.9.0-devel-ubuntu22.04"
-PYTHON_VERSION = "3.12"
+# Must match the local deploy environment's Python: every endpoint registers with
+# `serialized=True`, and Modal requires a serialized function's image Python to
+# match the version it was defined with (the repo's venv is 3.13).
+PYTHON_VERSION = "3.13"
 
 # The in-container port vLLM listens on; Modal maps it to a public HTTPS URL.
 VLLM_PORT = 8000
