@@ -42,7 +42,7 @@ def test_entries_are_tagged_and_qualified():
     everything = inference.entries()
     assert {"modal", "hf"} <= {e["backend"] for e in everything}
     assert len(everything) == len(inference.entries("modal")) + len(inference.entries("hf")) + len(
-        inference.entries("llamacpp")
+        inference.entries("local")
     )
 
 

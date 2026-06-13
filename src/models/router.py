@@ -44,13 +44,20 @@ _PROFILE_DECODING: dict[str, dict[str, float | int]] = {
 
 @dataclass
 class ProfileSpec:
-    """Concrete binding for one logical profile."""
+    """Concrete binding for one logical profile.
+
+    ``kind`` selects the transport: ``"litellm"`` (the default) calls the model over an
+    OpenAI-compatible HTTP endpoint; ``"local"`` runs a ``transformers`` model in-process
+    on the host GPU (the ``local`` backend — no ``base_url``/``api_key``). The router sets
+    it from the resolved backend; everything else about a spec is shared.
+    """
 
     model: str
     base_url: str | None = None
     api_key: str | None = None
     temperature: float = 0.8
     max_tokens: int = 256
+    kind: str = "litellm"
 
 
 @dataclass
@@ -93,11 +100,24 @@ class ModelRouter:
         if self.offline:
             obs.log("router.resolve", profile=profile, mode="offline", model=f"stub:{profile}")
             return DeterministicTinyModel(variant=f"stub:{profile}")
-        # Live transport is the LiteLLM gateway (ADR-0015).  Lazy-import keeps the
+
+        spec = self._spec_for(profile)
+        # Local in-process backend (ADR-0033): a transformers model on the host GPU, not an
+        # HTTP endpoint — dispatch to the in-process provider before reaching for LiteLLM.
+        if spec.kind == "local":
+            from src.models.local_provider import LocalTransformersProvider
+
+            obs.log("router.resolve", profile=profile, mode="live", model=spec.model, api_base="local")
+            return LocalTransformersProvider(
+                model=spec.model,
+                temperature=spec.temperature,
+                max_tokens=spec.max_tokens,
+            )
+
+        # Live HTTP transport is the LiteLLM gateway (ADR-0015).  Lazy-import keeps the
         # offline path free of the dependency.
         from src.models.litellm_provider import LiteLLMProvider
 
-        spec = self._spec_for(profile)
         # Resolution is logged WITHOUT the api key — only the model + endpoint.
         obs.log("router.resolve", profile=profile, mode="live", model=spec.model, api_base=spec.base_url or "")
         return LiteLLMProvider(
@@ -148,12 +168,16 @@ class ModelRouter:
         except Exception:  # pragma: no cover - defensive: catalogue unavailable
             return None
         decoding = _PROFILE_DECODING.get(entry.get("profile") or "balanced", _PROFILE_DECODING["balanced"])
+        # The local backend runs in-process (no endpoint) — tag the spec so _build picks the
+        # in-process provider; every other backend resolves to the HTTP (LiteLLM) transport.
+        kind = "local" if entry.get("backend") == "local" else "litellm"
         return ProfileSpec(
             model=binding["model"],
             base_url=binding["base_url"] or None,
             api_key=binding["api_key"] or None,
             temperature=float(decoding["temperature"]),
             max_tokens=int(decoding["max_tokens"]),
+            kind=kind,
         )
 
     # ── factory ─────────────────────────────────────────────────────────────
