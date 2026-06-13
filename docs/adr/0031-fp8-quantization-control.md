@@ -2,8 +2,12 @@
 
 ## Status
 
-Accepted (extends [ADR-0014 *Modal model serving*](0014-modal-model-serving.md),
-[ADR-0019](0019-single-model-catalogue-no-cloud-path.md); interacts with
+**Superseded by [ADR-0034 *Simplify the Modal serving layer*](0034-simplify-modal-serving-to-canonical-vllm.md)**
+— the env-controlled quantization machinery was removed; lower precision is now
+reached via a model's `extra_vllm_args`. The historical context below stands.
+
+Originally Accepted (extended [ADR-0014 *Modal model serving*](0014-modal-model-serving.md),
+[ADR-0019](0019-single-model-catalogue-no-cloud-path.md); interacted with
 [ADR-0030 *GPU memory snapshots*](0030-gpu-memory-snapshots-cold-start.md))
 
 ## Context

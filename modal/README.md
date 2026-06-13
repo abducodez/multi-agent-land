@@ -18,8 +18,6 @@ modal/
   app_nvidia.py     App "nvidia-llms"  — Nemotron 3 Nano 4B + 30B, Cascade 14B Thinking.
   app_openbmb.py    App "openbmb-llms" — MiniCPM4.1-8B + MiniCPM-o 4.5.
   app_google.py     App "google-llms"  — Gemma 4 12B + 26B.
-  vllm_logging.py   Dependency-free JSON log formatter shipped into the image
-                    when MODAL_LLM_JSON_LOGS=1 (structured logs via vLLM dictConfig).
   client.py         OpenAI-SDK smoke-test client for any endpoint.
   openapi.yaml      Checked-in OpenAPI 3.1 spec for the served API surface.
   pyproject.toml    uv workspace member (deploy/client tooling; non-package).
@@ -71,11 +69,13 @@ sizing, and how to add models/providers or wire endpoints into the engine.
   radius; one provider's outage or redeploy never touches another.
 - **Scalable** — serverless autoscaling, input concurrency, a shared weight
   cache (pull once, warm everywhere), and per-model `min_containers` warm pools.
-- **Fast cold starts** — snapshot-enabled models (`gpu_snapshot=True`) restore a
-  pre-warmed engine from a Modal memory snapshot in seconds instead of re-paying
-  download + load + warmup; `MODAL_LLM_KEEP_WARM=1` at deploy time pins warm
-  containers for the tier models on demo day. See
-  [`docs/deploying.md` → Cold starts](docs/deploying.md#cold-starts) (ADR-0030).
+- **One serving path** — Modal's canonical vLLM recipe (an autoscaling
+  `@app.function` launching `vllm serve` behind a `@modal.web_server`), written
+  once in `service.py`. No bespoke per-model lifecycle to break (ADR-0034).
+- **Fast cold starts on demo day** — the shared `vllm-cache` Volume persists the
+  torch.compile / CUDA-graph artifacts so only the first container compiles, and
+  `MODAL_LLM_KEEP_WARM=1` at deploy time pins one warm container per tier model.
+  See [`docs/deploying.md` → Cold starts](docs/deploying.md#cold-starts).
 - **Extensible** — add a model = one `ModelConfig` in `catalogue.py`; add a
   provider = one `Provider` entry + one app file. The serving path is written once
   in `service.py`, and the engine picks up the new model with no edits (it reads

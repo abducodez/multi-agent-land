@@ -218,8 +218,7 @@ async def check_chat(client: httpx.AsyncClient, t: Target, deadline: float) -> N
         backoff = min(backoff * 1.5, 20.0)
 
 
-async def run_target(t: Target, api_key: str, timeout: int, do_chat: bool,
-                     sem: asyncio.Semaphore) -> None:
+async def run_target(t: Target, api_key: str, timeout: int, do_chat: bool, sem: asyncio.Semaphore) -> None:
     async with sem:
         t.started = time.monotonic()
         deadline = t.started + timeout
@@ -231,9 +230,9 @@ async def run_target(t: Target, api_key: str, timeout: int, do_chat: bool,
         # within 150s returns a 303 to the same URL (clients are expected to follow
         # it — up to ~20 hops / 50 min) while the container finishes cold-starting.
         # Without this, the first 303 at ~150s looks like a terminal error.
-        async with httpx.AsyncClient(headers=headers, timeout=client_timeout,
-                                     limits=limits, follow_redirects=True,
-                                     max_redirects=20) as client:
+        async with httpx.AsyncClient(
+            headers=headers, timeout=client_timeout, limits=limits, follow_redirects=True, max_redirects=20
+        ) as client:
             await check_models(client, t, deadline)
             if t.models_ok and do_chat:
                 await check_chat(client, t, deadline)
@@ -258,10 +257,9 @@ PHASE_ICON = {
 
 def render_board(targets: list[Target], started: float) -> str:
     width = max(len(t.key) for t in targets)
-    lines = [f"  cold-start health-check · {len(targets)} endpoints · "
-             f"{time.monotonic() - started:5.0f}s elapsed"]
+    lines = [f"  cold-start health-check · {len(targets)} endpoints · {time.monotonic() - started:5.0f}s elapsed"]
     for t in targets:
-        live = (t.elapsed or (time.monotonic() - t.started if t.started else 0.0))
+        live = t.elapsed or (time.monotonic() - t.started if t.started else 0.0)
         icon = PHASE_ICON.get(t.phase, "?")
         detail = t.phase
         if t.phase == "booting":
@@ -311,16 +309,14 @@ def print_report(targets: list[Target], do_chat: bool) -> None:
         detail = t.error or (t.sample if t.chat_ok else t.served_reported) or ""
         if t.chat_ok and t.finish_reason:
             detail = f"[{t.finish_reason}] {detail}"
-        print(f"  {t.key:<{kw}}  {yn(t.models_ok):<6} {yn(t.chat_ok):<5}  "
-              f"{lat}  {detail[:60]}")
+        print(f"  {t.key:<{kw}}  {yn(t.models_ok):<6} {yn(t.chat_ok):<5}  {lat}  {detail[:60]}")
 
     def healthy(t: Target) -> bool:
         return bool(t.models_ok and (t.chat_ok or not do_chat))
 
     ok = sum(1 for t in targets if healthy(t))
     print("  " + "-" * (len(header) - 2))
-    print(f"  {ok}/{len(targets)} healthy"
-          + ("" if do_chat else " (liveness only — chat not tested)"))
+    print(f"  {ok}/{len(targets)} healthy" + ("" if do_chat else " (liveness only — chat not tested)"))
     failed = [t.key for t in targets if not healthy(t)]
     if failed:
         print(f"  needs attention: {', '.join(failed)}")
@@ -343,14 +339,16 @@ def build_targets(catalogue: ModuleType, workspace: str | None, args) -> list[Ta
             base_url = base_override.rstrip("/")
         else:
             base_url = catalogue.endpoint_url(e.app, e.endpoint_name, workspace)
-        targets.append(Target(
-            key=key,
-            app=e.app,
-            served_model_id=e.served_model_id,
-            profile=e.profile,
-            params_b=e.params_b,
-            base_url=base_url,
-        ))
+        targets.append(
+            Target(
+                key=key,
+                app=e.app,
+                served_model_id=e.served_model_id,
+                profile=e.profile,
+                params_b=e.params_b,
+                base_url=base_url,
+            )
+        )
     return targets
 
 
@@ -359,8 +357,11 @@ async def main_async(args) -> int:
     workspace = resolve_workspace(args.workspace)
     base_override = os.environ.get("MODAL_LLM_BASE_URL")
     if not workspace and not base_override:
-        print("ERROR: could not resolve a Modal workspace. Pass --workspace, set "
-              "$MODAL_WORKSPACE, or run `modal token new`.", file=sys.stderr)
+        print(
+            "ERROR: could not resolve a Modal workspace. Pass --workspace, set "
+            "$MODAL_WORKSPACE, or run `modal token new`.",
+            file=sys.stderr,
+        )
         return 2
 
     targets = build_targets(catalogue, workspace, args)
@@ -378,8 +379,10 @@ async def main_async(args) -> int:
         return 0
 
     do_chat = not args.no_chat
-    print(f"Workspace: {workspace}   endpoints: {len(targets)}   "
-          f"chat: {'yes' if do_chat else 'no'}   per-endpoint timeout: {args.timeout}s")
+    print(
+        f"Workspace: {workspace}   endpoints: {len(targets)}   "
+        f"chat: {'yes' if do_chat else 'no'}   per-endpoint timeout: {args.timeout}s"
+    )
     print("Firing all endpoints concurrently — cold starts overlap, so this takes")
     print("about as long as the single slowest model, not the sum.\n")
 
@@ -388,9 +391,7 @@ async def main_async(args) -> int:
     done = asyncio.Event()
     progress = asyncio.create_task(progress_loop(targets, started, done))
     try:
-        await asyncio.gather(*(
-            run_target(t, api_key, args.timeout, do_chat, sem) for t in targets
-        ))
+        await asyncio.gather(*(run_target(t, api_key, args.timeout, do_chat, sem) for t in targets))
     finally:
         done.set()
         await progress
@@ -398,18 +399,21 @@ async def main_async(args) -> int:
     print_report(targets, do_chat)
 
     if args.json:
-        summary = [{
-            "endpoint": t.key,
-            "app": t.app,
-            "served_model_id": t.served_model_id,
-            "base_url": t.base_url,
-            "models_ok": t.models_ok,
-            "chat_ok": t.chat_ok,
-            "latency_s": round(t.elapsed, 1),
-            "finish_reason": t.finish_reason,
-            "served_reported": t.served_reported,
-            "error": t.error,
-        } for t in targets]
+        summary = [
+            {
+                "endpoint": t.key,
+                "app": t.app,
+                "served_model_id": t.served_model_id,
+                "base_url": t.base_url,
+                "models_ok": t.models_ok,
+                "chat_ok": t.chat_ok,
+                "latency_s": round(t.elapsed, 1),
+                "finish_reason": t.finish_reason,
+                "served_reported": t.served_reported,
+                "error": t.error,
+            }
+            for t in targets
+        ]
         Path(args.json).write_text(json.dumps(summary, indent=2))
         print(f"\nWrote JSON summary to {args.json}")
 
@@ -418,21 +422,17 @@ async def main_async(args) -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--workspace", help="Modal workspace slug (else $MODAL_WORKSPACE / `modal profile current`)")
     p.add_argument("--only", help="comma-separated endpoint keys to include")
     p.add_argument("--skip", help="comma-separated endpoint keys to exclude")
-    p.add_argument("--profiles-only", action="store_true",
-                   help="test only the engine-bound tiers (tiny/fast/balanced/strong)")
-    p.add_argument("--no-chat", action="store_true",
-                   help="liveness only (GET /v1/models); skip the chat completion")
-    p.add_argument("--timeout", type=int, default=900,
-                   help="per-endpoint deadline in seconds (default 900)")
-    p.add_argument("--concurrency", type=int, default=0,
-                   help="max endpoints in flight at once (default 0 = all)")
-    p.add_argument("--print-urls", action="store_true",
-                   help="resolve and print endpoint URLs, then exit (no calls)")
+    p.add_argument(
+        "--profiles-only", action="store_true", help="test only the engine-bound tiers (tiny/fast/balanced/strong)"
+    )
+    p.add_argument("--no-chat", action="store_true", help="liveness only (GET /v1/models); skip the chat completion")
+    p.add_argument("--timeout", type=int, default=900, help="per-endpoint deadline in seconds (default 900)")
+    p.add_argument("--concurrency", type=int, default=0, help="max endpoints in flight at once (default 0 = all)")
+    p.add_argument("--print-urls", action="store_true", help="resolve and print endpoint URLs, then exit (no calls)")
     p.add_argument("--json", help="also write a machine-readable summary to this path")
     return p.parse_args(argv)
 

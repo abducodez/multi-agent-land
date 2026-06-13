@@ -1,7 +1,6 @@
 """Root logging configuration — structured records to stdout and to the store.
 
-Generalises the dependency-free JSON formatter from ``modal/vllm_logging.py`` for
-the whole engine, and adds:
+Provides a dependency-free JSON formatter for the whole engine, and adds:
 
   * a :class:`_ContextFilter` that stamps every record with the bound
     run/turn/agent (see :mod:`src.observability.context`); and

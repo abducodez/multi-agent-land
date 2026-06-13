@@ -72,60 +72,31 @@ class ModelConfig:
     max_model_len: int | None = None  # cap context to fit memory / task
     trust_remote_code: bool = False  # required by MiniCPM / Nemotron custom code
 
-    # Precision / quantization (vLLM serve flags). Both default to full precision
-    # (BF16 weights, model-dtype KV cache); set them to shrink the memory footprint
-    # so a model fits a smaller GPU or leaves more room for KV cache. A deploy-time
-    # env override (``MODAL_LLM_QUANTIZATION`` / ``MODAL_LLM_KV_CACHE_DTYPE``, read in
-    # ``service.py``) wins over these per-model values for a whole deploy. CAVEAT:
-    # on-the-fly FP8 needs an Ada/Hopper GPU (our L4/L40S/H200 all qualify) AND vLLM
-    # support for the architecture — custom-code / hybrid-mamba archs (Nemotron-H,
-    # MiniCPM) and the Transformers-backend Gemmas may fail to start under it, so these
-    # stay ``None`` until a model is verified to serve quantized. See ADR-0031.
-    quantization: str | None = None  # vLLM --quantization, on-the-fly weight quant (e.g. "fp8"); None = full BF16
-    kv_cache_dtype: str | None = None  # vLLM --kv-cache-dtype (e.g. "fp8"); None = auto (model dtype)
-
     # Performance / throughput (vLLM serve flags). Defaults target high
     # steady-state throughput on the common single-GPU path; tune per model.
-    # See ``service.build_command`` for how each maps to a flag.
+    # See ``service.build_command`` for how each maps to a flag. For anything more
+    # exotic (quantization, batch-size caps, …) use ``extra_vllm_args``.
     gpu_memory_utilization: float | None = None  # fraction of VRAM for weights + KV cache (vLLM default 0.9)
     enable_prefix_caching: bool = True  # reuse KV for shared prompt prefixes — big win when system/context repeat
     async_scheduling: bool = True  # overlap CPU request scheduling with GPU compute
     enforce_eager: bool = False  # skip CUDA-graph capture: faster cold start, lower steady-state throughput
-    max_num_seqs: int | None = None  # cap sequences batched per step (memory vs. throughput)
-    max_num_batched_tokens: int | None = None  # token budget per scheduler step (prefill throughput)
 
-    # Cold starts. Opt a model into Modal memory snapshots (CPU + experimental GPU
-    # snapshot): the container boots once, loads weights, warms the engine, puts it
-    # to sleep (vLLM sleep mode, weights offloaded to host RAM), and is snapshotted;
-    # every later cold start restores the snapshot and wakes the engine in seconds
-    # instead of re-paying download + load + warmup. Constraints (why this is per
-    # model, not global): single-GPU models only, the model's vLLM build must
-    # support `--enable-sleep-mode`, and host RAM must hold the offloaded weights.
-    # Modal marks GPU snapshots alpha — keep it off for exotic serving paths
-    # (Transformers-backend Gemma, the omni specialist) and flip off on any model
-    # that misbehaves; the plain serving path is unchanged.
-    gpu_snapshot: bool = False
-
-    # Observability / request logging (vLLM serve flags). Defaults give per-request
-    # visibility in the container logs out of the box; see ``service.build_command``.
-    log_requests: bool = True  # log each request's id, sampling params, and token counts
-    log_outputs: bool = False  # also log generated text (verbose; can echo story content) — opt-in
-    max_log_len: int | None = 2048  # truncate logged prompts/outputs to N chars (None = no cap)
-    uvicorn_access_log: bool = True  # keep uvicorn's per-request HTTP access line (method, path, status)
+    # Observability. ``log_requests`` adds --enable-log-requests so each call's id,
+    # sampling params, and token counts show in the Modal container logs.
+    log_requests: bool = True
 
     # OpenAI feature parsers (vLLM names; leave None if unsupported on the model)
     reasoning_parser: str | None = None
     tool_call_parser: str | None = None
     enable_auto_tool_choice: bool = False
 
-    # Multimodal
-    multimodal: bool = False
-    mm_limits: dict[str, int] | None = None  # e.g. {"image": 4, "audio": 2}
+    # Multimodal — per-prompt input caps, e.g. {"image": 4, "audio": 2}. Set the
+    # caps to 0 on an auto-detected-multimodal model you serve text-only, to skip
+    # the encoder warmup and free memory.
+    mm_limits: dict[str, int] | None = None
 
     # Scaling / lifecycle
     max_concurrent_inputs: int = 64  # hard ceiling of requests multiplexed onto one container
-    target_concurrent_inputs: int | None = None  # autoscale target — scale out here, burst up to max; defaults to ~75%
-    buffer_containers: int = 0  # extra idle containers to pre-warm under active load (bursty traffic)
     scaledown_window: int = 15 * 60  # idle seconds before a container stops
     min_containers: int = 0  # keep N warm to remove cold starts (costs $)
     startup_timeout: int = 30 * 60  # weight download + load can be slow
@@ -169,31 +140,34 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
     ModelConfig(
         name="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
         endpoint_name="nemotron-3-nano-4b",
-        # Tiny Titan tier (≤4B): comfortably fits a single 24GB L4.
+        # Tiny Titan tier (≤4B): ~4B BF16 weights (~8GB) fit a single 24GB L4.
         profile="tiny",
         params_b=4,
         gpu="L4:1",
         max_model_len=16384,
+        # Hybrid Mamba-2 + MLP + attention arch → custom modeling code; required.
         trust_remote_code=True,
         gated=True,
         max_concurrent_inputs=32,
-        # Tiny tier is the cast's hottest endpoint and 4B of BF16 weights (~8GB)
-        # easily fit host RAM during sleep — the ideal snapshot candidate.
-        gpu_snapshot=True,
+        # Served as a plain chat endpoint. NVIDIA ships a custom `nano_v3` reasoning
+        # parser as a downloadable plugin file (--reasoning-parser-plugin) plus a
+        # `qwen3_coder` tool parser; both are omitted here for boot-robustness (the
+        # plugin must be shipped into the image and is easy to get wrong). The
+        # model still reasons — the <think> block just stays inline in the content.
+        # Add them later via extra_vllm_args if structured reasoning/tools are needed.
     ),
     ModelConfig(
         name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
         endpoint_name="nemotron-3-nano-30b",
-        # 30B total params in BF16 (~60GB) though only ~3B activate per token.
-        # An alternate strong model — not cast to a profile by default.
-        # No gpu_snapshot: sleep mode would offload ~60GB of weights to host RAM,
-        # past what a default container comfortably holds.
-        params_b=30,
+        # Hybrid Mamba-2 + MoE: ~31B total params in BF16 (~62GB), ~3B active per
+        # token. Needs an 80GB card — an alternate strong model, not a tier default.
+        params_b=31,
         gpu="H200:1",
         max_model_len=32768,
         trust_remote_code=True,
         gated=True,
         max_concurrent_inputs=64,
+        # Same plain-chat posture as the 4B (custom `nano_v3` parser plugin omitted).
     ),
     ModelConfig(
         name="nvidia/Nemotron-Cascade-14B-Thinking",
@@ -210,15 +184,13 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
         params_b=14,
         gpu="L40S:1",
         max_model_len=32768,
-        # Qwen3-native in vLLM (no custom code); ChatML template with a thinking
-        # block parsed by the Qwen3 reasoning parser.
+        # Post-trained from Qwen3-14B Base → stock Qwen3 arch (no custom code).
+        # ChatML thinking block parsed by the Qwen3 reasoning parser; `hermes` is
+        # the standard Qwen3-family tool parser. Both verified built-in in vLLM.
         reasoning_parser="qwen3",
         tool_call_parser="hermes",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=48,
-        # Qwen3-native single-GPU path on the pinned vLLM — snapshot-safe, and a
-        # reasoning model is exactly where a multi-minute cold start hurts most.
-        gpu_snapshot=True,
     ),
 )
 
@@ -234,28 +206,31 @@ OPENBMB_MODELS: tuple[ModelConfig, ...] = (
         max_model_len=32768,
         trust_remote_code=True,
         max_concurrent_inputs=48,
-        # Fast tier default for the cast; 8B BF16 (~16GB) offloads to host RAM
-        # fine. Sleep mode is allocator-level, so the custom MiniCPM modeling
-        # code doesn't affect it.
-        gpu_snapshot=True,
         # No tool_call_parser on purpose: MiniCPM4.1 emits a custom
-        # <|tool_call_start|> format vLLM 0.21.0 has no parser for, so tool-call
-        # structured output 400s here. The engine's structured path uses vLLM
+        # <|tool_call_start|> code-block format vLLM has no matching parser for, so
+        # a tool parser would 400/mis-parse. The engine's structured path uses vLLM
         # guided decoding (response_format json_schema) instead, which is
         # parser-independent — see ADR-0016. Don't bolt on a mismatched parser.
+        # (The model card suggests a vLLM nightly; 0.21.0 predates the release and
+        # serves it fine — flip vllm_version="nightly" if a boot failure proves otherwise.)
     ),
     ModelConfig(
         name="openbmb/MiniCPM-o-4_5",
         endpoint_name="minicpm-o-4-5",
-        # Omni-modal (text + vision + audio). Needs custom code and media backends.
-        # A specialist model — not cast to a profile by default.
-        params_b=8,
+        # Omni-modal (text + vision + audio) on a Qwen3-8B backbone → ~9B total in
+        # BF16. A specialist model, not cast to a profile by default.
+        params_b=9,
         gpu="L40S:1",
         trust_remote_code=True,
-        multimodal=True,
-        mm_limits={"image": 4, "audio": 2, "video": 1},
-        # Audio/vision preprocessing backends pulled into the image.
+        # Text + image only here; audio in/out over vLLM is experimental (it really
+        # wants the Transformers/demo runtime). Caps keep the encoder warmup bounded.
+        mm_limits={"image": 1, "audio": 0, "video": 0},
+        # Light vision/audio preprocessing backends. NOTE: full omni support wants
+        # openbmb's `minicpmo-utils[all]` + a pinned transformers==4.51.0, but that
+        # pin conflicts with vLLM's bundled transformers — so we keep the lean set
+        # and serve text+image. Treat audio as experimental.
         extra_pip=("librosa", "soundfile", "timm"),
+        gpu_memory_utilization=0.9,
         max_concurrent_inputs=16,
         # Custom omni-modal code path: keep the async scheduler off (conservative
         # — it's a specialist, not on the default cast). Prefix caching stays on.
@@ -285,36 +260,25 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="gemma4",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=48,
-        # Served via vLLM's Transformers modeling backend (gemma4_unified has no
-        # native vLLM class), which runs eager-only — CUDA-graph capture and the
-        # async scheduler aren't supported on that path, so disable both here.
-        # Prefix caching still applies and stays on (the default). gpu_snapshot
-        # stays off too: sleep mode on the nightly Transformers backend is
-        # unverified, and the Gemmas already skip the costliest warmup (no
-        # CUDA-graph capture).
-        enforce_eager=True,
-        async_scheduling=False,
-        # Text-only in the cast (vision/audio is the MiniCPM-o specialist's job).
-        # vLLM auto-detects gemma4_unified as multimodal and otherwise spends a big
-        # slice of cold-start profiling a *video* encoder we never call (and the MM
-        # warmup fails anyway). Zeroing the per-prompt MM limits disables that whole
-        # path — faster start, less GPU memory, more KV cache.
-        mm_limits={"image": 0, "audio": 0, "video": 0},
-        # gemma4_unified uses *variable* head dims (256 on sliding-attention layers,
-        # 512 on full-attention ones). vLLM <= 0.22.1 (incl. the pinned 0.21.0) sizes
-        # the o_proj from a uniform head_dim and dies on the full-attention layers
-        # with "mat1 and mat2 shapes cannot be multiplied". Only a vLLM nightly serves
-        # gemma4_unified, paired with transformers >= 5.10.2 (which adds the arch) and
-        # the FlashInfer sampler off (its JIT path breaks on these builds). All three
-        # are scoped to this model, so NVIDIA/OpenBMB stay on the reproducible pin.
+        # gemma4_unified (encoder-free) has no native class in any *stable* vLLM
+        # (≤0.22.1 falls back to the Transformers backend and crashes); only the
+        # nightly wheel registers Gemma4UnifiedForConditionalGeneration. So this
+        # model alone pins the nightly + transformers>=5.10.2. Scoped here, so
+        # NVIDIA/OpenBMB and the 26B sibling stay on the reproducible pin.
         vllm_version="nightly",
         extra_pip=("transformers>=5.10.2",),
-        env={"VLLM_USE_FLASHINFER_SAMPLER": "0"},
+        # Transformers-backend / fresh-nightly path: eager-only is the safe choice
+        # (CUDA-graph capture + async scheduler aren't reliable here).
+        enforce_eager=True,
+        async_scheduling=False,
+        # Text-only in the cast — gemma4 auto-detects as multimodal, so zero the
+        # per-prompt caps to skip the encoder warmup and free memory for KV cache.
+        mm_limits={"image": 0, "audio": 0},
     ),
     ModelConfig(
         name="google/gemma-4-26B-A4B-it",
         endpoint_name="gemma-4-26b",
-        # MoE: ~26B total params (~4B active). Gated repo — needs an HF token.
+        # MoE: ~25B total params (~4B active) with a small vision encoder. Gated.
         profile="strong",
         params_b=26,
         gpu="H200:1",
@@ -324,18 +288,11 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         tool_call_parser="gemma4",
         enable_auto_tool_choice=True,
         max_concurrent_inputs=64,
-        # Transformers modeling backend (see the 12B above): eager-only, so no
-        # CUDA graphs / async scheduler. Prefix caching stays on by default.
-        enforce_eager=True,
-        async_scheduling=False,
-        # Text-only in the cast — disable the auto-detected multimodal (video)
-        # encoder to cut cold-start profiling and free memory (see the 12B above).
-        mm_limits={"image": 0, "audio": 0, "video": 0},
-        # Same gemma4_unified fix as the 12B above (nightly vLLM + transformers
-        # >= 5.10.2 + FlashInfer sampler off).
-        vllm_version="nightly",
-        extra_pip=("transformers>=5.10.2",),
-        env={"VLLM_USE_FLASHINFER_SAMPLER": "0"},
+        # Standard gemma4 MoE arch (NOT the unified 12B path): served by a native
+        # vLLM class on the pinned stable release (0.19.1+), so NO nightly, no
+        # transformers pin, and CUDA graphs + async scheduling work — defaults stand.
+        # Text-only in the cast: zero the auto-detected multimodal caps.
+        mm_limits={"image": 0},
     ),
 )
 

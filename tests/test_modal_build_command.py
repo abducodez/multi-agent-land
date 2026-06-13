@@ -1,11 +1,9 @@
-"""Guard the precision flags ``build_command`` emits into the vLLM argv.
+"""Guard the ``vllm serve`` argv that ``build_command`` emits.
 
-Quantization is purely serving-side: it only adds ``--quantization`` /
-``--kv-cache-dtype`` to the ``vllm serve`` argv (the ``--served-model-name`` is
-unchanged, so the engine never notices). Two controls feed those flags — a
-per-model ``ModelConfig`` field and a deploy-time env override that wins over it
-— and these tests pin both, plus the force-disable token, since this is the first
-test to assert on ``build_command``'s output at all.
+The serving layer turns one ``ModelConfig`` into the argv launched inside the
+container, so these tests pin the mapping from config fields to vLLM flags: the
+always-present identity flags, the data-driven toggles (parsers, eager, prefix
+caching), and the ``extra_vllm_args`` escape hatch.
 
 ``modal/service.py`` does ``import modal`` and ``from catalogue import …``, so we
 load it exactly the way ``modal deploy`` does: with ``modal/`` on ``sys.path`` (the
@@ -16,6 +14,7 @@ binds the installed SDK, not the folder).
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -37,109 +36,105 @@ def _make(service, **kwargs):
     return service.ModelConfig(name="acme/Tiny-1B", endpoint_name="tiny-1b", **kwargs)
 
 
-# ── per-model field ──────────────────────────────────────────────────────────
+def _flag_value(cmd: list[str], flag: str) -> str:
+    """The argument that follows ``flag`` in the argv."""
+    return cmd[cmd.index(flag) + 1]
 
 
-def test_no_quantization_by_default(service):
+# ── always-present identity flags ──────────────────────────────────────────────
+
+
+def test_serves_the_model_with_identity_flags(service):
     cmd = service.build_command(_make(service))
-    assert "--quantization" not in cmd
-    assert "--kv-cache-dtype" not in cmd
+    assert cmd[:3] == ["vllm", "serve", "acme/Tiny-1B"]
+    # served-model-name defaults to the repo name (clients pass the repo id).
+    assert _flag_value(cmd, "--served-model-name") == "acme/Tiny-1B"
+    assert _flag_value(cmd, "--port") == str(service.VLLM_PORT)
+    assert _flag_value(cmd, "--tensor-parallel-size") == "1"
 
 
-def test_per_model_quantization_emits_flag(service):
-    cmd = service.build_command(_make(service, quantization="fp8"))
-    assert cmd[cmd.index("--quantization") + 1] == "fp8"
+def test_served_model_name_alias(service):
+    cmd = service.build_command(_make(service, served_model_name="acme/Tiny"))
+    assert _flag_value(cmd, "--served-model-name") == "acme/Tiny"
+    # but vLLM still loads the real repo (positional arg)
+    assert cmd[2] == "acme/Tiny-1B"
 
 
-def test_per_model_kv_cache_dtype_emits_flag(service):
-    cmd = service.build_command(_make(service, kv_cache_dtype="fp8"))
-    assert cmd[cmd.index("--kv-cache-dtype") + 1] == "fp8"
+# ── data-driven toggles ────────────────────────────────────────────────────────
 
 
-# ── deploy-time env override ───────────────────────────────────────────────────
+def test_prefix_caching_on_by_default_off_when_disabled(service):
+    assert "--enable-prefix-caching" in service.build_command(_make(service))
+    off = service.build_command(_make(service, enable_prefix_caching=False))
+    assert "--no-enable-prefix-caching" in off
+    assert "--enable-prefix-caching" not in off
 
 
-def test_env_override_beats_unset_model_field(service, monkeypatch):
-    monkeypatch.setattr(service, "QUANTIZATION", "fp8")
-    cmd = service.build_command(_make(service))  # model field is None
-    assert cmd[cmd.index("--quantization") + 1] == "fp8"
+def test_optional_inference_flags_emitted(service):
+    cmd = service.build_command(
+        _make(
+            service,
+            max_model_len=8192,
+            trust_remote_code=True,
+            enforce_eager=True,
+            gpu_memory_utilization=0.9,
+        )
+    )
+    assert _flag_value(cmd, "--max-model-len") == "8192"
+    assert "--trust-remote-code" in cmd
+    assert "--enforce-eager" in cmd
+    assert _flag_value(cmd, "--gpu-memory-utilization") == "0.9"
 
 
-def test_env_override_beats_model_field(service, monkeypatch):
-    monkeypatch.setattr(service, "QUANTIZATION", "awq")
-    cmd = service.build_command(_make(service, quantization="fp8"))
-    assert cmd[cmd.index("--quantization") + 1] == "awq"
+def test_async_scheduling_default_on_off_when_disabled(service):
+    assert "--async-scheduling" in service.build_command(_make(service))
+    assert "--async-scheduling" not in service.build_command(_make(service, async_scheduling=False))
 
 
-@pytest.mark.parametrize("token", ["none", "off", "bf16", "AUTO"])
-def test_disable_token_forces_full_precision(service, monkeypatch, token):
-    # A model that defaults to fp8 is overridden back to no flag at deploy time.
-    monkeypatch.setattr(service, "QUANTIZATION", token)
-    cmd = service.build_command(_make(service, quantization="fp8"))
-    assert "--quantization" not in cmd
+def test_parser_flags(service):
+    cmd = service.build_command(
+        _make(service, reasoning_parser="qwen3", tool_call_parser="hermes", enable_auto_tool_choice=True)
+    )
+    assert _flag_value(cmd, "--reasoning-parser") == "qwen3"
+    assert _flag_value(cmd, "--tool-call-parser") == "hermes"
+    assert "--enable-auto-tool-choice" in cmd
+    # None parsers emit nothing.
+    bare = service.build_command(_make(service))
+    assert "--reasoning-parser" not in bare
+    assert "--tool-call-parser" not in bare
 
 
-def test_kv_cache_env_override(service, monkeypatch):
-    monkeypatch.setattr(service, "KV_CACHE_DTYPE", "fp8")
-    cmd = service.build_command(_make(service))
-    assert cmd[cmd.index("--kv-cache-dtype") + 1] == "fp8"
+def test_mm_limits_serialized_as_json(service):
+    cmd = service.build_command(_make(service, mm_limits={"image": 0, "audio": 0}))
+    assert json.loads(_flag_value(cmd, "--limit-mm-per-prompt")) == {"image": 0, "audio": 0}
 
 
-# ── FP8 KV cache × snapshot incompatibility (vLLM wake-path crash) ─────────────
+def test_log_requests_default_on(service):
+    assert "--enable-log-requests" in service.build_command(_make(service))
+    assert "--enable-log-requests" not in service.build_command(_make(service, log_requests=False))
 
 
-def test_fp8_kv_cache_dropped_for_snapshot_models(service):
-    # FP8 KV cache crashes the /wake_up path on snapshot models, so the flag is
-    # suppressed when gpu_snapshot is set — the endpoint serves with full-precision
-    # KV cache rather than booting into a state it can never wake from.
-    cmd = service.build_command(_make(service, kv_cache_dtype="fp8", gpu_snapshot=True))
-    assert "--kv-cache-dtype" not in cmd
-    # The snapshot flag itself still wins and is emitted.
-    assert "--enable-sleep-mode" in cmd
+# ── escape hatch ────────────────────────────────────────────────────────────────
 
 
-def test_fp8_kv_cache_env_override_dropped_for_snapshot_models(service, monkeypatch):
-    # The global deploy override is the common trigger: it lands on every model in
-    # the app, including snapshot ones, which must still drop it.
-    monkeypatch.setattr(service, "KV_CACHE_DTYPE", "fp8")
-    cmd = service.build_command(_make(service, gpu_snapshot=True))
-    assert "--kv-cache-dtype" not in cmd
-
-
-def test_fp8_variant_kv_cache_dropped_for_snapshot_models(service):
-    # Every fp8 variant hits init_fp8_kv_scales, so fp8_e5m2 is dropped too.
-    cmd = service.build_command(_make(service, kv_cache_dtype="fp8_e5m2", gpu_snapshot=True))
-    assert "--kv-cache-dtype" not in cmd
-
-
-def test_non_fp8_kv_cache_kept_for_snapshot_models(service):
-    # The guard only fires on fp8; a non-fp8 dtype passes through even with snapshot.
-    cmd = service.build_command(_make(service, kv_cache_dtype="auto", gpu_snapshot=True))
-    assert cmd[cmd.index("--kv-cache-dtype") + 1] == "auto"
-
-
-def test_fp8_kv_cache_kept_for_non_snapshot_models(service):
-    # Without snapshot there's no wake path, so FP8 KV cache stays.
-    cmd = service.build_command(_make(service, kv_cache_dtype="fp8", gpu_snapshot=False))
-    assert cmd[cmd.index("--kv-cache-dtype") + 1] == "fp8"
+def test_extra_vllm_args_appended_verbatim(service):
+    cmd = service.build_command(_make(service, extra_vllm_args=("--quantization", "fp8")))
+    assert cmd[-2:] == ["--quantization", "fp8"]
 
 
 # ── deploy script wiring ───────────────────────────────────────────────────────
 
 
-def test_deploy_script_propagates_quantization_env():
+def test_deploy_script_propagates_knob_envs():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
     deploy_modal = importlib.import_module("deploy_modal")
     from argparse import Namespace
 
-    base = dict(keep_warm=False, auth=False, json_logs=False, log_level="", kv_cache_dtype=None)
-    env_fp8 = deploy_modal._env_for(Namespace(quantization="fp8", **base))
-    assert env_fp8["MODAL_LLM_QUANTIZATION"] == "fp8"
+    env = deploy_modal._env_for(Namespace(keep_warm=True, auth=True))
+    assert env["MODAL_LLM_KEEP_WARM"] == "1"
+    assert env["MODAL_LLM_REQUIRE_AUTH"] == "1"
 
-    # ``--quantization none`` (force full precision) is still propagated, not dropped.
-    env_none = deploy_modal._env_for(Namespace(quantization="none", **base))
-    assert env_none["MODAL_LLM_QUANTIZATION"] == "none"
-
-    # Unset → the env var is left alone (so a model's own default stands).
-    env_unset = deploy_modal._env_for(Namespace(quantization=None, **base))
-    assert "MODAL_LLM_QUANTIZATION" not in env_unset
+    # Both off → neither env var is set (so endpoints stay public + scale-to-zero).
+    env_off = deploy_modal._env_for(Namespace(keep_warm=False, auth=False))
+    assert "MODAL_LLM_KEEP_WARM" not in env_off
+    assert "MODAL_LLM_REQUIRE_AUTH" not in env_off

@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted (extends [ADR-0014 *Modal model serving*](0014-modal-model-serving.md),
+**Superseded by [ADR-0034 *Simplify the Modal serving layer*](0034-simplify-modal-serving-to-canonical-vllm.md)**
+— the snapshot lifecycle was removed for being alpha and error-prone; cold starts
+now rely on the shared compile/weight caches plus the retained `MODAL_LLM_KEEP_WARM`
+demo switch. The historical context below stands.
+
+Originally Accepted (extended [ADR-0014 *Modal model serving*](0014-modal-model-serving.md),
 [ADR-0019](0019-single-model-catalogue-no-cloud-path.md))
 
 ## Context

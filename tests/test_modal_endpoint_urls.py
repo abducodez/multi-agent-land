@@ -16,8 +16,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
 _CATALOGUE_PATH = Path(__file__).resolve().parents[1] / "modal" / "catalogue.py"
 
 # Max length of a single DNS label (RFC 1035). The whole subdomain before
