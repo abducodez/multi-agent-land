@@ -19,6 +19,10 @@ from __future__ import annotations
 import os
 import socket
 
+# Import `spaces` before anything that could initialise CUDA: on ZeroGPU the package
+# raises if torch's CUDA is touched first (our torch is lazy via mem0, so this stays
+# first by construction). Off ZeroGPU the package is fully effect-free.
+import spaces
 import gradio as gr
 
 # ── engine read surface (public; never mutated here) ───────────────────────────
@@ -1150,6 +1154,26 @@ def on_spaces() -> bool:
 
     HF injects ``SPACE_ID`` into every Space container; nothing else sets it."""
     return bool(os.getenv("SPACE_ID"))
+
+
+@spaces.GPU
+def gpu_selftest() -> str:
+    """ZeroGPU entrypoint — the one ``@spaces.GPU`` function the platform requires.
+
+    ZeroGPU aborts startup unless it detects a decorated GPU function (the decorator
+    registers itself at import, which is all the platform's startup check needs — this
+    need never be *called*, so it costs no GPU quota on page load).  We still make it a
+    real probe rather than a no-op: a tiny on-device matmul that proves a GPU was
+    actually attached.  The cast's inference runs on remote OpenAI-compatible endpoints,
+    so this is the engine's only direct touch of local silicon; torch is imported lazily
+    here so module import never initialises CUDA (which would trip ZeroGPU's fork guard)."""
+    import torch
+
+    if not torch.cuda.is_available():  # pragma: no cover — only reachable on real ZeroGPU
+        return "cuda unavailable"
+    device = torch.device("cuda")
+    probe = (torch.randn(256, 256, device=device) @ torch.randn(256, 256, device=device)).sum()
+    return f"{torch.cuda.get_device_name(device)} · checksum {probe.item():.3f}"
 
 
 def dev_server_port() -> int:

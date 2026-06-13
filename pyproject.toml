@@ -37,6 +37,11 @@ dependencies = [
   # range (HF ZeroGPU accepts 2.8.0–2.11.0) so the HF Space build doesn't try to install
   # an unsupported wheel. Upper bound, not exact, so the resolver can still pick per-Python.
   "torch>=2.8,<2.12",
+  # HF ZeroGPU hardware refuses to start unless it detects at least one `@spaces.GPU`
+  # function at launch ("No @spaces.GPU function detected during startup"). The `spaces`
+  # package provides that decorator; it is effect-free off ZeroGPU, so it ships always
+  # without touching the offline/local path. See src/ui/fishbowl/app.py (gpu_selftest).
+  "spaces>=0.50.4",
 ]
 
 [project.optional-dependencies]
