@@ -36,7 +36,7 @@ def test_one_sponsor_model_per_tier_and_sizes_stay_small():
 
 
 def test_every_tier_resolves_to_its_sponsor_model():
-    assert local_catalogue.default_key_for_profile("tiny") == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    assert local_catalogue.default_key_for_profile("tiny") == "nvidia/Nemotron-Mini-4B-Instruct"
     assert local_catalogue.default_key_for_profile("fast") == "openbmb/MiniCPM4.1-8B"
     assert local_catalogue.default_key_for_profile("balanced") == "CohereLabs/aya-expanse-8b"
     assert local_catalogue.default_key_for_profile("strong") == "JetBrains/Mellum2-12B-A2.5B-Instruct"
@@ -45,25 +45,19 @@ def test_every_tier_resolves_to_its_sponsor_model():
 
 
 def test_model_by_key_carries_trust_remote_code():
-    # Nemotron + MiniCPM ship custom modelling code; Aya (native Command arch) does not; an
-    # off-catalogue id is unknown.
-    assert local_catalogue.model_by_key("nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16").trust_remote_code is True
+    # MiniCPM ships custom modelling code; the native-arch models (Nemotron-Mini, Aya) do
+    # not; an off-catalogue id is unknown.
     assert local_catalogue.model_by_key("openbmb/MiniCPM4.1-8B").trust_remote_code is True
+    assert local_catalogue.model_by_key("nvidia/Nemotron-Mini-4B-Instruct").trust_remote_code is False
     assert local_catalogue.model_by_key("CohereLabs/aya-expanse-8b").trust_remote_code is False
     assert local_catalogue.model_by_key("does/not-exist") is None
-
-
-def test_model_by_key_carries_auto_class():
-    # Mellum's card loads it with AutoModelForMultimodalLM; the rest use the default class.
-    assert local_catalogue.model_by_key("JetBrains/Mellum2-12B-A2.5B-Instruct").auto_class == "AutoModelForMultimodalLM"
-    assert local_catalogue.model_by_key("openbmb/MiniCPM4.1-8B").auto_class == "AutoModelForCausalLM"
 
 
 def test_binding_is_a_bare_repo_id_with_no_endpoint():
     # In-process: the binding carries the raw transformers repo id (no openai/ prefix) and
     # neither a base_url nor an api_key — the router builds the in-process provider from it.
-    binding = local_catalogue.binding_for("nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16")
-    assert binding["model"] == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    binding = local_catalogue.binding_for("nvidia/Nemotron-Mini-4B-Instruct")
+    assert binding["model"] == "nvidia/Nemotron-Mini-4B-Instruct"
     assert binding["base_url"] == ""
     assert binding["api_key"] == ""
 
@@ -115,9 +109,9 @@ def test_local_backend_is_registered_and_qualified():
 
 def test_registry_default_and_binding_round_trip():
     key = inference.default_key_for_profile("tiny", "local")
-    assert key == "local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    assert key == "local:nvidia/Nemotron-Mini-4B-Instruct"
     binding = inference.binding_for(key)
-    assert binding["model"] == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    assert binding["model"] == "nvidia/Nemotron-Mini-4B-Instruct"
     assert binding["base_url"] == ""
 
 
@@ -136,15 +130,15 @@ def test_router_dispatches_local_key_to_in_process_provider():
     # A live router resolving a local: key must build the in-process provider (not LiteLLM),
     # bound to the bare repo id. Construction only — no GPU is touched.
     router = ModelRouter(offline=False)
-    provider = router.for_profile("local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16")
+    provider = router.for_profile("local:nvidia/Nemotron-Mini-4B-Instruct")
     assert isinstance(provider, LocalTransformersProvider)
-    assert provider.model == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
-    assert provider.model_id == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    assert provider.model == "nvidia/Nemotron-Mini-4B-Instruct"
+    assert provider.model_id == "nvidia/Nemotron-Mini-4B-Instruct"
 
 
 def test_catalogue_spec_tags_local_kind_and_others_litellm():
     router = ModelRouter(offline=False)
-    local_spec = router._catalogue_spec("local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16")
+    local_spec = router._catalogue_spec("local:nvidia/Nemotron-Mini-4B-Instruct")
     assert local_spec is not None and local_spec.kind == "local"
     # An HF key resolves through the same path but stays on the HTTP transport.
     hf_spec = router._catalogue_spec("hf:katanemo/Arch-Router-1.5B")
@@ -155,8 +149,8 @@ def test_catalogue_spec_tags_local_kind_and_others_litellm():
 
 
 def test_provider_reports_model_id_and_zeroed_usage_before_any_call():
-    provider = LocalTransformersProvider(model="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16")
-    assert provider.model_id == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+    provider = LocalTransformersProvider(model="nvidia/Nemotron-Mini-4B-Instruct")
+    assert provider.model_id == "nvidia/Nemotron-Mini-4B-Instruct"
     assert provider.last_usage == {}  # no call yet — matches the sibling providers
     provider._zero_usage()
     assert provider.last_usage == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -167,16 +161,6 @@ def test_provider_resolves_trust_remote_code_from_catalogue():
     assert LocalTransformersProvider(model="CohereLabs/aya-expanse-8b")._trust_remote_code() is False
     # An off-catalogue repo defaults to the safe choice.
     assert LocalTransformersProvider(model="some/random-repo")._trust_remote_code() is False
-
-
-def test_provider_resolves_auto_class_from_catalogue():
-    # Mellum loads with a non-default auto-class; ordinary and off-catalogue repos use CausalLM.
-    assert (
-        LocalTransformersProvider(model="JetBrains/Mellum2-12B-A2.5B-Instruct")._auto_class()
-        == "AutoModelForMultimodalLM"
-    )
-    assert LocalTransformersProvider(model="openbmb/MiniCPM4.1-8B")._auto_class() == "AutoModelForCausalLM"
-    assert LocalTransformersProvider(model="some/random-repo")._auto_class() == "AutoModelForCausalLM"
 
 
 # ── ZeroGPU contract: CUDA only inside @spaces.GPU, never in the parent ───────────────
@@ -229,6 +213,26 @@ def test_parent_loader_fully_materialises_weights_no_meta_tensors():
     assert code.count("low_cpu_mem_usage=False") == 2
     # …and the head is explicitly re-tied to the materialised embeddings.
     assert "tie_weights()" in code
+
+
+def test_v4_compat_shim_backfills_removed_remote_code_predicates():
+    # Regression guard for the ZeroGPU error "cannot import name 'is_torch_fx_available'
+    # from transformers.utils.import_utils": transformers 5.x removed these predicates, but
+    # MiniCPM's (and other) trust_remote_code modelling files still import them. The provider
+    # back-fills them (all True at our torch floor) so the remote import succeeds.
+    from src.models import local_provider
+
+    local_provider._ensure_transformers_v4_symbols()
+    from transformers.utils import import_utils
+
+    # Every name the shim covers is importable from transformers.utils.import_utils and True.
+    for name in local_provider._REMOVED_TORCH_PREDICATES:
+        fn = getattr(import_utils, name)
+        assert fn() is True
+    # And _ensure_loaded runs the shim before touching any remote code.
+    import inspect
+
+    assert "_ensure_transformers_v4_symbols()" in inspect.getsource(local_provider._ensure_loaded)
 
 
 def test_gpu_transfer_lives_inside_the_spaces_gpu_function():

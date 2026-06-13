@@ -96,8 +96,8 @@ backend stays inactive and the deterministic stub owns the no-config demo path.
   within a session.
 - **Prize-lane impact:** one sponsor family per tier, so a single in-process cast spans
   four tracks at once — **NVIDIA Nemotron** (`tiny`, also the **Tiny Titan** ≤4B lane via
-  Nemotron-3-Nano-4B), **OpenBMB / MiniCPM** (`fast`), **Cohere / Aya** (`balanced`), and
-  **JetBrains / Mellum** (`strong`) — plus the **Community Choice** on-device-inference
+  Nemotron-Mini-4B-Instruct), **OpenBMB / MiniCPM** (`fast`), **Cohere / Aya** (`balanced`),
+  and **JetBrains / Mellum** (`strong`) — plus the **Community Choice** on-device-inference
   story for the HF Space demo.
 
 **Negative / Risks:**
@@ -119,13 +119,15 @@ backend stays inactive and the deterministic stub owns the no-config demo path.
 - `llamacpp_catalogue.py` and `llamacpp_server.py` are deleted; `app.py`'s
   `gpu_selftest` `@spaces.GPU` guard is retained — it detects ZeroGPU availability at
   startup and is unrelated to the inference path.
-- Each tier is tagged with a distinct sponsor model (NVIDIA Nemotron-3-Nano-4B-BF16 ·
+- Each tier is tagged with a distinct sponsor model (NVIDIA Nemotron-Mini-4B-Instruct ·
   OpenBMB MiniCPM4.1-8B · Cohere Aya-Expanse-8B · JetBrains Mellum2-12B-A2.5B-Instruct), so
   a cross-sponsor cast runs on the Space's own GPU. This trades ZeroGPU quota/RAM headroom
   (several multi-GB loads per show) for multi-track coverage; the `tiny` model is listed
-  first so any untagged fallback lands on the cheapest tier. Two deployment notes: Aya is a
-  **gated** repo (needs licence acceptance + `HF_TOKEN`), and Mellum loads via
-  `AutoModelForMultimodalLM` (a per-model `auto_class` on `LocalModel`).
+  first so any untagged fallback lands on the cheapest tier. Notes: Aya is a **gated** repo
+  (needs licence acceptance + `HF_TOKEN`); MiniCPM ships v4-era custom code, so the provider
+  back-fills the `is_torch_fx_available`/`is_torch_sdpa_available` symbols transformers 5.x
+  removed; and the NVIDIA tier uses Nemotron-**Mini** (a plain transformer), not the
+  Nemotron-Nano hybrid, which hard-requires the mamba-ssm kernel that will not build on a Space.
 - Tests live in `tests/test_local_backend.py`. All 676 tests pass; the capability-gate
   logic is fully covered without a GPU or torch import in test processes.
 

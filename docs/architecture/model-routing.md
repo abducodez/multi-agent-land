@@ -111,10 +111,10 @@ a single cast spans four sponsors at once (the multi-track strategy):
 
 | Key | Model | Tier | Notes |
 |---|---|---|---|
-| `local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Nemotron Nano 4B | **tiny** | NVIDIA lane; Tiny-Titan ≤4B band; `trust_remote_code`; Mamba-2 hybrid (BF16, not GGUF) |
-| `local:openbmb/MiniCPM4.1-8B` | MiniCPM 4.1 8B | fast | OpenBMB lane; `trust_remote_code` |
+| `local:nvidia/Nemotron-Mini-4B-Instruct` | Nemotron Mini 4B | **tiny** | NVIDIA lane; Tiny-Titan ≤4B band; plain Nemotron-4 transformer (native, no kernels) |
+| `local:openbmb/MiniCPM4.1-8B` | MiniCPM 4.1 8B | fast | OpenBMB lane; `trust_remote_code` (v4-symbol shim applied) |
 | `local:CohereLabs/aya-expanse-8b` | Aya Expanse 8B | balanced | Cohere lane; **gated repo** — needs licence acceptance + `HF_TOKEN` |
-| `local:JetBrains/Mellum2-12B-A2.5B-Instruct` | Mellum 2 (12B MoE, ~2.5B active) | strong | JetBrains lane; loads via `AutoModelForMultimodalLM` |
+| `local:JetBrains/Mellum2-12B-A2.5B-Instruct` | Mellum 2 (12B MoE, ~2.5B active) | strong | JetBrains lane; native `MellumConfig` (Instruct, not Base) |
 
 Each tier is tagged, so a cast's `fast`/`balanced`/`strong` seats route to different sponsor
 models. That cross-sponsor cast loads several multi-GB models per show — heavy on the free
@@ -126,7 +126,7 @@ Bind a tier to a local model with a qualified key:
 
 ```yaml
 profiles:
-  tiny: { endpoint: "local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", temperature: 0.7, max_tokens: 192 }
+  tiny: { endpoint: "local:nvidia/Nemotron-Mini-4B-Instruct", temperature: 0.7, max_tokens: 192 }
 ```
 
 ### Real cost → Governor

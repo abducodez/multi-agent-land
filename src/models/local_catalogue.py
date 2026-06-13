@@ -65,10 +65,7 @@ class LocalModel:
     ``transformers``). ``profile`` is the tier this model is the default casting for, or
     None for an alternate the cast can still pin explicitly. ``source`` is a friendly
     family/org label for the picker. ``trust_remote_code`` is forwarded to
-    ``from_pretrained`` for repos that ship custom modelling code (e.g. MiniCPM, Nemotron).
-    ``auto_class`` is the ``transformers`` auto-class the provider loads the repo with —
-    ``AutoModelForCausalLM`` for an ordinary LM, overridden where a model card calls for a
-    different one (e.g. JetBrains Mellum loads with ``AutoModelForMultimodalLM``).
+    ``from_pretrained`` for repos that ship custom modelling code (e.g. MiniCPM).
     """
 
     repo_id: str
@@ -76,7 +73,6 @@ class LocalModel:
     params_b: float | None = None
     source: str = "Hugging Face"
     trust_remote_code: bool = False
-    auto_class: str = "AutoModelForCausalLM"
 
     @property
     def key(self) -> str:
@@ -103,15 +99,14 @@ class LocalModel:
 
 LOCAL_MODELS: tuple[LocalModel, ...] = (
     # Tiny tier (≤4B, Tiny-Titan band) — the cast-wide fallback default. NVIDIA Nemotron
-    # Nano is a Mamba-2/Transformer hybrid; load the BF16 (safetensors) sibling, not the
-    # GGUF, since the in-process path runs transformers. Ships custom modelling code, so
-    # trust_remote_code is required.
+    # Mini 4B is a plain Nemotron-4 transformer (native in transformers, no custom code and
+    # no Mamba kernels), so it loads in-process cleanly — unlike the Nemotron-Nano hybrid,
+    # which hard-requires the mamba-ssm CUDA kernel that will not build on a Space.
     LocalModel(
-        repo_id="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+        repo_id="nvidia/Nemotron-Mini-4B-Instruct",
         profile="tiny",
         params_b=4.0,
         source="NVIDIA Nemotron",
-        trust_remote_code=True,
     ),
     # Fast tier — OpenBMB MiniCPM 4.1 8B. Ships custom modelling code (trust_remote_code).
     LocalModel(
@@ -131,14 +126,14 @@ LOCAL_MODELS: tuple[LocalModel, ...] = (
         source="Cohere Labs Aya",
     ),
     # Strong tier — JetBrains Mellum 2 (12B MoE, ~2.5B active). The Instruct variant (a
-    # post-trained assistant with a chat template), not the Base completion model. Its card
-    # loads it with AutoModelForMultimodalLM, so we pin that auto-class.
+    # post-trained assistant with a chat template), not the Base completion model. MellumConfig
+    # is native in transformers, so it loads with the default AutoModelForCausalLM (the card's
+    # AutoModelForMultimodalLM is wrong for this arch) and needs no custom code.
     LocalModel(
         repo_id="JetBrains/Mellum2-12B-A2.5B-Instruct",
         profile="strong",
         params_b=12.0,
         source="JetBrains Mellum",
-        auto_class="AutoModelForMultimodalLM",
     ),
 )
 
