@@ -170,6 +170,13 @@ class Conductor:
         the existing one rather than emitting a duplicate.  ``turns`` and ``tokens``
         are read from the governor's live counters.
 
+        One scoped exception (the curtain call): when the show was cut short by a budget
+        bound — the run was already finalized ``"budget"`` with no winner — and the judge
+        *then* rules (``reason == "verdict"`` with a winner), we append a corrective
+        ``run.finished`` so the win is attributed (ADR-0029).  The leaderboard reads
+        ``run.finished`` last-wins (``run_index``), so the ruling, not the truncation,
+        names the winner.  Every other repeat call stays a true no-op.
+
         Attribution (ADR-0029): ``winner`` is a cast agent name (``winner_kind:
         "agent"``) or a team label (``winner_kind: "team"``).  ``winning_model`` keeps
         its original meaning — a single cast agent's endpoint, populated only for an
@@ -178,7 +185,15 @@ class Conductor:
         """
         existing = [e for e in self.ledger.events_for_run(self.run_id) if e.kind == "run.finished"]
         if existing:
-            return existing[0]
+            prior = existing[-1]
+            supersedes_budget_close = (
+                reason == "verdict"
+                and bool(winner)
+                and prior.payload.get("reason") == "budget"
+                and not prior.payload.get("winner")
+            )
+            if not supersedes_budget_close:
+                return prior
         stats = self.governor.stats
         finished = Event(
             run_id=self.run_id,
@@ -285,6 +300,46 @@ class Conductor:
         self._maybe_snapshot()
         return True
 
+    def force_verdict(self) -> Event | None:
+        """Cut the show short and have the judge rule *now*, on the whole run.
+
+        The curtain call: the visitor pressed "Start judging", or a budget/turn limit
+        ended the cast's run.  We silence the cast (drain any queued or in-flight
+        competitor turns so no further mind speaks), then run the scenario's judge(s)
+        so a ``judge.verdict`` — carrying a ``winner`` via the competition handler —
+        lands and reads every event of this run.
+
+        Crucially the judge runs *un-gated*: a verdict must still land even when the
+        very budget that ended the show is already spent, so the round resolves on a
+        ruling rather than a silent halt.  Idempotent: if this run already has a
+        verdict, it is returned unchanged.  Returns the verdict event, or ``None`` when
+        the scenario has no judge to rule.
+        """
+        existing = next(
+            (e for e in self.ledger.events_for_run(self.run_id) if e.kind == "judge.verdict"),
+            None,
+        )
+        if existing is not None:
+            return existing
+        judges = [a for a in self.scenario.agents if getattr(getattr(a, "manifest", None), "role", None) == "judge"]
+        if not judges:
+            return None
+        # Silence the cast: no queued subscription/tick competitor acts after this.
+        self._pending.clear()
+        self._trigger_queue.clear()
+        # Advance the sim-clock once to mark the curtain call, but DON'T gate on the
+        # governor — the judge must rule even when the show ended on a spent budget.
+        self.turn += 1
+        obs.set_context(turn=self.turn)
+        obs.log("run.judging", run_id=self.run_id, turn=self.turn, judges=[getattr(j, "name", "") for j in judges])
+        projection = self.projection
+        for judge in judges:
+            self._run_agent(judge, projection, check_budget=False)
+        return next(
+            (e for e in reversed(self.ledger.events_for_run(self.run_id)) if e.kind == "judge.verdict"),
+            None,
+        )
+
     def inject_user_event(self, text: str, label: str | None = None) -> None:
         self.turn += 1
         payload: dict[str, str] = {"text": text}
@@ -320,8 +375,9 @@ class Conductor:
             for agent in self._tick_scheduled_agents():
                 self._run_agent(agent, projection)
 
-    def _run_agent(self, agent: "Agent", projection: StageProjection) -> None:
-        self.governor.check(self.turn)  # before the span: a budget stop is not an agent turn
+    def _run_agent(self, agent: "Agent", projection: StageProjection, *, check_budget: bool = True) -> None:
+        if check_budget:
+            self.governor.check(self.turn)  # before the span: a budget stop is not an agent turn
         name = getattr(agent, "name", agent.__class__.__name__)
         start = time.perf_counter()
         with obs.bind(agent=name), obs.span("agent.turn", **{"mal.agent": name, "mal.turn": self.turn}):

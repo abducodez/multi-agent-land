@@ -111,6 +111,35 @@ So "replay" and "live" are the same code path differing only in whether the tick
 appends. Offline (no API key) the deterministic stub still produces every turn, so the
 hybrid transport — and the whole demo — is reproducible on stage.
 
+## Curtain call — "Start judging" + limit-reached verdict
+
+The show resolves on a **judge's ruling**, not a silent halt. Two triggers bring on the
+judge:
+
+- **The visitor presses "⚖ Start judging"** (`show.py` → `judge_btn`), the amber pill in
+  the transport. The app shell's `start_judging` handler stops autoplay (the halt-tail
+  kills the `gr.Timer`) and calls `session.force_verdict()`.
+- **A budget/turn limit ends the cast's run.** `on_tick` already stops on a tripped
+  governor or the tick-cap backstop; when that happens and the cast has a judge that
+  hasn't ruled, it brings the judge on instead of painting the bare `⛔ STOPPED` banner.
+
+`FishbowlSession.force_verdict()` delegates to **`Conductor.force_verdict()`**, which:
+
+1. **silences the cast** — drains `_pending` + `_trigger_queue` so no further competitor
+   speaks after the curtain call;
+2. **runs the judge(s) un-gated** (`role: judge` agents) — `_run_agent(..., check_budget=False)`
+   so a verdict lands *even when the very budget that ended the show is spent*. The judge
+   reads the whole run (`recent_events = events_for_run(run_id)`) and emits one
+   `judge.verdict` carrying a `winner` (via the `judged-competition` handler offline);
+3. is **idempotent** — a run that already has a verdict returns it unchanged.
+
+The session then `finalize("verdict")`s the run. When the limit path had already
+finalized the run `"budget"` with no winner, `Conductor.finalize` appends a **corrective
+`run.finished`** carrying the verdict + winner (its one scoped exception to idempotency);
+`run_index` folds `run.finished` last-wins, so the leaderboard attributes the ruling, not
+the truncation. A cast with **no judge** (e.g. Oracle Grove) can't be forced — the click
+halts visibly with a banner instead, and nothing is fabricated.
+
 ## Say vs think — the MindCard
 
 Each MindCard (`render/mindcard.py`) shows a mind's front face (its public `said`) and,

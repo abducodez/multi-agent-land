@@ -107,6 +107,14 @@ def build_show() -> dict[str, object]:
                 handles["back_btn"] = gr.Button("⏮", elem_classes=["icon-btn"], scale=0)
                 handles["play_btn"] = gr.Button("▶", elem_classes=["icon-btn", "play"], scale=0)
                 handles["fwd_btn"] = gr.Button("⏭", elem_classes=["icon-btn"], scale=0)
+                # Curtain call: stop the cast and hand the floor to the judge, which
+                # reads the whole ledger and rules.  The app shell wires it to
+                # ``force_verdict`` and disables it for casts with no judge.
+                handles["judge_btn"] = gr.Button(
+                    "⚖ Start judging",
+                    elem_classes=["icon-btn", "judge-now"],
+                    scale=0,
+                )
             handles["step_slider"] = gr.Slider(
                 minimum=0,
                 maximum=1,

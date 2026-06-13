@@ -112,6 +112,29 @@ class FishbowlSession:
         its own (no extra token spend)."""
         return any(e.kind == "judge.verdict" for e in self.conductor.ledger.events_for_run(self.conductor.run_id))
 
+    def has_judge(self) -> bool:
+        """True when this cast has a judge that can be asked to rule.
+
+        The Show enables "Start judging" only when this holds, and the autoplay loop
+        consults it before bringing on the judge at a budget/turn limit (a cast with
+        no judge halts visibly instead)."""
+        return any(getattr(agent.manifest, "role", None) == "judge" for agent in self.scenario.agents)
+
+    def force_verdict(self) -> bool:
+        """Curtain call: silence the cast and have the judge rule on the whole run.
+
+        Delegates to :meth:`Conductor.force_verdict` (which reads every event of this
+        run and lands a ``judge.verdict`` even on a spent budget), then closes the run
+        with a ``run.finished`` so the winner is attributed (ADR-0029).  Returns True
+        when a verdict landed, False when the cast has no judge.  Idempotent — a second
+        call after a verdict is a no-op that returns True."""
+        with obs.span("session.force_verdict", **{"session.scenario": self._scenario_name}):
+            obs.log("session.force_verdict", scenario=self._scenario_name)
+            verdict = self.conductor.force_verdict()
+            if verdict is not None:
+                self.finalize("verdict")
+            return verdict is not None
+
     def finalize(self, reason: str) -> None:
         """Close the current run with a ``run.finished`` event (idempotent-safe).
 
@@ -264,6 +287,15 @@ class ReplaySession:
 
     def has_verdict(self) -> bool:
         return any(e.kind == "judge.verdict" for e in self._events)
+
+    def has_judge(self) -> bool:
+        # A replay owns no live engine, so it can never *call* a judge — but the
+        # recorded run may already carry its verdict.  Report on the recording.
+        return self.has_verdict()
+
+    def force_verdict(self) -> bool:  # pragma: no cover - inert by design
+        # A replay is read-only: nothing to judge, the recording stands as-is.
+        return self.has_verdict()
 
     @property
     def autoplay_tick_cap(self) -> int:

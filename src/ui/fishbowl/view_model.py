@@ -168,6 +168,9 @@ def view_model_at(
         "voice_meta": {"name": voice_name, "desc": voice_desc},
         "speaking_id": speaking_id,
         "verdict": verdict,
+        # The winning side's roster (ADR-0029) — lets the champion celebration line up a
+        # team's members as chips. Empty for symmetric/judged/none-kind runs.
+        "teams": teams,
         "rounds": rounds,
         "max_rounds": max_rounds,
         "tokens": _estimate_tokens_through(prefix),

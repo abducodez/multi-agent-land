@@ -173,6 +173,16 @@ except Exception:  # pragma: no cover
         return f"<div class='verdict'>{v.get('text', '')}</div>"
 
 
+try:
+    # The cheerful champion celebration — a modular overlay, empty unless a winner was
+    # declared, so it composes into the verdict pane without touching no-winner scenarios.
+    from src.ui.fishbowl.render.winner import render_winner
+except Exception:  # pragma: no cover
+
+    def render_winner(vm) -> str:
+        return ""
+
+
 try:  # session: the transport wrapper over a Conductor
     from src.ui.fishbowl.session import FishbowlSession
 except Exception:  # pragma: no cover - fallback session keeps the shell live
@@ -201,6 +211,14 @@ except Exception:  # pragma: no cover - fallback session keeps the shell live
         def has_verdict(self) -> bool:
             # Mirrors the real session's loop-safety helper so on_tick never crashes.
             return any(getattr(e, "kind", None) == "judge.verdict" for e in self.conductor.ledger.events)
+
+        def has_judge(self) -> bool:
+            return any(
+                getattr(getattr(a, "manifest", None), "role", None) == "judge" for a in self.conductor.scenario.agents
+            )
+
+        def force_verdict(self) -> bool:
+            return self.conductor.force_verdict() is not None
 
         def reset(self, seed: str) -> None:
             self.conductor.reset(seed or self.conductor.scenario.default_seed)
@@ -382,7 +400,10 @@ def render_show_html(
 
     feed = render_feed(vm, mind_reader=mind_reader)
     meters = render_meters(vm)
-    verdict = render_verdict(vm)
+    # The sober ruling (banner) and its cheerful counterpart (champion celebration) share
+    # the verdict pane; render_winner is "" unless the run crowned someone, so no-winner
+    # scenarios get the banner alone.
+    verdict = render_verdict(vm) + render_winner(vm)
     return (
         _fishbowl(stage, role=f"fb-stage fb-{layout}"),
         _fishbowl(feed, role="fb-feed"),
@@ -643,6 +664,7 @@ def _wire(
     play_btn = _h(show_handles, "play", "play_btn")
     step_btn = _h(show_handles, "step", "step_btn", "next", "advance", "fwd_btn")
     back_btn = _h(show_handles, "rewind", "back", "to_start", "first", "back_btn")
+    judge_btn = _h(show_handles, "judge_btn", "start_judging", "judge_now", "judge")
     speed_radio = _h(show_handles, "speed", "speed_radio")
     layout_radio = _h(show_handles, "layout", "layout_radio")
     mind_toggle = _h(show_handles, "mind_reader", "read_minds", "minds")
@@ -883,6 +905,39 @@ def _wire(
             outputs=[k_state, *show_outs, *_tail_outs],
         )
 
+    # ── ⚖ Start judging → silence the cast, the judge rules on the whole ledger ──
+    # The curtain call: stop autoplay (the halt-tail kills the timer), drain the cast's
+    # pending turns, and have the judge read every event of the run and land a verdict +
+    # winner.  Renders the verdict pane on success; a cast with no judge halts visibly so
+    # the click is never silent.  Returns (k, *show_outs, *halt-tail).
+    def start_judging(session, layout, mind_reader):
+        if session is None:
+            out = _render_at(None, 0, layout=layout, mind_reader=mind_reader)
+            return (0, *_pad_values(out, show_outs), *_halt_tail())
+        try:
+            ruled = session.force_verdict()
+        except BudgetExceeded as exc:
+            # A judge that itself trips a bound still halts visibly rather than crashing.
+            reason = getattr(exc, "reason", None) or str(exc)
+            panes = _stopped_panes(session, session.head, layout=layout, mind_reader=mind_reader, reason=reason)
+            return (session.head, *panes, *_halt_tail())
+        k = session.head
+        if ruled or session.has_verdict():
+            out = _render_at(session, k, layout=layout, mind_reader=mind_reader)
+            return (k, *_pad_values(out, show_outs), *_halt_tail())
+        # No judge in this cast — surface that instead of stopping silently.
+        panes = _stopped_panes(
+            session, k, layout=layout, mind_reader=mind_reader, reason="no judge in this cast to rule"
+        )
+        return (k, *panes, *_halt_tail())
+
+    if judge_btn is not None and show_outs:
+        judge_btn.click(
+            start_judging,
+            inputs=[session_state, layout_state, mind_reader_state],
+            outputs=[k_state, *show_outs, *_tail_outs],
+        )
+
     # ── scrubber / ⏮ → pure prefix view (no stepping) ───────────────────────────
     def scrub_to(session, k, layout, mind_reader):
         kk = int(k or 0)
@@ -916,11 +971,26 @@ def _wire(
     def on_tick(session, k, layout, mind_reader, tick_count):
         cap = session.autoplay_tick_cap if session is not None else _MAX_AUTO_TICKS
         new_k, new_ticks, stop_reason = advance_one_tick(session, k, tick_count, max_auto_ticks=cap)
-        if stop_reason is not None:
-            panes = _stopped_panes(session, new_k, layout=layout, mind_reader=mind_reader, reason=stop_reason)
-            return (new_k, *panes, *_halt_tail(), new_ticks)
-        out = _render_at(session, new_k, layout=layout, mind_reader=mind_reader)
-        return (new_k, *_pad_values(out, show_outs), *_run_tail(), new_ticks)
+        if stop_reason is None:
+            out = _render_at(session, new_k, layout=layout, mind_reader=mind_reader)
+            return (new_k, *_pad_values(out, show_outs), *_run_tail(), new_ticks)
+        # The cast's run is over (budget/turn cap, a reached verdict, or replay end). If a
+        # judge can still rule and hasn't, bring it on — the limit is the curtain call, so
+        # the show ends on a verdict + winner rather than a silent STOPPED banner.
+        live = session is not None and not getattr(session, "replay", False)
+        if live and not session.has_verdict() and session.has_judge():
+            try:
+                session.force_verdict()
+            except BudgetExceeded:
+                pass  # a judge that trips its own bound falls through to the banner below
+        new_k = session.head if session is not None else new_k
+        if session is not None and session.has_verdict():
+            # Render the ruling itself (the verdict pane), timer halted.
+            out = _render_at(session, new_k, layout=layout, mind_reader=mind_reader)
+            return (new_k, *_pad_values(out, show_outs), *_halt_tail(), new_ticks)
+        # No judge to rule (or a replay reaching its end): halt visibly with the banner.
+        panes = _stopped_panes(session, new_k, layout=layout, mind_reader=mind_reader, reason=stop_reason)
+        return (new_k, *panes, *_halt_tail(), new_ticks)
 
     if timer is not None and show_outs:
         timer.tick(
