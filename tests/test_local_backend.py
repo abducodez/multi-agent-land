@@ -185,6 +185,30 @@ def test_parent_loader_never_initialises_cuda():
     assert ".cuda(" not in code
 
 
+def test_parent_loader_fully_materialises_weights_no_meta_tensors():
+    import ast
+    import inspect
+
+    from src.models import local_provider
+
+    # Regression guard for the ZeroGPU crash "Cannot copy out of meta tensor; no data!" on
+    # model.to("cuda"): transformers 5.x's meta-init load leaves a tied/"missing" head (e.g.
+    # Qwen2.5's lm_head, tied to embed_tokens) on the meta device. The parent loader must
+    # force full CPU materialisation and re-tie the head so nothing is left on meta for the
+    # in-fork device move to choke on (transformers#41038/#30703). Check the executable body
+    # with the docstring stripped (the docstring explains the fix in prose, naming the same
+    # kwarg), so we count the real calls, not the explanation.
+    fn = ast.parse(inspect.getsource(local_provider._ensure_loaded)).body[0]
+    if ast.get_docstring(fn):
+        fn.body = fn.body[1:]
+    code = ast.unparse(fn)
+    # both from_pretrained branches (dtype= and the legacy torch_dtype= fallback) opt out of
+    # the selective meta-init load…
+    assert code.count("low_cpu_mem_usage=False") == 2
+    # …and the head is explicitly re-tied to the materialised embeddings.
+    assert "tie_weights()" in code
+
+
 def test_gpu_transfer_lives_inside_the_spaces_gpu_function():
     from pathlib import Path
 

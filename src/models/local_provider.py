@@ -62,6 +62,16 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
     these CPU weights, so it pays a device copy, not a disk reload. ``dtype="auto"`` lets
     transformers pick the weights' native precision (fallback to the legacy ``torch_dtype``
     kwarg name on older transformers).
+
+    ``low_cpu_mem_usage=False`` + an explicit :meth:`tie_weights` fully **materialize** the
+    model on CPU — no parameter is left on the ``meta`` device. transformers 5.x's
+    memory-efficient (meta-init) load leaves a tied/"missing" weight like a model's tied
+    ``lm_head.weight`` on ``meta`` (the checkpoint stores it only once, on the input
+    embeddings), and the later ``model.to("cuda")`` in :func:`_generate` then fails with
+    *"Cannot copy out of meta tensor; no data!"* (transformers#41038/#30703). Forcing the
+    classic full-instantiation path and re-tying the head keeps the in-fork move a plain
+    host→device copy. The tradeoff is ~2× model size in peak host RAM at load — fine for the
+    small catalogue models; the large opt-in alternates already brush ADR-0033's ceiling.
     """
     if repo_id in _LOADED:
         return _LOADED[repo_id]
@@ -69,9 +79,16 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
 
     tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=trust_remote_code)
     try:
-        model = AutoModelForCausalLM.from_pretrained(repo_id, dtype="auto", trust_remote_code=trust_remote_code)
+        model = AutoModelForCausalLM.from_pretrained(
+            repo_id, dtype="auto", low_cpu_mem_usage=False, trust_remote_code=trust_remote_code
+        )
     except TypeError:  # pragma: no cover - older transformers use the torch_dtype kwarg name
-        model = AutoModelForCausalLM.from_pretrained(repo_id, torch_dtype="auto", trust_remote_code=trust_remote_code)
+        model = AutoModelForCausalLM.from_pretrained(
+            repo_id, torch_dtype="auto", low_cpu_mem_usage=False, trust_remote_code=trust_remote_code
+        )
+    # Re-tie the output head to the (materialized) input embeddings so no parameter is left
+    # on the meta device for the later .to("cuda") to choke on (see docstring).
+    model.tie_weights()
     model.eval()
     _LOADED[repo_id] = (tokenizer, model)
     return _LOADED[repo_id]
