@@ -16,6 +16,16 @@ jobs:
           fetch-depth: 0
           lfs: true
           
+      - name: Convert binaries to LFS for HF
+        # HF Spaces rejects raw binary blobs in plain git (they must live in LFS/Xet).
+        # We rewrite history *in the CI checkout only* so GitHub history stays untouched;
+        # the force-push below carries the LFS-migrated tree to the Space.
+        run: |
+          git lfs install
+          git config user.email "ci@build-small-hackathon"
+          git config user.name "HF Sync"
+          git lfs migrate import --yes --include="*.png,*.jpg,*.jpeg,*.gif,*.webp,*.mp4,*.mov,*.pdf" --include-ref=refs/heads/main
+
       - name: Push to HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
