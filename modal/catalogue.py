@@ -162,7 +162,7 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
         # Hybrid Mamba-2 + MoE: ~31B total params in BF16 (~62GB), ~3B active per
         # token. Needs an 80GB card — an alternate strong model, not a tier default.
         params_b=31,
-        gpu="H200:1",
+        gpu="A100",
         max_model_len=32768,
         trust_remote_code=True,
         gated=True,
@@ -281,7 +281,7 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         # MoE: ~25B total params (~4B active) with a small vision encoder. Gated.
         profile="strong",
         params_b=26,
-        gpu="H200:1",
+        gpu="A100",
         max_model_len=32768,
         gated=True,
         reasoning_parser="gemma4",
