@@ -14,7 +14,7 @@
 name = "mal-modal-serving"
 version = "0.1.0"
 description = "Serverless OpenAI-compatible small-model endpoints for Multi-Agent Land."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
   "modal>=1.4.3",
   "openai>=1.40.0",

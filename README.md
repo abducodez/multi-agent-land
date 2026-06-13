@@ -1,3 +1,15 @@
+---
+title: Multi-Agent Land
+emoji: 🌲
+colorFrom: green
+colorTo: indigo
+sdk: gradio
+sdk_version: "6.16.0"
+python_version: "3.10"
+app_file: app.py
+pinned: true
+---
+
 # Multi-Agent Land
 
 Hackathon project for the **Thousand Token Wood** trail: a small-model, multi-agent

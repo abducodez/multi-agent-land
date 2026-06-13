@@ -1145,10 +1145,24 @@ def _build_archive_drawer(*, scenario_handle, session_id_box, refs: dict, tabs, 
 # ── dev server port (ported from the original root app.py) ──────────────────────
 
 
+def on_spaces() -> bool:
+    """True when running inside a Hugging Face Space (incl. ZeroGPU).
+
+    HF injects ``SPACE_ID`` into every Space container; nothing else sets it."""
+    return bool(os.getenv("SPACE_ID"))
+
+
 def dev_server_port() -> int:
-    configured = os.getenv("GRADIO_SERVER_PORT")
+    # The platform's reverse proxy only reaches the app on the port it forwards to, so
+    # an explicit ``GRADIO_SERVER_PORT``/``PORT`` from the environment MUST win over the
+    # dev-range scanner below.  On HF Spaces the proxy forwards to 7860 but only sets
+    # ``GRADIO_SERVER_NAME`` (not the port) — without this, the scanner picks 7960 and
+    # the Space builds "successfully" yet is permanently unreachable (the bug this fixes).
+    configured = os.getenv("GRADIO_SERVER_PORT") or os.getenv("PORT")
     if configured:
         return int(configured)
+    if on_spaces():
+        return 7860  # HF Spaces' fixed forward port; never scan a range it can't see.
     for port in range(7960, 8060):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
@@ -1180,7 +1194,16 @@ def launch(**overrides):
 
     The single entry point the root shim and ``uv run app.py`` call; keeps the
     no-API-key offline behaviour (the deterministic stub drives the cast)."""
-    kwargs = {"server_port": dev_server_port(), **_launch_kwargs(), **overrides}
+    kwargs = {"server_port": dev_server_port(), **_launch_kwargs()}
+    if on_spaces():
+        # Bind every interface so HF's proxy can reach us (defensive — HF also sets
+        # GRADIO_SERVER_NAME), and drop Gradio 6's SSR Node proxy: on ZeroGPU it spawns
+        # a second (Node) process and a +1 internal port purely to pre-render the first
+        # paint.  This live, stream-driven theater gets ~nothing from SSR, so disabling
+        # it trims cold-start time and memory on the resource-capped Space.
+        kwargs.setdefault("server_name", "0.0.0.0")
+        kwargs.setdefault("ssr_mode", False)
+    kwargs.update(overrides)
     return demo.launch(**kwargs)
 
 

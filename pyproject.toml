@@ -2,9 +2,12 @@
 name = "multi-agent-land"
 version = "0.1.0"
 description = "Small-model multi-agent Gradio experience for Thousand Token Wood."
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
-  "gradio>=4.44.0",
+  # The HF Spaces builder installs gradio[oauth,mcp]; carrying the same extras here makes
+  # our lockfile resolve under the same constraints (notably the mcp extra's pydantic ceiling),
+  # so requirements.txt can't drift into a version the Space rejects.
+  "gradio[oauth,mcp]>=4.44.0",
   "pydantic>=2.8.0",
   "python-dotenv>=1.0.1",
   "openai>=1.40.0",
@@ -30,6 +33,10 @@ dependencies = [
   "mcp>=1.0",
   "mem0ai>=0.1",
   "sentence-transformers>=3.0",
+  # torch ships transitively via sentence-transformers; pin it into the ZeroGPU-supported
+  # range (HF ZeroGPU accepts 2.8.0–2.11.0) so the HF Space build doesn't try to install
+  # an unsupported wheel. Upper bound, not exact, so the resolver can still pick per-Python.
+  "torch>=2.8,<2.12",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +47,7 @@ dev = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py310"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
