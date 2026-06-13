@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from src.models import hf_catalogue, modal_catalogue
+from src.models import hf_catalogue, llamacpp_catalogue, modal_catalogue
 
 # Separator between a backend prefix and the backend-local key. A raw HF repo id can
 # contain ``/`` but never a leading ``<backend>:`` prefix, so a single split is safe.
@@ -54,6 +54,12 @@ _BACKENDS: dict[str, Backend] = {
         label="Hugging Face",
         blurb="serverless Inference Providers — many small models, just a token",
         catalogue=hf_catalogue,
+    ),
+    "llamacpp": Backend(
+        key="llamacpp",
+        label="llama.cpp",
+        blurb="local GGUF models you run yourself — llama-server, GPU when present",
+        catalogue=llamacpp_catalogue,
     ),
 }
 

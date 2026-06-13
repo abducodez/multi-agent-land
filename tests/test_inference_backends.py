@@ -38,10 +38,12 @@ def test_entries_are_tagged_and_qualified():
     assert modal_keys == {e["key"] for e in modal_catalogue.entries()}
     assert all(k.startswith("hf:") for k in hf_keys)
     assert modal_keys.isdisjoint(hf_keys)
-    # The unqualified call returns both backends' models, each tagged with its backend.
+    # The unqualified call returns every backend's models, each tagged with its backend.
     everything = inference.entries()
-    assert {e["backend"] for e in everything} == {"modal", "hf"}
-    assert len(everything) == len(modal_keys) + len(hf_keys)
+    assert {"modal", "hf"} <= {e["backend"] for e in everything}
+    assert len(everything) == len(inference.entries("modal")) + len(inference.entries("hf")) + len(
+        inference.entries("llamacpp")
+    )
 
 
 def test_entry_by_key_round_trips_both_backends():

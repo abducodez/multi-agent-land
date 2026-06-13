@@ -77,6 +77,38 @@ Profiles map to the OpenAI-compatible vLLM endpoints served on Modal
 The LiteLLM model string for an OpenAI-compatible custom endpoint is
 `openai/<served_model_id>` with `api_base` pointing at the endpoint's `/v1` URL.
 
+### Backends: Modal · Hugging Face · llama.cpp
+
+A *backend* is just a catalogue + a binding rule, unified behind one registry
+(`src/models/inference.py`, ADR-0024). Models are named by a **backend-qualified
+key** `"<backend>:<raw>"`; a bare key means Modal, so all existing config keeps
+working. Three backends ship today:
+
+| Backend | Prefix | Where it runs | Opt-in |
+|---|---|---|---|
+| Modal | *(bare)* | vLLM endpoints you deploy on Modal GPUs | `MODAL_WORKSPACE` / `MODAL_LLM_BASE_URL` |
+| Hugging Face | `hf:` | serverless Inference Providers router | `HF_TOKEN` |
+| llama.cpp | `llamacpp:` | **local** GGUF via `llama-server`, GPU when present | `LLAMACPP_BASE_URL` |
+
+The llama.cpp backend (ADR-0032) runs a cast fully on your own machine. Launch a
+model and export the URL it prints:
+
+```bash
+uv run python -m src.models.llamacpp_server nemotron-3-nano-4b   # GPU auto-detected
+export LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
+```
+
+The launcher detects an accelerator — Apple Metal on macOS, NVIDIA CUDA via
+`nvidia-smi`, else CPU — and offloads every layer to the GPU (`-ngl 999`) when one
+is present. `llama-server` downloads the GGUF on first run (`-hf`) and serves it
+under `--alias <key>`, so the engine binds to a stable id (`openai/<key>`) through
+the same LiteLLM transport. Bind a tier to a local model with a qualified key:
+
+```yaml
+profiles:
+  tiny: { endpoint: "llamacpp:nemotron-3-nano-4b", temperature: 0.7, max_tokens: 192 }
+```
+
 ### Real cost → Governor
 
 LiteLLM prices each call (`response._hidden_params["response_cost"]`, falling back
@@ -150,6 +182,9 @@ everything on the big model.
 - `src/core/registry.py` — `Registry.from_world()` (a UI/LLM-composed run on the same path)
 - `src/models/litellm_provider.py` — `LiteLLMProvider` (live transport, real cost)
 - `src/models/modal_catalogue.py` — engine view of the catalogue (key → binding)
+- `src/models/inference.py` — unified backend registry (Modal · HF · llama.cpp); qualified keys
+- `src/models/llamacpp_catalogue.py` — local GGUF catalogue (key → binding)
+- `src/models/llamacpp_server.py` — `llama-server` launcher: GPU detection + command building
 - `src/core/manifest.py` — `resolve_model()` (env → catalogue default)
 - `src/core/registry.py` — `build_router()`, `_resolve_model_endpoints()`, `_expand_env()`
 - `src/models/provider.py` — `ModelProvider.last_usage`, `estimate_tokens()`
