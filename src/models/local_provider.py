@@ -14,16 +14,34 @@ one decorated ``_generate`` covers every flavour:
   * **Dedicated GPU / local CUDA** — the decorator is a passthrough; the model runs on
     the persistent GPU.
 
-**Where the weights load vs. where CUDA is touched.** ZeroGPU grants a real GPU *only*
-for the duration of a ``@spaces.GPU`` call (each call forks a worker); the parent process
-never gets one, and any low-level CUDA init outside such a call — including a lazy
-``.to("cuda")`` at request time, which ZeroGPU's startup hook does not capture — trips the
-fork guard and kills the process. So the split is: :meth:`complete` warms a module-level
-**CPU** cache in the parent first (lazily, on first use — never at app boot, never on
-CUDA), and the decorated ``_generate`` moves those weights onto the GPU **inside the
-granted window** and runs the forward pass. The forked worker inherits the parent's CPU
-weights, so it pays a host→device copy, not a disk reload; on a dedicated GPU the cached
-module simply stays resident across calls (the move is a no-op after the first).
+**Two phases, split across the ZeroGPU fork.** ZeroGPU grants a real GPU *only* for the
+duration of a ``@spaces.GPU`` call (each call runs in a forked worker); the parent process
+never gets one, and any low-level CUDA init outside such a call kills the process. So the
+work is split:
+
+  * **Parent — download only, never CUDA** (:func:`_ensure_downloaded`): fetch the repo's
+    weights to the on-disk HF cache with ``snapshot_download``. This pays the network cost
+    once, in the resilient parent, so the short GPU window never spends its budget pulling
+    gigabytes. It deliberately does **not** materialise the model in host RAM — a cast of
+    four 8–12B models would otherwise pin ~60GB of parent RAM for the whole show.
+  * **Worker — load straight onto the GPU** (:func:`_ensure_loaded_on_device`): inside the
+    granted window, ``from_pretrained(device_map={"": 0}, local_files_only=True)`` lets
+    transformers + accelerate **materialise and place** every weight, tied head, and
+    non-persistent buffer directly on the device in one atomic step, then caches the
+    device-resident model per repo (a reused worker — and any dedicated GPU — keeps it
+    resident across calls).
+
+**Why ``device_map`` and not a manual ``.to("cuda")``.** transformers 5.x always builds the
+model on the ``meta`` device and streams the checkpoint onto the target. A bare
+``from_pretrained(...).to("cuda")`` leaves a model whose non-persistent buffers (e.g. a
+rotary ``inv_freq``) or a tied/"missing" head can still sit on ``meta``, and the later
+``.to("cuda")`` then dies with *"Cannot copy out of meta tensor; no data!"*
+(transformers#41038/#30703) — and ``low_cpu_mem_usage`` no longer changes this (5.x drops
+the kwarg outright). Handing transformers the device via ``device_map`` is the supported
+path: ``_move_missing_keys_from_meta_to_device`` places the buffers and missing keys on the
+mapped device and ``initialize_weights``/``tie_weights`` run there, so **nothing is ever
+left on meta** and there is no fragile post-hoc move. This needs ``accelerate`` (a declared
+dep); the kwarg-only fallbacks keep older transformers working.
 
 Heavy imports (``torch`` / ``transformers``) are lazy — confined to the functions that
 need them — so importing this module never initialises CUDA (which would trip ZeroGPU's
@@ -43,11 +61,16 @@ from src import observability as obs
 from src.models.openai_compat import OpenAICompatProvider
 from src.models.provider import ModelProvider, estimate_tokens, model_error
 
-# Loaded models, keyed by repo id: ``repo_id -> (tokenizer, model)``. Populated in the
-# *parent* process by :func:`_ensure_loaded` so each forked ``@spaces.GPU`` call inherits
-# the weights instead of reloading them (see the module docstring). Module-level so the
-# cache survives across provider instances and across ticks of a show.
+# Device-resident models, keyed by repo id: ``repo_id -> (tokenizer, model)``. Populated in
+# the forked ``@spaces.GPU`` worker by :func:`_ensure_loaded_on_device`, so a reused worker
+# (and any dedicated GPU) keeps the model resident across calls. Module-level so the cache
+# survives across provider instances and across ticks of a show.
 _LOADED: dict[str, tuple] = {}
+
+# Repo ids whose weights have been fetched to the on-disk HF cache by :func:`_ensure_downloaded`
+# in the *parent*. A set, not a model cache — the parent holds no weights in RAM (see the
+# module docstring); it only records "this repo is on disk" so we skip the network re-check.
+_DOWNLOADED: set[str] = set()
 
 
 def _always_true(*_args, **_kwargs) -> bool:
@@ -78,48 +101,63 @@ def _ensure_transformers_v4_symbols() -> None:
                 setattr(mod, name, _always_true)
 
 
-def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
-    """Load (once, cached) the tokenizer + model for *repo_id* **on CPU**.
+def _ensure_downloaded(repo_id: str, trust_remote_code: bool) -> None:
+    """Fetch *repo_id*'s files to the on-disk HF cache **in the parent**, without CUDA.
 
-    Called from :meth:`LocalTransformersProvider.complete` in the parent process to warm
-    the weights in host RAM. It deliberately **never touches CUDA**: under ZeroGPU the
-    parent process gets no GPU, and any low-level CUDA init outside a ``@spaces.GPU`` call
-    (a lazy ``.to("cuda")`` at request time is not captured by ZeroGPU's startup hook)
-    trips the fork guard and kills the process. The CPU→GPU transfer happens inside the
-    decorated :func:`_generate`, where a real GPU is granted; the forked worker inherits
-    these CPU weights, so it pays a device copy, not a disk reload. ``dtype="auto"`` lets
-    transformers pick the weights' native precision (fallback to the legacy ``torch_dtype``
-    kwarg name on older transformers).
+    Called from :meth:`LocalTransformersProvider.complete` in the parent process. It pulls
+    the weights (and, for ``trust_remote_code`` repos, the modelling ``.py`` files) over the
+    network *once*, so the later ``@spaces.GPU`` window — where the GPU budget is scarce —
+    loads from a warm local cache instead of downloading. It deliberately **never touches
+    CUDA** (under ZeroGPU the parent gets no GPU) and **never materialises the model** in
+    host RAM: a multi-model cast would otherwise pin tens of GB of parent RAM for the whole
+    show. Cached via :data:`_DOWNLOADED` so repeated turns skip the network revision check.
 
-    ``low_cpu_mem_usage=False`` + an explicit :meth:`tie_weights` fully **materialize** the
-    model on CPU — no parameter is left on the ``meta`` device. transformers 5.x's
-    memory-efficient (meta-init) load leaves a tied/"missing" weight like a model's tied
-    ``lm_head.weight`` on ``meta`` (the checkpoint stores it only once, on the input
-    embeddings), and the later ``model.to("cuda")`` in :func:`_generate` then fails with
-    *"Cannot copy out of meta tensor; no data!"* (transformers#41038/#30703). Forcing the
-    classic full-instantiation path and re-tying the head keeps the in-fork move a plain
-    host→device copy. The tradeoff is ~2× model size in peak host RAM at load — fine for the
-    small catalogue models; the large opt-in alternates already brush ADR-0033's ceiling.
+    Errors propagate to :meth:`complete`, which turns them into the resilient failure
+    sentinel — and crucially we never spend a GPU window on a model whose weights are
+    missing.
+    """
+    if repo_id in _DOWNLOADED:
+        return
+    from huggingface_hub import snapshot_download
+
+    # Honour the same gate transformers does (HF_TOKEN for gated repos like Aya); the Space
+    # sets it in the environment. snapshot_download is a no-op-ish revision check once cached.
+    snapshot_download(repo_id)
+    _DOWNLOADED.add(repo_id)
+
+
+def _ensure_loaded_on_device(repo_id: str, trust_remote_code: bool) -> tuple:
+    """Load (once, cached) the tokenizer + model **directly onto the GPU** for *repo_id*.
+
+    Runs inside the decorated :func:`_generate`, where ZeroGPU has granted a real device.
+    ``device_map={"": 0}`` hands transformers the placement so it **materialises and places**
+    every weight, tied head and non-persistent buffer on the device in one step — the
+    supported path that leaves nothing on the ``meta`` device for a later move to choke on
+    (see the module docstring). ``local_files_only=True`` keeps the GPU window off the
+    network: the parent already fetched the repo (:func:`_ensure_downloaded`), so a missing
+    file fails fast here rather than burning the budget on a download. ``dtype="auto"`` keeps
+    the checkpoint's native precision (falling back to the legacy ``torch_dtype`` kwarg name
+    on older transformers).
+
+    Off a GPU (a misconfigured call — :func:`_generate` is normally gated behind a device)
+    it degrades to a plain CPU load so the provider still answers rather than crashing.
     """
     if repo_id in _LOADED:
         return _LOADED[repo_id]
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     # Back-fill v4-era symbols removed in transformers 5.x before any trust_remote_code
     # modelling file is imported (tokenizer or model), or it crashes at import time.
     _ensure_transformers_v4_symbols()
-    tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=trust_remote_code)
+    tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=trust_remote_code, local_files_only=True)
+    # device_map places the model on the granted GPU; CPU is the degenerate off-GPU fallback.
+    device_map = {"": 0} if torch.cuda.is_available() else {"": "cpu"}
+    load_kwargs = dict(device_map=device_map, trust_remote_code=trust_remote_code, local_files_only=True)
     try:
-        model = AutoModelForCausalLM.from_pretrained(
-            repo_id, dtype="auto", low_cpu_mem_usage=False, trust_remote_code=trust_remote_code
-        )
+        model = AutoModelForCausalLM.from_pretrained(repo_id, dtype="auto", **load_kwargs)
     except TypeError:  # pragma: no cover - older transformers use the torch_dtype kwarg name
-        model = AutoModelForCausalLM.from_pretrained(
-            repo_id, torch_dtype="auto", low_cpu_mem_usage=False, trust_remote_code=trust_remote_code
-        )
-    # Re-tie the output head to the (materialized) input embeddings so no parameter is left
-    # on the meta device for the later .to("cuda") to choke on (see docstring).
-    model.tie_weights()
+        model = AutoModelForCausalLM.from_pretrained(repo_id, torch_dtype="auto", **load_kwargs)
     model.eval()
     _LOADED[repo_id] = (tokenizer, model)
     return _LOADED[repo_id]
@@ -128,11 +166,13 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
 def _gpu_duration(repo_id, trust_remote_code, use_cache, system, prompt, max_new_tokens, temperature, top_p) -> int:
     """Dynamic ``@spaces.GPU`` duration (seconds) for one generation.
 
-    Scales with the token budget and stays short so the Space keeps high queue priority on
-    ZeroGPU (shorter declared durations are prioritised). The weights are already warm in
-    the parent, so this only needs to cover the forward pass, not a model load.
+    Scales with the token budget and stays bounded so the Space keeps reasonable queue
+    priority on ZeroGPU (shorter declared durations are prioritised). The base covers a cold
+    device load: the first call for a model in a freshly forked worker materialises the
+    weights onto the GPU (from the parent-warmed disk cache), and that must finish inside the
+    granted window. Subsequent calls hit the resident cache and use only the forward-pass tail.
     """
-    return min(120, 20 + int(max_new_tokens) // 4)
+    return min(120, 60 + int(max_new_tokens) // 4)
 
 
 @spaces.GPU(duration=_gpu_duration)
@@ -140,18 +180,14 @@ def _generate(repo_id, trust_remote_code, use_cache, system, prompt, max_new_tok
     """Run one chat completion on the GPU; return ``(text, prompt_tokens, completion_tokens)``.
 
     Module-level and decorated so ZeroGPU registers it and grants a GPU for the call. The
-    model weights are fetched from the parent-warmed CPU cache (a hit — never a disk reload
-    here) and moved onto the device **inside this GPU window** — the only place ZeroGPU
-    permits CUDA init. On ZeroGPU the forked worker inherits CPU weights and pays one
-    device copy per call; on a dedicated GPU the cached module is already resident after
-    the first call, so the move is a no-op. Input tensors are built and placed on the same
-    device.
+    model is loaded straight onto the device via :func:`_ensure_loaded_on_device` (cached
+    per repo — a disk→device materialise on first use, a no-op on later calls), so the
+    forward pass runs entirely on the granted GPU with no post-hoc device move. Input tensors
+    are built and placed on the model's own device.
     """
     import torch
 
-    tokenizer, model = _ensure_loaded(repo_id, trust_remote_code)
-    if torch.cuda.is_available():
-        model = model.to("cuda")
+    tokenizer, model = _ensure_loaded_on_device(repo_id, trust_remote_code)
     device = next(model.parameters()).device
     messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
     # return_dict=True yields a BatchEncoding (input_ids + attention_mask). This is the
@@ -207,10 +243,9 @@ class LocalTransformersProvider(ModelProvider):
         }
         with obs.span("llm.call", **span_attrs):
             try:
-                # Warm the weights in the PARENT first so the forked @spaces.GPU call
-                # inherits them (see module docstring); this is a cache hit after the
-                # first use of this model in the process.
-                _ensure_loaded(self.model, self._trust_remote_code())
+                # Fetch the weights to disk in the PARENT (no CUDA, no RAM materialise) so the
+                # forked @spaces.GPU call below loads from a warm cache (see module docstring).
+                _ensure_downloaded(self.model, self._trust_remote_code())
                 system = OpenAICompatProvider._system_for_role(role)
                 text, prompt_tokens, completion_tokens = _generate(
                     self.model,

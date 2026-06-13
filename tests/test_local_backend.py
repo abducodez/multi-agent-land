@@ -174,53 +174,57 @@ def test_provider_resolves_use_cache_from_catalogue():
 # ── ZeroGPU contract: CUDA only inside @spaces.GPU, never in the parent ───────────────
 # Regression guard for the production crash "Low-level CUDA init (torch._C._cuda_init)
 # reached … ZeroGPU's emulation did not intercept": the parent process gets no GPU, so any
-# CUDA placement outside the @spaces.GPU window (a lazy .to("cuda") at request time) kills
-# the worker. The forward pass can only be exercised with a GPU + weights (integration),
-# so we pin the *structural* invariant — where CUDA may be touched — by source contract.
+# CUDA placement (or a model load that places onto a device) outside the @spaces.GPU window
+# kills the worker. The forward pass can only be exercised with a GPU + weights
+# (integration), so we pin the *structural* invariant — where CUDA may be touched, and how
+# the model reaches the device — by source contract.
 
 
-def test_parent_loader_never_initialises_cuda():
+def test_parent_warm_only_downloads_never_loads_or_initialises_cuda():
     import ast
     import inspect
 
     from src.models import local_provider
 
-    # _ensure_loaded runs in the parent (warm CPU cache, inherited by the fork). It must
-    # not perform any CUDA operation — placement happens later, inside the decorated
-    # function. Check the executable body with the docstring stripped (the docstring
-    # explains the invariant in prose, so it legitimately mentions CUDA); the dangerous
-    # ops are the device move and any torch.cuda.* call.
-    fn = ast.parse(inspect.getsource(local_provider._ensure_loaded)).body[0]
+    # _ensure_downloaded runs in the parent. It must only fetch weights to disk — never touch
+    # CUDA, and never materialise the model in RAM (a multi-model cast would pin tens of GB).
+    # Check the executable body with the docstring stripped (the docstring explains the
+    # invariant in prose, so it legitimately mentions CUDA/RAM); the banned ops are device
+    # moves, torch.cuda.* and any model instantiation.
+    fn = ast.parse(inspect.getsource(local_provider._ensure_downloaded)).body[0]
     if ast.get_docstring(fn):
         fn.body = fn.body[1:]
     code = ast.unparse(fn)
+    assert 'to("cuda")' not in code and "torch.cuda" not in code and ".cuda(" not in code
+    # No weight materialisation in the parent — only the on-disk fetch.
+    assert "from_pretrained" not in code and "AutoModel" not in code
+    assert "snapshot_download" in code
+
+
+def test_worker_loads_onto_device_via_device_map_no_meta_prone_move():
+    import ast
+    import inspect
+
+    from src.models import local_provider
+
+    # Regression guard for the ZeroGPU crash "Cannot copy out of meta tensor; no data!".
+    # transformers 5.x always builds on the meta device and streams the checkpoint onto the
+    # target; a bare from_pretrained(...).to("cuda") can leave a non-persistent buffer (e.g.
+    # rotary inv_freq) or a tied/"missing" head on meta, and the move then dies
+    # (transformers#41038/#30703). low_cpu_mem_usage no longer changes this (5.x drops the
+    # kwarg). The fix: hand transformers the device via device_map so it materialises AND
+    # places everything on-device in one step — no fragile post-hoc .to("cuda").
+    fn = ast.parse(inspect.getsource(local_provider._ensure_loaded_on_device)).body[0]
+    if ast.get_docstring(fn):
+        fn.body = fn.body[1:]
+    code = ast.unparse(fn)
+    # The supported placement path is used…
+    assert "device_map" in code
+    # …the GPU window never re-downloads (the parent already fetched the weights)…
+    assert "local_files_only=True" in code
+    # …and the meta-prone manual move / dead kwarg are gone.
     assert 'to("cuda")' not in code
-    assert "torch.cuda" not in code
-    assert ".cuda(" not in code
-
-
-def test_parent_loader_fully_materialises_weights_no_meta_tensors():
-    import ast
-    import inspect
-
-    from src.models import local_provider
-
-    # Regression guard for the ZeroGPU crash "Cannot copy out of meta tensor; no data!" on
-    # model.to("cuda"): transformers 5.x's meta-init load leaves a tied/"missing" head (e.g.
-    # Qwen2.5's lm_head, tied to embed_tokens) on the meta device. The parent loader must
-    # force full CPU materialisation and re-tie the head so nothing is left on meta for the
-    # in-fork device move to choke on (transformers#41038/#30703). Check the executable body
-    # with the docstring stripped (the docstring explains the fix in prose, naming the same
-    # kwarg), so we count the real calls, not the explanation.
-    fn = ast.parse(inspect.getsource(local_provider._ensure_loaded)).body[0]
-    if ast.get_docstring(fn):
-        fn.body = fn.body[1:]
-    code = ast.unparse(fn)
-    # both from_pretrained branches (dtype= and the legacy torch_dtype= fallback) opt out of
-    # the selective meta-init load…
-    assert code.count("low_cpu_mem_usage=False") == 2
-    # …and the head is explicitly re-tied to the materialised embeddings.
-    assert "tie_weights()" in code
+    assert "low_cpu_mem_usage" not in code
 
 
 def test_v4_compat_shim_backfills_removed_remote_code_predicates():
@@ -237,13 +241,13 @@ def test_v4_compat_shim_backfills_removed_remote_code_predicates():
     for name in local_provider._REMOVED_TORCH_PREDICATES:
         fn = getattr(import_utils, name)
         assert fn() is True
-    # And _ensure_loaded runs the shim before touching any remote code.
+    # And the device loader runs the shim before touching any remote code.
     import inspect
 
-    assert "_ensure_transformers_v4_symbols()" in inspect.getsource(local_provider._ensure_loaded)
+    assert "_ensure_transformers_v4_symbols()" in inspect.getsource(local_provider._ensure_loaded_on_device)
 
 
-def test_gpu_transfer_lives_inside_the_spaces_gpu_function():
+def test_device_placement_lives_inside_the_spaces_gpu_function():
     from pathlib import Path
 
     from src.models import local_provider
@@ -251,10 +255,15 @@ def test_gpu_transfer_lives_inside_the_spaces_gpu_function():
     # _generate is wrapped by @spaces.GPU, so read the module source and isolate its block.
     module_src = Path(local_provider.__file__).read_text()
     gen_block = module_src.split("def _generate(", 1)[1].split("\ndef ", 1)[0]
-    # The CPU→GPU move is here (the one place ZeroGPU grants a device)…
-    assert '.to("cuda")' in gen_block
+    # The model reaches the device here (the one place ZeroGPU grants one) via the on-device
+    # loader — never via a parent-side load…
+    assert "_ensure_loaded_on_device(" in gen_block
     # …and the function carries the decorator the platform registers.
     assert "@spaces.GPU" in module_src.split("def _generate(", 1)[0].rsplit("\n\n", 1)[-1]
+    # The parent path (complete) warms the on-disk cache only — it must not load on-device.
+    complete_block = module_src.split("def complete(", 1)[1].split("\n    def ", 1)[0]
+    assert "_ensure_downloaded(" in complete_block
+    assert "_ensure_loaded_on_device(" not in complete_block
 
 
 def test_generate_unpacks_batchencoding_never_passes_a_positional_dict():

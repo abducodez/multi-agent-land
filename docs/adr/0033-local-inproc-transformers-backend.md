@@ -31,8 +31,9 @@ bonus-quest badge (which required a real llama.cpp runtime in the cast). This is
 deliberate tradeoff: ZeroGPU compatibility and hardware-agnosticism are higher-value than
 one badge.
 
-No new Python dependencies are needed: `torch` and `transformers` already ship
-transitively via `sentence-transformers`.
+`torch` and `transformers` already ship transitively via `sentence-transformers`.
+(See the 2026-06-14 amendment below: `accelerate` was subsequently added to make
+on-device loading robust — the only new dependency this backend required.)
 
 ## Decision
 
@@ -56,15 +57,19 @@ duration. On a dedicated GPU or local CUDA box the decorator is a no-op (effect-
 passthrough), so the same code path is a persistent in-process provider on those
 environments. No environment-specific branching in the provider.
 
-**3. Parent-process model cache, lazy on first use.** The official ZeroGPU guidance is to
-load model weights at module level (import time) so forked `@spaces.GPU` calls inherit
-them via copy-on-write. We deviate deliberately: weights are loaded lazily on the first
-`complete()` call and cached in a module-level `_LOADED` dict. This avoids loading unused
-models at app boot and keeps the no-API-key stub fast. `torch` and `transformers` imports
-are also lazy (never at module import) to prevent CUDA initialisation before the fork and
-to avoid tripping the PyTorch multiprocessing fork guard. The tradeoff is that the *first*
-call to a model incurs load time; all subsequent calls within the process inherit the
-cache for free, matching the per-call efficiency of the module-level-load pattern.
+**3. Two-phase load split across the fork (amended 2026-06-14 — see note).** Work is
+split by where a GPU exists: the **parent** fetches weights to the on-disk HF cache
+(`_ensure_downloaded` → `snapshot_download`, lazily on first `complete()`, recorded in a
+`_DOWNLOADED` set) without ever touching CUDA or materialising the model in RAM; the
+**worker** then loads the model *directly onto the granted GPU* inside the `@spaces.GPU`
+call (`_ensure_loaded_on_device` → `from_pretrained(device_map={"": 0}, local_files_only=True)`)
+and caches the device-resident model per repo in `_LOADED`. `torch` and `transformers`
+imports stay lazy (never at module import) to prevent CUDA initialisation before the fork
+and avoid tripping the PyTorch multiprocessing fork guard. The first call to a model pays a
+disk→device materialise inside the window; later calls in a reused worker (and every call
+on a dedicated GPU) hit the resident cache. *(Original decision: load weights on CPU in the
+parent and let each forked call inherit them via copy-on-write, then `.to("cuda")` inside
+the window. That crashed — see the amendment.)*
 
 **4. Capability gate and per-run opt-in.** `local_catalogue.has_credentials()` gates on
 one of three signals: `SPACES_ZERO_GPU` is set in env (HF ZeroGPU Space), or
@@ -128,8 +133,38 @@ backend stays inactive and the deterministic stub owns the no-config demo path.
   back-fills the `is_torch_fx_available`/`is_torch_sdpa_available` symbols transformers 5.x
   removed; and the NVIDIA tier uses Nemotron-**Mini** (a plain transformer), not the
   Nemotron-Nano hybrid, which hard-requires the mamba-ssm kernel that will not build on a Space.
-- Tests live in `tests/test_local_backend.py`. All 676 tests pass; the capability-gate
-  logic is fully covered without a GPU or torch import in test processes.
+- Tests live in `tests/test_local_backend.py`. The full suite passes; the capability-gate
+  logic — and the source-level placement contracts (CUDA only inside `@spaces.GPU`,
+  device load via `device_map`, no meta-prone manual move) — are covered without a GPU or
+  torch import in test processes.
+
+## Amendment (2026-06-14): on-device loading via `device_map` + `accelerate`
+
+The original sub-decision 3 — load weights on **CPU in the parent**, let each forked
+`@spaces.GPU` call inherit them, then `model.to("cuda")` inside the window — crashed in
+production with `NotImplementedError: Cannot copy out of meta tensor; no data!`.
+
+**Root cause.** transformers 5.x always instantiates a model on the `meta` device and
+streams the checkpoint onto the target device; `low_cpu_mem_usage` no longer alters this
+(5.x silently drops the kwarg, so the earlier "force full materialisation" fix was a
+no-op). After such a load, non-persistent buffers (e.g. a rotary `inv_freq`) and any
+tied/"missing" head can still sit on `meta`. A subsequent `.to("cuda")` then tries to copy
+those data-less tensors and dies (transformers#41038/#30703). The crash surfaced on
+`CohereLabs/aya-expanse-8b` but is architecture-general; the `spaces` worker also *reuses*
+across models, so a worker forked for one model loads a later one itself, outside the
+parent's materialisation.
+
+**Correction.** Hand transformers the device at load time via
+`from_pretrained(device_map={"": 0}, …)` so it **materialises and places** every weight,
+buffer and tied head on the device in one supported step (`_move_missing_keys_from_meta_to_device`
++ `initialize_weights`/`tie_weights` run on-device) — nothing is left on `meta`, and the
+fragile post-hoc `.to("cuda")` is removed entirely. This requires **`accelerate`** (now a
+declared dependency — the dependency claim in Context is amended accordingly). The load
+moves into the `@spaces.GPU` window (the only place a GPU exists), so the parent's role
+shrinks to a CUDA-free `snapshot_download`; `local_files_only=True` keeps the window off
+the network. A side benefit: the parent no longer pins every cast model in host RAM
+(previously ~60 GB for a four-model 8–12B cast), and the `@spaces.GPU` duration base is
+raised to cover a cold on-device load.
 
 ## Related ADRs
 

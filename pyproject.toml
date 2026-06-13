@@ -42,6 +42,11 @@ dependencies = [
   # package provides that decorator; it is effect-free off ZeroGPU, so it ships always
   # without touching the offline/local path. See src/ui/fishbowl/app.py (gpu_selftest).
   "spaces>=0.50.4",
+  # transformers 5.x requires `accelerate` to load a model straight onto a device via
+  # `device_map`. The local backend (ADR-0033) needs that supported path: a bare
+  # `from_pretrained(...).to("cuda")` can leave meta tensors and crash ("Cannot copy out of
+  # meta tensor"). Only used on the live local-GPU path; the offline stub never imports it.
+  "accelerate>=1.14.0",
 ]
 
 [project.optional-dependencies]
