@@ -248,6 +248,122 @@ def test_guesser_lists_a_prior_wrong_guess_so_it_is_not_repeated():
     assert "ALREADY GUESSED" in prompt and "ACORN" in prompt
 
 
+# ── the judge: a correct guess wins and ends the game (the live bug) ──────────────
+
+_WORD_FOR_JUDGE = "COMPASS"
+
+
+def _sprout_judge():
+    """A fully-wired sprout-judge (competition + cast bound), as the registry assembles it."""
+    scenario = Registry.from_dir().build_scenario(
+        "twenty-sprouts", router=ModelRouter(offline=True, specs={}), tools=default_tool_registry()
+    )
+    return next(a for a in scenario.agents if a.name == "sprout-judge")
+
+
+def _round(*lines: tuple[str, str]) -> tuple[Event, ...]:
+    """A ledger of (actor, text) lines; the keeper stamps the dealt word on its events."""
+    events: list[Event] = [
+        Event(run_id=_RUN, turn=0, kind="run.started", actor="conductor", payload={"seed": "s", "goal": "g"})
+    ]
+    for i, (actor, text) in enumerate(lines, start=1):
+        payload = {"text": text}
+        if actor == "secret-keeper":
+            payload["secret"] = _WORD_FOR_JUDGE  # ground truth rides the keeper's events
+        events.append(Event(run_id=_RUN, turn=i, kind="agent.spoke", actor=actor, payload=payload))
+    return tuple(events)
+
+
+def _rule(judge, events, turn, *, forced=False):
+    from src.core.projections import rebuild_stage
+
+    judge._forced = forced
+    try:
+        return judge.act(_RUN, turn, rebuild_stage(events), events)
+    finally:
+        judge._forced = False
+
+
+def test_judge_ends_the_game_the_moment_the_word_is_guessed():
+    # Mid-game (turn 3 — not the tick finale, not forced): a correct guess must produce a
+    # guesser verdict immediately, not wait for the timeout.
+    events = _round(
+        ("sprout-guesser", "Is it man-made?"), ("secret-keeper", "Yes."), ("sprout-guesser", "My guess is: compass.")
+    )
+    verdict = _rule(_sprout_judge(), events, turn=3)
+    assert verdict is not None and verdict.kind == "judge.verdict"
+    assert verdict.payload["winner"] == "sprout-guesser"
+    assert verdict.payload["correct"] is True
+
+
+def test_judge_abstains_while_the_word_is_unguessed():
+    # Woken by every line, but with no correct guess and no finale, it must NOT rule —
+    # else its first firing would end the show on turn 1.
+    events = _round(("sprout-guesser", "Is it loud?"), ("secret-keeper", "No."))
+    assert _rule(_sprout_judge(), events, turn=3) is None
+
+
+def test_judge_rules_for_the_keeper_at_the_finale_when_unguessed():
+    events = _round(("sprout-guesser", "Is it loud?"), ("secret-keeper", "No."))
+    verdict = _rule(_sprout_judge(), events, turn=20)  # tick_every finale
+    assert verdict is not None
+    assert verdict.payload["winner"] == "secret-keeper"
+    assert verdict.payload["correct"] is False
+
+
+def test_a_correct_guess_buried_under_later_guesses_still_wins():
+    # The exact live bug: compass (correct) was named, then more guesses followed; the judge
+    # checked only the last line and scored a miss. It must scan ALL guesses.
+    events = _round(
+        ("sprout-guesser", "My guess is: compass."),
+        ("secret-keeper", "Yes."),
+        ("sprout-guesser", "My guess is: map."),
+        ("secret-keeper", "No."),
+        ("sprout-guesser", "My guess is: anemometer."),
+    )
+    verdict = _rule(_sprout_judge(), events, turn=20)
+    assert verdict.payload["winner"] == "sprout-guesser"
+    assert verdict.payload["correct"] is True
+    assert verdict.payload["reveal"][0]["role"] == "GUESSED"
+
+
+def test_judge_never_emits_a_second_verdict():
+    events = _round(("sprout-guesser", "My guess is: compass."), ("secret-keeper", "Yes.")) + (
+        Event(
+            run_id=_RUN,
+            turn=3,
+            kind="judge.verdict",
+            actor="sprout-judge",
+            payload={"text": "Verdict: done", "winner": "sprout-guesser"},
+        ),
+    )
+    assert _rule(_sprout_judge(), events, turn=4) is None  # already ruled → abstain
+
+
+def test_subscribed_judge_abstains_through_the_conductor_until_the_finale():
+    # End to end on the deterministic stub (which never guesses the word): the judge is woken
+    # by every spoken line yet must NOT rule until its tick finale — proving the abstain
+    # (act → None) path is honoured by the conductor and no premature verdict ends the show.
+    registry = Registry.from_dir()
+    scenario = registry.build_scenario(
+        "twenty-sprouts", router=ModelRouter(offline=True, specs={}), tools=default_tool_registry()
+    )
+    conductor = Conductor(scenario, governor=registry.governor_for("twenty-sprouts"))
+    conductor.reset(scenario.default_seed)
+    verdict_turn = None
+    for _ in range(120):
+        try:
+            conductor.step_one()
+        except BudgetExceeded:
+            break
+        v = next((e for e in conductor.ledger.events_for_run(conductor.run_id) if e.kind == "judge.verdict"), None)
+        if v:
+            verdict_turn = v.turn
+            break
+    assert verdict_turn is not None, "a verdict must still land at the finale"
+    assert verdict_turn >= 20, f"verdict landed early at turn {verdict_turn} — the judge didn't abstain"
+
+
 # ── the whole game: secret to the audience, never to the cast ────────────────────
 
 

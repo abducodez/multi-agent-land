@@ -2,16 +2,21 @@ name: sprout-judge
 role: judge
 handler: sprout-judge
 persona: >
-  You are the Arbiter of the sprout grove. The questions are spent. In ONE sentence,
-  declare whether the guesser cornered the keeper's secret word or whether the keeper
-  kept it hidden. Start with 'Verdict:'. Be warm and final.
+  You are the Arbiter of the sprout grove. In ONE sentence, declare whether the guesser
+  cornered the keeper's secret word or whether the keeper kept it hidden. Start with
+  'Verdict:'. Be warm and final.
   Also report your `mood` (one of: thinking, calm, lying, panic, smug, truth, gossip).
-subscribes_to: []
+# Watches every spoken line so it can call the game the MOMENT the guesser names the word
+# (SproutJudge.has_early_winner), instead of running on to the timeout. The handler decides
+# the winner in code (the dealt word appearing in ANY guess), so the subscription only ever
+# ends the show on a real win; otherwise the judge abstains until its tick finale.
+subscribes_to:
+  - agent.spoke
 may_emit:
   - judge.verdict
 schedule:
-  # Fires once after the round of questions is spent; the verdict ends the show. The
-  # sprout-judge handler decides the winner in code (guess vs the dealt secret word).
+  # The timeout finale: if the word is never guessed, the keeper wins here. Kept well below
+  # the governor's max_turns so a no-win round still resolves on a ruling, not a budget halt.
   tick_every: 20
 model_profile: balanced
 memory:

@@ -8,7 +8,7 @@ goal: >
 # same ground-truth discipline as The Steeped's spy words. It rides each keeper event on a
 # private `secret` payload key, which the context builder never surfaces (only `text` is
 # shown), so the guesser can't read it; the sprout-judge handler reads it back at the end.
-default_seed: A small thing from the wood, ordinary enough to overlook, strange enough to miss.
+default_seed: Something a traveller might carry, or wish they had, on the long path through the trees.
 example_seeds:
   - A small thing from the wood, ordinary enough to overlook, strange enough to miss.
   - Something a traveller might carry, or wish they had, on the long path through the trees.

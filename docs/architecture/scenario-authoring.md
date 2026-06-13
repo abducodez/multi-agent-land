@@ -460,6 +460,16 @@ only post to the shared log, and the seam shows.
   lands before the budget trips. The autoplay backstop is derived from that budget
   (`max_total_calls`), so a long show is never cut off early. Thousand Token Wood is
   the worked example: judge `tick_every: 16`, `max_turns: 20`.
+- **End a game the moment it's won, not at the timeout.** A scheduled-only judge always
+  runs to its tick, even if the contest was decided ten turns earlier — and because it
+  reads only the *latest* lines, a win that scrolled off (Twenty Sprouts guessed "compass"
+  then kept guessing) can be scored a miss. For a scenario with a code-known win condition,
+  make the judge a `JudgedCompetition` subclass, give it `subscribes_to: [agent.spoke]`,
+  and override `has_early_winner(recent_events)` to return `True` once the game is decided
+  (scanning *all* of the run, not just the head). The judge then rules the instant the win
+  lands and **abstains** (its `act()` returns `None` — a real "not yet," not an error) on
+  every other wake, while keeping its `tick_every` as the no-win timeout. `SproutJudge` is
+  the worked example.
 - **`tick_every: 0` means *every* turn**, not *never*. Use `subscribes_to: []` +
   no `tick_every` for an agent that should fire only on subscription.
 - **`max_consecutive` does nothing** today (review #9) — don't rely on it to throttle

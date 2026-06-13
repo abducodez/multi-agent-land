@@ -18,10 +18,10 @@ Steeped uses for the spy words.  Three handlers shape the round:
     questions once it has learned enough, and as a hard stop before the round runs out —
     so it stops repeating itself and actually names the word instead of interrogating forever.
   * :class:`SproutJudge` (a :class:`~src.agents.competition.JudgedCompetition`) reads
-    the dealt word off the ledger and the guesser's last line, decides the winner in
-    code (the guess contains the word → guesser; else the keeper kept its secret),
-    and attaches a ``reveal`` unmasking the word.  Deterministic win condition,
-    reproducible offline.
+    the dealt word off the ledger and ends the game the moment it appears in *any* guess
+    (not just the latest) — the guesser wins; if the word is never named, the keeper wins
+    at the timeout. It subscribes to ``agent.spoke`` so the win is called immediately, and
+    attaches a ``reveal`` unmasking the word.  Deterministic win condition, reproducible offline.
 
 The word also rides into the *view model* (``src/ui/fishbowl/view_model.py``) so the
 human audience can watch the keeper hold it — visible on stage, never in any agent's
@@ -356,14 +356,22 @@ class SproutGuesser(ManifestAgent):
 
 @register_handler("sprout-judge")
 class SproutJudge(JudgedCompetition):
-    """Decides Twenty Sprouts in code: did the guesser's last line contain the word?
+    """Decides Twenty Sprouts in code, and ends the game the moment the word is guessed.
 
-    Reads the dealt word off the keeper's latest event and the guesser's most recent
-    line, both from the ledger.  Winner is the **agent name** (``sprout-guesser`` if
-    the word appears in their guess, else ``secret-keeper``), so the run's
-    winner→model attribution maps straight through the cast.  Attaches a ``reveal``
-    unmasking the word for the verdict banner.
+    The guesser wins if the dealt word appears in **any** of its guesses — not only its
+    last line. (The earlier version checked the most recent line, so a correct "compass"
+    followed by more guessing was scored a miss — the bug this fixes.) Because the handler
+    subscribes to ``agent.spoke``, :meth:`has_early_winner` lets it rule the instant a
+    correct guess lands rather than waiting for the timeout tick; if the word is never
+    named, it rules for the keeper at the finale. Winner is the **agent name**
+    (``sprout-guesser`` / ``secret-keeper``) so winner→model attribution maps through the
+    cast, and a ``reveal`` unmasks the word for the verdict banner.
     """
+
+    def has_early_winner(self, recent_events: tuple[Event, ...]) -> bool:
+        # End the show as soon as the guesser names the word — don't run on to the timeout.
+        secret = self._dealt_word(recent_events)
+        return bool(secret) and self._guessed(recent_events, secret)
 
     def decide_winner(
         self,
@@ -374,8 +382,7 @@ class SproutJudge(JudgedCompetition):
         secret = self._dealt_word(recent_events)
         if not secret:
             return super().decide_winner(event, candidates, recent_events)
-        guess = self._last_guess(recent_events)
-        caught = secret.lower() in set(_WORD.findall(guess.lower()))
+        caught = self._guessed(recent_events, secret)
         event.payload["correct"] = caught
         event.payload["reveal"] = [
             {
@@ -395,8 +402,16 @@ class SproutJudge(JudgedCompetition):
         return ""
 
     @staticmethod
-    def _last_guess(recent_events: tuple[Event, ...]) -> str:
-        for e in reversed(recent_events):
-            if e.actor == _GUESSER_NAME and e.kind == "agent.spoke":
-                return str(e.payload.get("text", ""))
-        return ""
+    def _guessed(recent_events: tuple[Event, ...], secret: str) -> bool:
+        """True if the dealt word appears in ANY guesser line — a win sticks once made.
+
+        Scanning every guesser ``agent.spoke`` (not just the latest) is the fix for the
+        live bug where a correct guess was later buried under further guessing and the
+        round was wrongly scored a miss."""
+        needle = secret.lower()
+        return any(
+            e.actor == _GUESSER_NAME
+            and e.kind == "agent.spoke"
+            and needle in set(_WORD.findall(str(e.payload.get("text", "")).lower()))
+            for e in recent_events
+        )

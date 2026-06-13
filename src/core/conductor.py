@@ -357,7 +357,13 @@ class Conductor:
         obs.log("run.judging", run_id=self.run_id, turn=self.turn, judges=[getattr(j, "name", "") for j in judges])
         projection = self.projection
         for judge in judges:
-            self._run_agent(judge, projection, check_budget=False)
+            # The curtain call must produce a ruling: tell a reactive judge (one that
+            # otherwise abstains until its win condition) to rule unconditionally now.
+            judge._forced = True
+            try:
+                self._run_agent(judge, projection, check_budget=False)
+            finally:
+                judge._forced = False
         return next(
             (e for e in reversed(self.ledger.events_for_run(self.run_id)) if e.kind == "judge.verdict"),
             None,
@@ -418,6 +424,12 @@ class Conductor:
                 raise  # an intentional stop from the governor — never swallow it
             except Exception as exc:  # noqa: BLE001 — one agent's crash must not silence the cast
                 self._note_agent_error(agent, exc)
+                return
+            # An agent may ABSTAIN by returning None — it was invoked (e.g. a judge woken by
+            # every spoken line, watching for an end condition) but has nothing to emit this
+            # time. No event, no budget charge; the show simply continues. Distinct from an
+            # error: a deliberate "not yet," not a failed turn.
+            if event is None:
                 return
             usage = getattr(agent, "last_usage", {})
             tokens = int(usage.get("total_tokens", 0) or 0)

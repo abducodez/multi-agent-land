@@ -55,7 +55,13 @@ class JudgedCompetition(ManifestAgent):
         turn: int,
         projection: StageProjection,
         recent_events: tuple[Event, ...],
-    ) -> Event:
+    ) -> Event | None:
+        # A reactive judge (one that subscribes to the events that might end the game)
+        # abstains until either its win condition is met or the show reaches its finale —
+        # otherwise its first firing would rule on turn 1 and end the show (the "first
+        # verdict ends the show" trap). Returns None to abstain (no event, no budget cost).
+        if self._abstains(turn, recent_events):
+            return None
         event = super().act(run_id, turn, projection, recent_events)
         candidates = self._candidates(recent_events)
         if not candidates:
@@ -67,6 +73,38 @@ class JudgedCompetition(ManifestAgent):
             # judge overrides no-contest; a repaired offline winner supersedes the empty).
             event.payload.pop("no_contest", None)
         return event
+
+    # ── early termination (override ``has_early_winner`` to end a game the moment it's won) ──
+
+    def _abstains(self, turn: int, recent_events: tuple[Event, ...]) -> bool:
+        """Should this judge decline to rule on *this* invocation?
+
+        The default judge (no subscriptions) never abstains — it fires once, on its
+        scheduled tick or a forced curtain call, exactly as before. A *reactive* judge (one
+        with ``subscribes_to`` set, woken by every spoken line) instead waits: it rules only
+        when the game is already decided (:meth:`has_early_winner`), when its scheduled
+        finale tick lands, or when forced (``_forced``, set by ``Conductor.force_verdict``
+        for the curtain call / budget end). Either way it never rules twice — once a verdict
+        is on the ledger, every later invocation abstains."""
+        if any(e.kind == "judge.verdict" for e in recent_events):
+            return True  # already ruled — never emit a second verdict
+        if not self.manifest.subscribes_to:
+            return False  # a plain tick/forced judge always rules when invoked
+        if getattr(self, "_forced", False):
+            return False  # the curtain call must produce a ruling
+        tick = self.manifest.schedule.tick_every
+        if tick and turn % tick == 0:
+            return False  # the scheduled finale — rule now (timeout)
+        return not self.has_early_winner(recent_events)  # reactive: rule only once it's won
+
+    def has_early_winner(self, recent_events: tuple[Event, ...]) -> bool:
+        """True when the game is already decided and the judge should rule *now*.
+
+        Default ``False``: a generic judged scenario has no code-known early win, so it
+        rules only at its finale. A ground-truth scenario overrides this (Twenty Sprouts'
+        :class:`~src.agents.twenty_sprouts.SproutJudge` returns True the moment the secret
+        word is guessed) so the show ends on the win instead of running to the timeout."""
+        return False
 
     # ── decision (override for ground-truth judges) ──────────────────────────────
 
