@@ -71,9 +71,13 @@ def log_rows(level: str = "all", layer: str = "all", limit: int = 250) -> list[l
 # ── metrics (chart data) ────────────────────────────────────────────────────
 
 
-def kpi_markdown() -> str:
-    """A one-line headline of the key counters."""
-    c = obs.telemetry_store().counter_totals()
+def kpi_markdown(counters: dict | None = None) -> str:
+    """A one-line headline of the key counters.
+
+    Pass a pre-read ``counters`` snapshot (see :func:`snapshot`) to avoid re-locking the
+    store; omit it and one is fetched.
+    """
+    c = counters if counters is not None else obs.telemetry_store().counter_totals()
     calls = int(c.get("llm.calls", 0))
     tin, tout = int(c.get("llm.tokens.input", 0)), int(c.get("llm.tokens.output", 0))
     cost = c.get("llm.cost_usd", 0.0)
@@ -95,9 +99,9 @@ def _df(rows: list[dict], columns: list[str]):
     return pd.DataFrame(rows or [{c: None for c in columns}][:0], columns=columns)
 
 
-def calls_frame():
+def calls_frame(counters: dict | None = None):
     """Counts by metric (calls / tool calls / events / trips) for a bar chart."""
-    c = obs.telemetry_store().counter_totals()
+    c = counters if counters is not None else obs.telemetry_store().counter_totals()
     keep = {
         "llm.calls": "llm calls",
         "tool.calls": "tool calls",
@@ -108,9 +112,9 @@ def calls_frame():
     return _df(rows, ["metric", "count"])
 
 
-def tokens_frame():
+def tokens_frame(counters: dict | None = None):
     """Input vs output tokens for a bar chart."""
-    c = obs.telemetry_store().counter_totals()
+    c = counters if counters is not None else obs.telemetry_store().counter_totals()
     rows = [
         {"kind": "input", "tokens": float(c.get("llm.tokens.input", 0))},
         {"kind": "output", "tokens": float(c.get("llm.tokens.output", 0))},
@@ -118,9 +122,14 @@ def tokens_frame():
     return _df(rows, ["kind", "tokens"])
 
 
+#: Cap on how many latency observations the line chart plots — a rolling window that
+#: keeps both the store scan and the browser-side chart light on long runs.
+_LATENCY_POINTS = 300
+
+
 def latency_frame():
-    """Agent-turn latency observations over time (seq index → seconds, by agent)."""
-    points = obs.telemetry_store().metric_points("agent.turn.seconds")
+    """Agent-turn latency over time (rolling window: seq index → seconds, by agent)."""
+    points = obs.telemetry_store().metric_points("agent.turn.seconds", limit=_LATENCY_POINTS)
     rows = [
         {"n": i, "seconds": round(p.value, 4), "agent": str(p.labels.get("agent", "?"))} for i, p in enumerate(points)
     ]
@@ -132,26 +141,36 @@ def latency_frame():
 _PROMPT_KEYS = ("llm.prompt", "agent.prompt", "memory.query")
 _OUTPUT_KEYS = ("llm.completion", "memory.visible_count")
 
+#: How many traces the timeline shows at first, and how many more each "show more" adds.
+DEFAULT_TRACES = 8
+TRACE_PAGE = 8
+#: Span buffer slice scanned to assemble the timeline (≤ store capacity).
+_SPAN_SCAN = 3000
 
-def traces_html(limit_traces: int = 8) -> str:
-    """Recent spans grouped by trace, rendered as an indented timeline.
 
-    Each span shows name + duration + status; spans that carry a prompt or memory
-    (``llm.prompt`` / ``agent`` / ``memory.*`` attributes) expand to reveal exactly
-    what the agent sent and saw — the heart of the 'what did each agent do' view.
+def render_traces(limit_traces: int = DEFAULT_TRACES) -> tuple[str, int, int]:
+    """Recent spans grouped by trace, newest first; render the first ``limit_traces``.
+
+    Returns ``(html, shown, total)``. Each span shows name + duration + status; spans
+    that carry a prompt or memory (``llm.prompt`` / ``agent`` / ``memory.*`` attributes)
+    expand to reveal exactly what the agent sent and saw — the heart of the 'what did
+    each agent do' view. Only ``limit_traces`` traces are turned into HTML, so the
+    payload stays bounded while ``total`` lets the caller offer a "show more" control.
     """
-    spans = obs.telemetry_store().recent_spans(3000)
+    spans = obs.telemetry_store().recent_spans(_SPAN_SCAN)
     if not spans:
-        return "<div class='tele-empty'>No traces yet — run the show to populate the timeline.</div>"
+        return "<div class='tele-empty'>No traces yet — run the show to populate the timeline.</div>", 0, 0
 
     by_trace: dict[str, list] = {}
     for sp in spans:
         by_trace.setdefault(sp.trace_id, []).append(sp)
     # Most recent traces first (by max end time within the trace).
     ordered = sorted(by_trace.items(), key=lambda kv: max(s.end_ms for s in kv[1]), reverse=True)
+    total = len(ordered)
+    limit = max(0, int(limit_traces))
 
     out: list[str] = []
-    for trace_id, group in ordered[:limit_traces]:
+    for trace_id, group in ordered[:limit]:
         depth = _depth_map(group)
         root_dur = max(s.end_ms for s in group) - min(s.start_ms for s in group)
         out.append(
@@ -161,7 +180,12 @@ def traces_html(limit_traces: int = 8) -> str:
         for sp in sorted(group, key=lambda s: s.start_ms):
             out.append(_span_html(sp, depth.get(sp.span_id, 0)))
         out.append("</div>")
-    return "\n".join(out)
+    return "\n".join(out), min(limit, total), total
+
+
+def traces_html(limit_traces: int = DEFAULT_TRACES) -> str:
+    """The trace timeline HTML alone (no counts) — for callers that don't paginate."""
+    return render_traces(limit_traces)[0]
 
 
 def _depth_map(group: list) -> dict[str, int]:
@@ -208,6 +232,42 @@ def _span_html(sp, depth: int) -> str:
         )
     body = "".join(detail_bits)
     return head + (f"<div class='tele-span-body'>{body}</div>" if body else "") + "</div>"
+
+
+# ── panel orchestration ─────────────────────────────────────────────────────
+# One entry point the Telemetry tab drives: a single store read per repaint, plus a
+# cheap change signal so an idle auto-tick can skip the work entirely (see app.py).
+
+
+def revision() -> int:
+    """Cheap 'has anything been recorded since I last painted?' signal for the UI."""
+    return obs.telemetry_store().revision()
+
+
+def more_label(shown: int, total: int) -> str:
+    """Label for the 'show more traces' button given how many are shown vs. available."""
+    return f"↓ Show more traces · {shown}/{total}" if total > shown else f"All {total} traces shown"
+
+
+def snapshot(level: str = "all", layer: str = "all", trace_limit: int = DEFAULT_TRACES) -> dict:
+    """Every Telemetry output computed in one pass — one counter read, one span scan.
+
+    Centralising the reads here means the metric panels share a single
+    ``counter_totals()`` snapshot (instead of three separate locks) and the auto-refresh
+    can recompute the whole panel only when :func:`revision` says the store advanced.
+    """
+    counters = obs.telemetry_store().counter_totals()
+    traces, shown, total = render_traces(trace_limit)
+    return {
+        "kpi": kpi_markdown(counters),
+        "feed": log_rows(level, layer),
+        "calls": calls_frame(counters),
+        "tokens": tokens_frame(counters),
+        "latency": latency_frame(),
+        "traces": traces,
+        "trace_shown": shown,
+        "trace_total": total,
+    }
 
 
 TELEMETRY_CSS = """

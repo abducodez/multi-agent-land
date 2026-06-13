@@ -276,9 +276,12 @@ except Exception:  # pragma: no cover
 def build_telemetry() -> None:
     """The Telemetry tab: structured log feed + metric charts + per-trace timeline.
 
-    Reads live from the in-memory telemetry store (ADR-0024); a manual Refresh, a
-    3s auto-tick, and the filter dropdowns all repaint it. Clicking a span in the
-    timeline reveals the prompt + memory that agent saw.
+    Reads live from the in-memory telemetry store (ADR-0024). The 3s auto-tick is
+    *non-blocking and idle-cheap*: it gates on the store's revision and returns
+    ``gr.skip()`` (no recompute, no repaint, ``show_progress='hidden'`` so no overlay)
+    whenever nothing was recorded since the last paint. The filter dropdowns and ⟳
+    Refresh force a repaint; "show more traces" pages older traces into the timeline.
+    Clicking a span reveals the prompt + memory that agent saw.
     """
     try:
         from src.ui.fishbowl.render import telemetry as t
@@ -306,24 +309,62 @@ def build_telemetry() -> None:
         row_count=(12, "dynamic"),
         column_count=(5, "fixed"),
     )
-    traces = gr.HTML(t.traces_html())
+    _traces0, _shown0, _total0 = t.render_traces(t.DEFAULT_TRACES)
+    traces = gr.HTML(_traces0)
+    load_more = gr.Button(t.more_label(_shown0, _total0), interactive=_total0 > _shown0, size="sm")
+
+    # Per-user view state: the signature of the last paint (so an idle tick can skip the
+    # work) and how many traces the timeline currently shows ("show more" grows it).
+    sig_state = gr.State(None)
+    trace_limit_state = gr.State(t.DEFAULT_TRACES)
     timer = gr.Timer(3.0)
 
-    def _refresh(level, layer):
-        return (
-            t.kpi_markdown(),
-            t.log_rows(level, layer),
-            t.calls_frame(),
-            t.tokens_frame(),
-            t.latency_frame(),
-            t.traces_html(),
-        )
+    outs = [kpi, feed, calls_plot, tokens_plot, latency_plot, traces, load_more]
 
-    outs = [kpi, feed, calls_plot, tokens_plot, latency_plot, traces]
-    refresh.click(_refresh, [level_dd, layer_dd], outs)
-    timer.tick(_refresh, [level_dd, layer_dd], outs)
-    level_dd.change(_refresh, [level_dd, layer_dd], outs)
-    layer_dd.change(_refresh, [level_dd, layer_dd], outs)
+    def _values(level, layer, trace_limit):
+        """Recompute all panel outputs in one store pass (single counter read)."""
+        snap = t.snapshot(level, layer, trace_limit)
+        more = gr.update(
+            value=t.more_label(snap["trace_shown"], snap["trace_total"]),
+            interactive=snap["trace_total"] > snap["trace_shown"],
+        )
+        return (snap["kpi"], snap["feed"], snap["calls"], snap["tokens"], snap["latency"], snap["traces"], more)
+
+    def _sig(level, layer, trace_limit):
+        # Read the revision BEFORE rendering: if data lands mid-render the stored sig
+        # stays behind, so the next tick repaints to catch up (never a missed update).
+        return (t.revision(), level, layer, int(trace_limit))
+
+    def _tick(level, layer, trace_limit, last_sig):
+        """Auto-refresh: repaint only when the store advanced or a filter/limit changed."""
+        sig = _sig(level, layer, trace_limit)
+        if sig == last_sig:
+            return (gr.skip(),) * (len(outs) + 1)  # idle → leave every output (and sig) as-is
+        return _values(level, layer, trace_limit) + (sig,)
+
+    def _force(level, layer, trace_limit):
+        """Manual Refresh / filter change: always repaint with the current filters."""
+        sig = _sig(level, layer, trace_limit)
+        return _values(level, layer, trace_limit) + (sig,)
+
+    def _load_more(level, layer, trace_limit):
+        """Grow the timeline by one page and repaint (carries the new limit back to state)."""
+        new_limit = int(trace_limit) + t.TRACE_PAGE
+        sig = _sig(level, layer, new_limit)
+        return _values(level, layer, new_limit) + (sig, new_limit)
+
+    # Auto-tick is hidden (no progress overlay → no 3s flicker); user-driven actions show
+    # a minimal indicator so the click registers.
+    timer.tick(_tick, [level_dd, layer_dd, trace_limit_state, sig_state], outs + [sig_state], show_progress="hidden")
+    refresh.click(_force, [level_dd, layer_dd, trace_limit_state], outs + [sig_state], show_progress="minimal")
+    level_dd.change(_force, [level_dd, layer_dd, trace_limit_state], outs + [sig_state], show_progress="minimal")
+    layer_dd.change(_force, [level_dd, layer_dd, trace_limit_state], outs + [sig_state], show_progress="minimal")
+    load_more.click(
+        _load_more,
+        [level_dd, layer_dd, trace_limit_state],
+        outs + [sig_state, trace_limit_state],
+        show_progress="minimal",
+    )
 
 
 # ── scenario registry (assembled from config/, not hardcoded) ───────────────────

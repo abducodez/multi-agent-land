@@ -50,20 +50,26 @@ class TelemetryStore:
         self._spans: deque[SpanRecord] = deque(maxlen=capacity)
         self._metrics: deque[MetricPoint] = deque(maxlen=capacity * 4)
         self._counters: dict[tuple, float] = {}
+        # Monotonic ingest counter — a cheap "has anything changed since I last looked?"
+        # signal so the Telemetry tab can skip recomputing/repainting on an idle tick.
+        self._rev = 0
 
     # ── ingest ──────────────────────────────────────────────────────────────
 
     def add_log(self, record: dict) -> None:
         with self._lock:
             self._logs.append(record)
+            self._rev += 1
 
     def add_span(self, span: SpanRecord) -> None:
         with self._lock:
             self._spans.append(span)
+            self._rev += 1
 
     def add_metric(self, point: MetricPoint, *, counter: bool = False) -> None:
         with self._lock:
             self._metrics.append(point)
+            self._rev += 1
             if counter:
                 key = (point.name, tuple(sorted(point.labels.items())))
                 self._counters[key] = self._counters.get(key, 0.0) + point.value
@@ -78,10 +84,30 @@ class TelemetryStore:
         with self._lock:
             return list(self._spans)[-n:]
 
-    def metric_points(self, name: str | None = None) -> list[MetricPoint]:
+    def metric_points(self, name: str | None = None, limit: int | None = None) -> list[MetricPoint]:
+        """Recorded points, optionally filtered by ``name``.
+
+        With ``limit`` set, only the most recent ``limit`` matching points are returned
+        (still chronological) — this bounds both the scan and the chart payload for
+        high-frequency metrics like agent-turn latency, which would otherwise grow until
+        the buffer is full.
+        """
         with self._lock:
-            points = list(self._metrics)
-        return [p for p in points if name is None or p.name == name]
+            if limit is None:
+                return [p for p in self._metrics if name is None or p.name == name]
+            out: list[MetricPoint] = []
+            for p in reversed(self._metrics):  # newest-first, stop once we have `limit`
+                if name is None or p.name == name:
+                    out.append(p)
+                    if len(out) >= limit:
+                        break
+            out.reverse()
+            return out
+
+    def revision(self) -> int:
+        """Monotonic ingest counter — bumped on every log/span/metric and on ``clear``."""
+        with self._lock:
+            return self._rev
 
     def counter_totals(self) -> dict[str, float]:
         """Cumulative total per metric name, summed across label sets."""
@@ -102,6 +128,7 @@ class TelemetryStore:
             self._spans.clear()
             self._metrics.clear()
             self._counters.clear()
+            self._rev += 1  # a clear is a change too — let the UI repaint to empty
 
 
 def now_ts() -> float:
