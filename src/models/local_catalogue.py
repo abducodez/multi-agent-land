@@ -65,10 +65,14 @@ class LocalModel:
     ``transformers``). ``profile`` is the tier this model is the default casting for, or
     None for an alternate the cast can still pin explicitly. ``source`` is a friendly
     family/org label for the picker. ``trust_remote_code`` is forwarded to
-    ``from_pretrained`` for repos that ship custom modelling code (e.g. MiniCPM).
-    ``use_cache`` toggles the generation KV cache; set it False for a repo whose custom
-    modelling code mishandles transformers 5.x's cache API (e.g. MiniCPM4.1, whose v4-era
-    attention builds mismatched key/value lengths during incremental decode).
+    ``from_pretrained`` for repos that ship custom modelling code rather than a native
+    ``transformers`` architecture. ``use_cache`` toggles the generation KV cache; set it
+    False only for a repo whose custom modelling code mishandles transformers 5.x's cache
+    API. The current cast is entirely **native-arch** (no custom code), so both default —
+    they exist so a future ``trust_remote_code`` model can be added by appending one entry.
+    Note: the catalogue deliberately avoids the MiniCPM **4.x** custom-code models, whose
+    transformers ~4.56 modelling code mis-computes under this project's 5.x floor; the
+    OpenBMB lane uses **MiniCPM5** (native ``llama`` arch) instead.
     """
 
     repo_id: str
@@ -112,17 +116,20 @@ LOCAL_MODELS: tuple[LocalModel, ...] = (
         params_b=4.0,
         source="NVIDIA Nemotron",
     ),
-    # Fast tier — OpenBMB MiniCPM 4.1 8B. Ships v4-era custom modelling code
-    # (trust_remote_code), whose incremental-decode attention mishandles transformers 5.x's
-    # KV cache ("Key and Value must have the same sequence length"); use_cache=False forces
-    # a full-sequence forward each step, sidestepping the bug (slower, fine for short lines).
+    # Fast tier — OpenBMB MiniCPM5 1B. The MiniCPM **4.x** line (4.1-8B and friends) ships
+    # v4-era custom modelling code (trust_remote_code) authored for transformers ~4.56; under
+    # this project's transformers 5.x floor that code mis-computes — it crashes the 5.x KV cache
+    # ("Key and Value must have the same sequence length"), and even with the cache off it emits
+    # gibberish (its LongRoPE/attention diverge from 5.x; back-filling import symbols makes it
+    # load, not compute correctly). MiniCPM5 instead uses the **native llama architecture**
+    # (model_type="llama", authored for transformers 5.x), so the stock AutoModelForCausalLM
+    # loads it — no custom code, no v4 shim, correct output — and the OpenBMB lane keeps the
+    # MiniCPM brand. Smaller (1B) than the old 8B, but coherent and fast (true to the tier name).
     LocalModel(
-        repo_id="openbmb/MiniCPM4.1-8B",
+        repo_id="openbmb/MiniCPM5-1B",
         profile="fast",
-        params_b=8.0,
+        params_b=1.0,
         source="OpenBMB MiniCPM",
-        trust_remote_code=True,
-        use_cache=False,
     ),
     # Balanced tier — Cohere Labs Aya Expanse 8B (Command family, native transformers arch).
     # NOTE: this repo is *gated* — the Space's HF account must accept its licence and an

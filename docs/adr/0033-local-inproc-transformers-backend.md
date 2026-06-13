@@ -125,14 +125,20 @@ backend stays inactive and the deterministic stub owns the no-config demo path.
   `gpu_selftest` `@spaces.GPU` guard is retained — it detects ZeroGPU availability at
   startup and is unrelated to the inference path.
 - Each tier is tagged with a distinct sponsor model (NVIDIA Nemotron-Mini-4B-Instruct ·
-  OpenBMB MiniCPM4.1-8B · Cohere Aya-Expanse-8B · JetBrains Mellum2-12B-A2.5B-Instruct), so
+  OpenBMB MiniCPM5-1B · Cohere Aya-Expanse-8B · JetBrains Mellum2-12B-A2.5B-Instruct), so
   a cross-sponsor cast runs on the Space's own GPU. This trades ZeroGPU quota/RAM headroom
   (several multi-GB loads per show) for multi-track coverage; the `tiny` model is listed
   first so any untagged fallback lands on the cheapest tier. Notes: Aya is a **gated** repo
-  (needs licence acceptance + `HF_TOKEN`); MiniCPM ships v4-era custom code, so the provider
-  back-fills the `is_torch_fx_available`/`is_torch_sdpa_available` symbols transformers 5.x
-  removed; and the NVIDIA tier uses Nemotron-**Mini** (a plain transformer), not the
-  Nemotron-Nano hybrid, which hard-requires the mamba-ssm kernel that will not build on a Space.
+  (needs licence acceptance + `HF_TOKEN`); the **whole in-process cast is native-arch** (no
+  `trust_remote_code`) — the OpenBMB lane uses **MiniCPM5** (native `llama`, built for
+  transformers 5.x) because the MiniCPM **4.x** custom-code models (authored for
+  transformers ~4.56) mis-compute under the 5.x floor (KV-cache crash, then gibberish even
+  with the cache off); MiniCPM4.1-8B remains available via the **Modal** vLLM lane, where
+  its custom code runs under a pinned-compatible image. The NVIDIA tier uses
+  Nemotron-**Mini** (a plain transformer), not the Nemotron-Nano hybrid, which hard-requires
+  the mamba-ssm kernel that will not build on a Space. (The `is_torch_fx_available` /
+  `is_torch_sdpa_available` v4-symbol shim is retained as defensive infrastructure for any
+  future `trust_remote_code` model, though no current in-process model needs it.)
 - Tests live in `tests/test_local_backend.py`. The full suite passes; the capability-gate
   logic — and the source-level placement contracts (CUDA only inside `@spaces.GPU`,
   device load via `device_map`, no meta-prone manual move) — are covered without a GPU or

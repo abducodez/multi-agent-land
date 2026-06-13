@@ -37,20 +37,27 @@ def test_one_sponsor_model_per_tier_and_sizes_stay_small():
 
 def test_every_tier_resolves_to_its_sponsor_model():
     assert local_catalogue.default_key_for_profile("tiny") == "nvidia/Nemotron-Mini-4B-Instruct"
-    assert local_catalogue.default_key_for_profile("fast") == "openbmb/MiniCPM4.1-8B"
+    # OpenBMB lane uses MiniCPM5 (native llama arch) — the MiniCPM 4.x custom code mis-computes
+    # under the transformers 5.x floor (KV-cache crash / gibberish), so it is deliberately avoided.
+    assert local_catalogue.default_key_for_profile("fast") == "openbmb/MiniCPM5-1B"
     assert local_catalogue.default_key_for_profile("balanced") == "CohereLabs/aya-expanse-8b"
     assert local_catalogue.default_key_for_profile("strong") == "JetBrains/Mellum2-12B-A2.5B-Instruct"
     # the tiny model is listed first, so an untagged/unknown tier falls back to the cheapest.
     assert local_catalogue.LOCAL_MODELS[0].profile == "tiny"
 
 
-def test_model_by_key_carries_trust_remote_code():
-    # MiniCPM ships custom modelling code; the native-arch models (Nemotron-Mini, Aya) do
-    # not; an off-catalogue id is unknown.
-    assert local_catalogue.model_by_key("openbmb/MiniCPM4.1-8B").trust_remote_code is True
-    assert local_catalogue.model_by_key("nvidia/Nemotron-Mini-4B-Instruct").trust_remote_code is False
-    assert local_catalogue.model_by_key("CohereLabs/aya-expanse-8b").trust_remote_code is False
+def test_catalogue_cast_is_all_native_arch_and_field_still_plumbs_custom_code():
+    # The whole live cast loads with the stock AutoModelForCausalLM — no trust_remote_code,
+    # no custom-code-only KV-cache workaround — which is why output is correct under
+    # transformers 5.x (MiniCPM5 replaced the 4.x custom-code model for exactly this reason).
+    for m in local_catalogue.LOCAL_MODELS:
+        assert m.trust_remote_code is False, f"{m.repo_id} unexpectedly needs trust_remote_code"
+        assert m.use_cache is True, f"{m.repo_id} unexpectedly disables the KV cache"
+    assert local_catalogue.model_by_key("openbmb/MiniCPM5-1B").trust_remote_code is False
     assert local_catalogue.model_by_key("does/not-exist") is None
+    # The fields still plumb a non-default value, so a future custom-code model is one append away.
+    custom = local_catalogue.LocalModel(repo_id="acme/custom", trust_remote_code=True, use_cache=False)
+    assert custom.trust_remote_code is True and custom.use_cache is False
 
 
 def test_binding_is_a_bare_repo_id_with_no_endpoint():
@@ -157,16 +164,17 @@ def test_provider_reports_model_id_and_zeroed_usage_before_any_call():
 
 
 def test_provider_resolves_trust_remote_code_from_catalogue():
-    assert LocalTransformersProvider(model="openbmb/MiniCPM4.1-8B")._trust_remote_code() is True
+    # The cast is all native-arch, so every catalogue model resolves to False; an
+    # off-catalogue repo also defaults to the safe choice.
+    assert LocalTransformersProvider(model="openbmb/MiniCPM5-1B")._trust_remote_code() is False
     assert LocalTransformersProvider(model="CohereLabs/aya-expanse-8b")._trust_remote_code() is False
-    # An off-catalogue repo defaults to the safe choice.
     assert LocalTransformersProvider(model="some/random-repo")._trust_remote_code() is False
 
 
 def test_provider_resolves_use_cache_from_catalogue():
-    # MiniCPM disables the KV cache (its v4-era code mishandles transformers 5.x's cache);
-    # native-arch models keep it on, and an off-catalogue repo defaults to the cached path.
-    assert LocalTransformersProvider(model="openbmb/MiniCPM4.1-8B")._use_cache() is False
+    # Native-arch models keep the KV cache on (the fast path), and an off-catalogue repo
+    # defaults to the cached path; no model in the current cast disables it.
+    assert LocalTransformersProvider(model="openbmb/MiniCPM5-1B")._use_cache() is True
     assert LocalTransformersProvider(model="nvidia/Nemotron-Mini-4B-Instruct")._use_cache() is True
     assert LocalTransformersProvider(model="some/random-repo")._use_cache() is True
 

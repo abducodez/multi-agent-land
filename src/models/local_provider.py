@@ -220,7 +220,7 @@ def _generate(repo_id, trust_remote_code, use_cache, system, prompt, max_new_tok
 class LocalTransformersProvider(ModelProvider):
     """Serve one logical profile by running a ``transformers`` model on the host GPU.
 
-    ``model`` is the bare ``transformers`` repo id (e.g. ``"openbmb/MiniCPM4.1-8B"``) —
+    ``model`` is the bare ``transformers`` repo id (e.g. ``"openbmb/MiniCPM5-1B"``) —
     the same string :func:`src.models.local_catalogue.binding_for` returns. Decoding
     (``temperature`` / ``top_p`` / ``max_tokens``) comes from the router's per-profile
     spec. ``trust_remote_code`` is resolved from the catalogue for the repo (default
@@ -281,9 +281,9 @@ class LocalTransformersProvider(ModelProvider):
     def _use_cache(self) -> bool:
         """Whether to use the generation KV cache for this repo (from the catalogue).
 
-        Defaults to True (the fast path); the catalogue sets it False for a repo whose
-        custom modelling code mishandles transformers 5.x's cache API (e.g. MiniCPM4.1). An
-        off-catalogue id keeps the cache on — the ordinary, correct case.
+        Defaults to True (the fast path); the catalogue can set it False for a custom-code
+        repo whose attention mishandles transformers 5.x's cache API. The current cast is
+        all native-arch so none do; an off-catalogue id likewise keeps the cache on.
         """
         from src.models import local_catalogue
 

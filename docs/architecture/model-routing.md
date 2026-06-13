@@ -112,7 +112,7 @@ a single cast spans four sponsors at once (the multi-track strategy):
 | Key | Model | Tier | Notes |
 |---|---|---|---|
 | `local:nvidia/Nemotron-Mini-4B-Instruct` | Nemotron Mini 4B | **tiny** | NVIDIA lane; Tiny-Titan ≤4B band; plain Nemotron-4 transformer (native, no kernels) |
-| `local:openbmb/MiniCPM4.1-8B` | MiniCPM 4.1 8B | fast | OpenBMB lane; `trust_remote_code` (v4-symbol shim applied) |
+| `local:openbmb/MiniCPM5-1B` | MiniCPM5 1B | fast | OpenBMB lane; native `llama` arch (built for transformers 5.x). The MiniCPM **4.x** custom-code models mis-compute under the 5.x floor, so MiniCPM5 is used in-process instead |
 | `local:CohereLabs/aya-expanse-8b` | Aya Expanse 8B | balanced | Cohere lane; **gated repo** — needs licence acceptance + `HF_TOKEN` |
 | `local:JetBrains/Mellum2-12B-A2.5B-Instruct` | Mellum 2 (12B MoE, ~2.5B active) | strong | JetBrains lane; native `MellumConfig` (Instruct, not Base) |
 
