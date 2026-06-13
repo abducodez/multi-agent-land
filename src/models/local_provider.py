@@ -50,7 +50,7 @@ from src.models.provider import ModelProvider, estimate_tokens, model_error
 _LOADED: dict[str, tuple] = {}
 
 
-def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
+def _ensure_loaded(repo_id: str, trust_remote_code: bool, auto_class: str = "AutoModelForCausalLM") -> tuple:
     """Load (once, cached) the tokenizer + model for *repo_id* **on CPU**.
 
     Called from :meth:`LocalTransformersProvider.complete` in the parent process to warm
@@ -75,15 +75,19 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
     """
     if repo_id in _LOADED:
         return _LOADED[repo_id]
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    import transformers
+    from transformers import AutoTokenizer
 
+    # The auto-class is per-model (most are AutoModelForCausalLM; some cards call for another,
+    # e.g. Mellum's AutoModelForMultimodalLM) — resolve it by name off the transformers module.
+    model_cls = getattr(transformers, auto_class)
     tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=trust_remote_code)
     try:
-        model = AutoModelForCausalLM.from_pretrained(
+        model = model_cls.from_pretrained(
             repo_id, dtype="auto", low_cpu_mem_usage=False, trust_remote_code=trust_remote_code
         )
     except TypeError:  # pragma: no cover - older transformers use the torch_dtype kwarg name
-        model = AutoModelForCausalLM.from_pretrained(
+        model = model_cls.from_pretrained(
             repo_id, torch_dtype="auto", low_cpu_mem_usage=False, trust_remote_code=trust_remote_code
         )
     # Re-tie the output head to the (materialized) input embeddings so no parameter is left
@@ -94,7 +98,7 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
     return _LOADED[repo_id]
 
 
-def _gpu_duration(repo_id, trust_remote_code, system, prompt, max_new_tokens, temperature, top_p) -> int:
+def _gpu_duration(repo_id, trust_remote_code, auto_class, system, prompt, max_new_tokens, temperature, top_p) -> int:
     """Dynamic ``@spaces.GPU`` duration (seconds) for one generation.
 
     Scales with the token budget and stays short so the Space keeps high queue priority on
@@ -105,7 +109,7 @@ def _gpu_duration(repo_id, trust_remote_code, system, prompt, max_new_tokens, te
 
 
 @spaces.GPU(duration=_gpu_duration)
-def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temperature, top_p):
+def _generate(repo_id, trust_remote_code, auto_class, system, prompt, max_new_tokens, temperature, top_p):
     """Run one chat completion on the GPU; return ``(text, prompt_tokens, completion_tokens)``.
 
     Module-level and decorated so ZeroGPU registers it and grants a GPU for the call. The
@@ -118,7 +122,7 @@ def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temper
     """
     import torch
 
-    tokenizer, model = _ensure_loaded(repo_id, trust_remote_code)
+    tokenizer, model = _ensure_loaded(repo_id, trust_remote_code, auto_class)
     if torch.cuda.is_available():
         model = model.to("cuda")
     device = next(model.parameters()).device
@@ -151,7 +155,7 @@ def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temper
 class LocalTransformersProvider(ModelProvider):
     """Serve one logical profile by running a ``transformers`` model on the host GPU.
 
-    ``model`` is the bare ``transformers`` repo id (e.g. ``"Qwen/Qwen2.5-3B-Instruct"``) —
+    ``model`` is the bare ``transformers`` repo id (e.g. ``"openbmb/MiniCPM4.1-8B"``) —
     the same string :func:`src.models.local_catalogue.binding_for` returns. Decoding
     (``temperature`` / ``top_p`` / ``max_tokens``) comes from the router's per-profile
     spec. ``trust_remote_code`` is resolved from the catalogue for the repo (default
@@ -177,11 +181,12 @@ class LocalTransformersProvider(ModelProvider):
                 # Warm the weights in the PARENT first so the forked @spaces.GPU call
                 # inherits them (see module docstring); this is a cache hit after the
                 # first use of this model in the process.
-                _ensure_loaded(self.model, self._trust_remote_code())
+                _ensure_loaded(self.model, self._trust_remote_code(), self._auto_class())
                 system = OpenAICompatProvider._system_for_role(role)
                 text, prompt_tokens, completion_tokens = _generate(
                     self.model,
                     self._trust_remote_code(),
+                    self._auto_class(),
                     system,
                     prompt,
                     self.max_tokens,
@@ -208,6 +213,18 @@ class LocalTransformersProvider(ModelProvider):
 
         entry = local_catalogue.model_by_key(self.model)
         return bool(entry.trust_remote_code) if entry is not None else False
+
+    def _auto_class(self) -> str:
+        """The ``transformers`` auto-class to load this repo with (from the catalogue).
+
+        Most models load with ``AutoModelForCausalLM``; a few cards call for another (e.g.
+        JetBrains Mellum → ``AutoModelForMultimodalLM``). An off-catalogue id defaults to
+        ``AutoModelForCausalLM`` — the ordinary case for a hand-pinned chat model.
+        """
+        from src.models import local_catalogue
+
+        entry = local_catalogue.model_by_key(self.model)
+        return entry.auto_class if entry is not None else "AutoModelForCausalLM"
 
     def _record_usage(self, prompt_tokens: int, completion_tokens: int, prompt: str, text: str) -> None:
         # Generation returns exact token counts; fall back to an estimate only if a count

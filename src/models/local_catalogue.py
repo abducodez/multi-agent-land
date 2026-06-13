@@ -31,12 +31,12 @@ append one :class:`LocalModel`. Every model stays within the ≤32B "small minds
 the ``tiny`` default honours the Tiny-Titan ≤4B band.
 
 **Quota note (ZeroGPU only).** Free ZeroGPU grants ~5 minutes of GPU/day (2 for anonymous
-visitors), billed per ``@spaces.GPU`` call. A full multi-agent show makes many sequential
-calls, so the catalogue deliberately tags **one tiny model** as the only tier default:
-with no per-tier override the whole cast routes to it (see ``lab._default_model_key``),
-keeping a live show inside the daily budget. On a dedicated GPU there is no such cap, but
-the tiny default still keeps first-token latency low. Larger alternates are listed
-untagged — a cast can pin them, but they are never the silent default.
+visitors), billed per ``@spaces.GPU`` call. Each tier maps to a *different* sponsor model
+(see ``LOCAL_MODELS``), so a cross-sponsor cast loads several multi-GB models per show —
+heavy on that daily budget and on host RAM. A dedicated-GPU Space has no such cap; for a
+quota-light demo, pin the whole cast to the tiny default in the Lab (one model, low
+latency). The tiny model is listed first, so any untagged fallback (see
+``lab._default_model_key``) also lands on the cheapest tier.
 """
 
 from __future__ import annotations
@@ -65,7 +65,10 @@ class LocalModel:
     ``transformers``). ``profile`` is the tier this model is the default casting for, or
     None for an alternate the cast can still pin explicitly. ``source`` is a friendly
     family/org label for the picker. ``trust_remote_code`` is forwarded to
-    ``from_pretrained`` for repos that ship custom modelling code (e.g. MiniCPM).
+    ``from_pretrained`` for repos that ship custom modelling code (e.g. MiniCPM, Nemotron).
+    ``auto_class`` is the ``transformers`` auto-class the provider loads the repo with —
+    ``AutoModelForCausalLM`` for an ordinary LM, overridden where a model card calls for a
+    different one (e.g. JetBrains Mellum loads with ``AutoModelForMultimodalLM``).
     """
 
     repo_id: str
@@ -73,6 +76,7 @@ class LocalModel:
     params_b: float | None = None
     source: str = "Hugging Face"
     trust_remote_code: bool = False
+    auto_class: str = "AutoModelForCausalLM"
 
     @property
     def key(self) -> str:
@@ -84,36 +88,57 @@ class LocalModel:
         return self.repo_id
 
 
-# --- The catalogue: small transformers instruct models -------------------------------
-# One tiny model is tagged as the cast-wide default (low latency + ZeroGPU-quota-friendly,
-# see the module docstring); the rest are untagged alternates a cast can pin. Plain data:
-# swapping the default or adding a sponsor family is a one-line edit.
+# --- The catalogue: one sponsor model per tier ---------------------------------------
+# Each tier is tagged with a distinct sponsor family, so a single cast legitimately spans
+# four sponsors at once (NVIDIA · OpenBMB · Cohere · JetBrains) — the multi-track prize
+# strategy run on the Space's own GPU, no endpoint to deploy. Every model honours the ≤32B
+# "small minds" rule and the tiny default keeps the Tiny-Titan ≤4B band. Plain data:
+# swapping a tier's model is a one-line edit.
+#
+# ZeroGPU cost: a cross-sponsor cast loads several multi-GB models per show (a download on
+# first use, then a host→device copy per turn), which is heavy on the free ~5-min/day GPU
+# quota and on host RAM. A dedicated-GPU Space has no such cap; for a quota-light demo, pin
+# the whole cast to the tiny default in the Lab. The first entry is the tiny default, so any
+# untagged fallback also lands on the cheapest model.
 
 LOCAL_MODELS: tuple[LocalModel, ...] = (
-    # Tiny tier (≤4B, Tiny-Titan band) — the cast-wide default. Small, fast, and a
-    # reliable chat template, so a full show stays low-latency (and well inside the free
-    # ZeroGPU GPU/day budget).
+    # Tiny tier (≤4B, Tiny-Titan band) — the cast-wide fallback default. NVIDIA Nemotron
+    # Nano is a Mamba-2/Transformer hybrid; load the BF16 (safetensors) sibling, not the
+    # GGUF, since the in-process path runs transformers. Ships custom modelling code, so
+    # trust_remote_code is required.
     LocalModel(
-        repo_id="Qwen/Qwen2.5-3B-Instruct",
+        repo_id="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
         profile="tiny",
-        params_b=3.0,
-        source="Qwen",
+        params_b=4.0,
+        source="NVIDIA Nemotron",
+        trust_remote_code=True,
     ),
-    # OpenBMB MiniCPM 4.1 8B (fast tier) — keeps the OpenBMB lane on the in-process path.
-    # Ships custom modelling code, so trust_remote_code is required. An alternate, not the
-    # default: a cast can pin it, but the tiny model above drives a show by default.
+    # Fast tier — OpenBMB MiniCPM 4.1 8B. Ships custom modelling code (trust_remote_code).
     LocalModel(
         repo_id="openbmb/MiniCPM4.1-8B",
+        profile="fast",
         params_b=8.0,
         source="OpenBMB MiniCPM",
         trust_remote_code=True,
     ),
-    # Qwen 7B (fast tier) — a slightly larger alternate for a single specialist seat (e.g.
-    # the Judge) when the hardware/quota allows. Untagged, so never the silent default.
+    # Balanced tier — Cohere Labs Aya Expanse 8B (Command family, native transformers arch).
+    # NOTE: this repo is *gated* — the Space's HF account must accept its licence and an
+    # HF_TOKEN must be present for the weights to download.
     LocalModel(
-        repo_id="Qwen/Qwen2.5-7B-Instruct",
-        params_b=7.0,
-        source="Qwen",
+        repo_id="CohereLabs/aya-expanse-8b",
+        profile="balanced",
+        params_b=8.0,
+        source="Cohere Labs Aya",
+    ),
+    # Strong tier — JetBrains Mellum 2 (12B MoE, ~2.5B active). The Instruct variant (a
+    # post-trained assistant with a chat template), not the Base completion model. Its card
+    # loads it with AutoModelForMultimodalLM, so we pin that auto-class.
+    LocalModel(
+        repo_id="JetBrains/Mellum2-12B-A2.5B-Instruct",
+        profile="strong",
+        params_b=12.0,
+        source="JetBrains Mellum",
+        auto_class="AutoModelForMultimodalLM",
     ),
 )
 

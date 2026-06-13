@@ -94,9 +94,11 @@ backend stays inactive and the deterministic stub owns the no-config demo path.
 - No new Python dependencies — `torch` and `transformers` are already transitive deps.
 - The parent-process cache means each ZeroGPU call after the first is weight-load-free
   within a session.
-- **Prize-lane impact:** keeps the **OpenBMB / MiniCPM** track (MiniCPM4.1-8B is in the
-  local catalogue), the **Tiny Titan** lane (Qwen2.5-3B-Instruct at the `tiny` tier is
-  ≤4B), and the **Community Choice** on-device-inference story for the HF Space demo.
+- **Prize-lane impact:** one sponsor family per tier, so a single in-process cast spans
+  four tracks at once — **NVIDIA Nemotron** (`tiny`, also the **Tiny Titan** ≤4B lane via
+  Nemotron-3-Nano-4B), **OpenBMB / MiniCPM** (`fast`), **Cohere / Aya** (`balanced`), and
+  **JetBrains / Mellum** (`strong`) — plus the **Community Choice** on-device-inference
+  story for the HF Space demo.
 
 **Negative / Risks:**
 - **Llama Champion badge is explicitly dropped.** No llama.cpp runtime in the cast means
@@ -117,9 +119,13 @@ backend stays inactive and the deterministic stub owns the no-config demo path.
 - `llamacpp_catalogue.py` and `llamacpp_server.py` are deleted; `app.py`'s
   `gpu_selftest` `@spaces.GPU` guard is retained — it detects ZeroGPU availability at
   startup and is unrelated to the inference path.
-- The single catalogue entry tagged as a tier default is `Qwen/Qwen2.5-3B-Instruct`
-  (`tiny`). Additional models (MiniCPM4.1-8B, Qwen2.5-7B-Instruct) are in the catalogue
-  but untagged; ZeroGPU quota pressure justifies keeping the default footprint minimal.
+- Each tier is tagged with a distinct sponsor model (NVIDIA Nemotron-3-Nano-4B-BF16 ·
+  OpenBMB MiniCPM4.1-8B · Cohere Aya-Expanse-8B · JetBrains Mellum2-12B-A2.5B-Instruct), so
+  a cross-sponsor cast runs on the Space's own GPU. This trades ZeroGPU quota/RAM headroom
+  (several multi-GB loads per show) for multi-track coverage; the `tiny` model is listed
+  first so any untagged fallback lands on the cheapest tier. Two deployment notes: Aya is a
+  **gated** repo (needs licence acceptance + `HF_TOKEN`), and Mellum loads via
+  `AutoModelForMultimodalLM` (a per-model `auto_class` on `LocalModel`).
 - Tests live in `tests/test_local_backend.py`. All 676 tests pass; the capability-gate
   logic is fully covered without a GPU or torch import in test processes.
 

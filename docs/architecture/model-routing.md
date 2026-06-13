@@ -106,19 +106,27 @@ Off ZeroGPU and without `LOCAL_INFERENCE=1`, `@spaces.GPU` is a no-op and the
 engine falls back to the deterministic stub — so the demo is always reproducible on
 CPU-only hosts. Pick "Local GPU" in the Lab's backend radio to opt in per run.
 
-Available models (all ≤32B; select via `local:<repo_id>`):
+Available models (all ≤32B; select via `local:<repo_id>`). One sponsor family per tier, so
+a single cast spans four sponsors at once (the multi-track strategy):
 
-| Key | Model | Notes |
-|---|---|---|
-| `local:Qwen/Qwen2.5-3B-Instruct` | Qwen 2.5 3B | **tiny default** — latency + quota guardrail |
-| `local:openbmb/MiniCPM4.1-8B` | MiniCPM 4.1 8B | alternate; OpenBMB prize lane |
-| `local:Qwen/Qwen2.5-7B-Instruct` | Qwen 2.5 7B | alternate |
+| Key | Model | Tier | Notes |
+|---|---|---|---|
+| `local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16` | Nemotron Nano 4B | **tiny** | NVIDIA lane; Tiny-Titan ≤4B band; `trust_remote_code`; Mamba-2 hybrid (BF16, not GGUF) |
+| `local:openbmb/MiniCPM4.1-8B` | MiniCPM 4.1 8B | fast | OpenBMB lane; `trust_remote_code` |
+| `local:CohereLabs/aya-expanse-8b` | Aya Expanse 8B | balanced | Cohere lane; **gated repo** — needs licence acceptance + `HF_TOKEN` |
+| `local:JetBrains/Mellum2-12B-A2.5B-Instruct` | Mellum 2 (12B MoE, ~2.5B active) | strong | JetBrains lane; loads via `AutoModelForMultimodalLM` |
+
+Each tier is tagged, so a cast's `fast`/`balanced`/`strong` seats route to different sponsor
+models. That cross-sponsor cast loads several multi-GB models per show — heavy on the free
+ZeroGPU ~5-min/day budget and host RAM; on a dedicated GPU there is no cap. For a
+quota-light demo, pin the whole cast to the tiny default. The tiny model is listed first, so
+any untagged fallback also lands on the cheapest tier.
 
 Bind a tier to a local model with a qualified key:
 
 ```yaml
 profiles:
-  tiny: { endpoint: "local:Qwen/Qwen2.5-3B-Instruct", temperature: 0.7, max_tokens: 192 }
+  tiny: { endpoint: "local:nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", temperature: 0.7, max_tokens: 192 }
 ```
 
 ### Real cost → Governor
