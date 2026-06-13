@@ -36,12 +36,18 @@ attacks it, and a judge rules. *"All the clocks in the wood stopped at 3:07. No 
 down."* Watch four small models narrow a mystery to its most interesting evidence-backed
 answer.
 
+![Mystery Roots in the Fishbowl: clue-gatherer, hypothesis-former, devil's-advocate, and a mystery-judge arranged around the "all the clocks stopped at 3:07" scene.](images/show-mystery-roots.png)
+*Mystery Roots: the same engine, a convergent cast — clue-gatherer, hypothesis-former, devil's-advocate, judge.*
+
 ### 🔮 Oracle Grove — a tool-using prophecy showcase
 
 A scene-whisperer narrates *"a grove where every shadow is a future that hasn't decided to
 happen yet,"* and a fortune-teller consults an actual oracle tool to speak prophecies. No
 competition — this one exists to show specialists working *with and without* tools in the
 same cast.
+
+![Oracle Grove in the Fishbowl: a scene-whisperer and a tool-using fortune-teller around the "every shadow is a future" scene.](images/show-oracle-grove.png)
+*Oracle Grove: a tool-using fortune-teller alongside a plain narrator — same engine, a tool grant in the config.*
 
 ### ❓ Twenty Sprouts — twenty questions, with a real secret
 
@@ -50,12 +56,18 @@ never visible to anyone, including the audience* — and a guesser narrows it do
 questions. The judge crowns the guesser if they name it, or the keeper if they stay hidden.
 The competition is real because the ground truth is real (more on why that matters below).
 
+![Twenty Sprouts in the Fishbowl: a secret-keeper and a guesser exchanging yes/no questions, with a judge card.](images/show-twenty-sprouts.png)
+*Twenty Sprouts: the secret-keeper's word is dealt by code and never reaches a prompt — the model writes the drama, the code writes the scoreboard.*
+
 ### 🕵 The Steeped — a word-pair bluff
 
 The tensest of the lot. Four agents each give one clue. Three of them secretly hold the *same*
 word; the fourth holds a near-twin. The spy wins by blending into the overlap; the herd wins
 by catching the seam where the odd one out doesn't quite fit. A pure showcase of adversarial
 multi-agent dynamics — bluffing, hiding, and reading the room.
+
+![The Steeped in the Fishbowl: four spy cards each giving one careful clue, narrating the bluff-game premise.](images/show-the-steeped.png)
+*The Steeped: four minds, one careful clue each — three share a secret word, one holds a near-twin.*
 
 ### 🎭 Beat Battle — a storytelling duel
 
@@ -106,13 +118,21 @@ judge, grant tools, and set a budget, then hit **Summon** to lock it in and rais
 (Offline, your model choices drive the deterministic stub's variants, so even a no-key demo
 stays reproducible.)
 
+![The Lab tab: a scenario picker (Thousand Token Wood selected among eight worlds), a world digest with capability badges, a seed picker, and the Summon button.](images/lab.png)
+*The Lab: pick a world, read its digest, choose an opening beat, Summon. "Director's cut" reveals per-agent model binding, tools, and budget.*
+
 ### The Show — watch it unfold
 
 The Show is the stage, and it offers three ways to watch the same run:
 
-- **Constellation** — character cards arranged in a ring around the scene, the default view.
+- **Constellation** — character cards arranged in a ring around the scene, the default view
+  (pictured at the [top of the series](00-field-notes-index.md)).
 - **Feed** — a clean transcript, one line per turn, narrator and cast interleaved.
-- **Split** — an omniscient table laying every character's *said* next to their *thought*.
+- **Split** — an omniscient table laying every character's *said* next to their *thought*
+  (pictured in [Part 4](04-how-a-small-agent-decides.md)).
+
+![The Feed layout: a chronological transcript of the run, narrator lines and cast utterances interleaved one per turn.](images/feed-view.png)
+*The Feed layout: the same run as a clean chronological transcript.*
 
 The heart of it is the **MindCard**. Every utterance is a flip card: the front shows what a
 character said in public; the back reveals the private `thought` and `mood` it was holding

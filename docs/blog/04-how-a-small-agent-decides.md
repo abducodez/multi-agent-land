@@ -106,6 +106,9 @@ rides only its own event payload (the mind-reader UI in [Part 2](02-the-woods-an
 and never reaches a peer's prompt. **Shared speech, private thinking**, enforced by one
 membership test.
 
+![The Fishbowl's Split layout: a table with columns "said aloud (public projection)" and "actually thinking (omniscient view)" for each agent — the audience sees both, but peers only ever read the public column.](images/split-view.png)
+*The Split layout makes the visibility boundary visible: the public column is what peers can recall; the private "actually thinking" column rides only its own event and never enters another agent's prompt. The audience is omniscient; the agents are not.*
+
 ### Layer 2 — Salience: rank, don't just recency-window
 
 A pure recency window eventually fails: an old but important verdict falls off while a recent

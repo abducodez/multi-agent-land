@@ -144,6 +144,9 @@ flowchart LR
     L --> M5["exported JSONL trace"]
 ```
 
+![The Fishbowl Show rendering Thousand Token Wood: MindCards around a scene, narrator feed, and meters — all derived from the event log.](images/show-thousand-token-wood.png)
+*The Show is just one read side: the stage, the cards, the feed, and the meters are all pure projections of the same append-only log.*
+
 The **observer** is the cleanest expression of the rule. It consumes events read-only and
 computes a `ViewDiff` — the delta to render — and it *never appends*. Rendering is a camera
 crew, not an actor. The world runs identically whether or not anyone is watching, you can

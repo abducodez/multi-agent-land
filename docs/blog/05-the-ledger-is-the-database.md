@@ -258,6 +258,9 @@ map, the seed) and a `run.finished` (winner, winning model, reason, turns, token
 those events for a run, write them as JSONL, and you have a self-describing agent trace ready
 to publish — no extra bookkeeping, because the ledger was always keeping the record.
 
+![The Fishbowl's Telemetry tab: activity and token bar charts, an agent-turn latency line chart, a structured log feed table (time, level, agent/turn, event, detail), and per-trace timelines below.](images/telemetry.png)
+*The Telemetry tab is just another reader over the same log: the structured feed, the per-agent token and latency charts, and the per-trace timelines are all projections of the append-only ledger — the observability surface and the shareable trace are the same data.*
+
 That's the quiet thesis of Multi-Agent Land. One append-only log of typed events is
 simultaneously the database, the checkpoint, every agent's memory, the UI's render source,
 and the shareable trace. You don't build those five things. You build the log, and project

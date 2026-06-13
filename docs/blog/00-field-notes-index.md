@@ -2,6 +2,8 @@
 
 *A five-part series on building Multi-Agent Land — a forest theater run by small AI models — for the Thousand Token Wood hackathon.*
 
+![The Fishbowl theater showing Thousand Token Wood: a constellation of MindCards — scene-whisperer, pocket-actor, echo, and a critic — around a generated scene, with the narrator feed and budget meters.](images/show-thousand-token-wood.png)
+
 ---
 
 The whole project rests on one idea: **small specialist models that never call each other**.
