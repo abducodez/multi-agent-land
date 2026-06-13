@@ -94,6 +94,17 @@ def _contains_word(text: str, word: str) -> bool:
     return bool(word) and bool(_word_re(word).search(text or ""))
 
 
+def _line_names_word(text: str, word: str) -> bool:
+    """True when a line names the secret word as a whole token, in ANY capitalization.
+
+    The single shared "this is the word" test used by BOTH the keeper — to confirm a match
+    the moment the guesser says it — and the judge — to award the win. Sharing it guarantees
+    they never disagree (the keeper can't say "that's it!" on a line the judge scores a miss,
+    or deny a line the judge counts). Case-insensitive (``COMPASS`` == ``compass`` == ``Compass``),
+    whole-word (so ``compass`` doesn't match inside ``encompasses``)."""
+    return bool(word) and word.lower() in set(_WORD.findall((text or "").lower()))
+
+
 def _redact_word(text: str, word: str) -> str:
     """Mask any spelled-out secret word so it can never reach the stage.
 
@@ -199,12 +210,26 @@ class SecretKeeper(ManifestAgent):
         # The guesser's most recent *open* question (the one awaiting this answer).
         question = next((q for q, a in reversed(pairs) if a is None), "")
         already = [a for _, a in pairs if a]
+
+        # The guesser just NAMED the word (any capitalization) — that is a win, not a
+        # question to dodge. Confirm the match plainly; the secret is already out (they said
+        # it), so the no-spelling rule no longer applies and ``act`` lets this line through.
+        if question and _line_names_word(question, word):
+            return (
+                f"YOUR SECRET WORD: {word}\n"
+                f'The guesser just said: "{_trim(question)}"\n'
+                f"They have named your secret word EXACTLY — '{word}' is a match (capitalization does "
+                "not matter). This is a win for them. Do NOT deny it, deflect, or contradict it. In ONE "
+                "warm, final sentence, confirm plainly that they have guessed the word and the secret is revealed."
+            )
+
         guard = (
-            "\n\nSTRICT RULES: You ANSWER, you never ask. Begin with 'Yes' or 'No' (then one short, "
-            "truthful, playful clause). Answer ONLY about your secret word, and answer the SAME way "
-            "every time about the same property — never contradict an earlier answer. Do NOT end your "
-            f"line with a question mark. NEVER write the word '{word}' or any form of it — describe it, "
-            "never name it; that instantly loses the game."
+            "\n\nSTRICT RULES: You ANSWER, you never ask. Begin with 'Yes' or 'No' (then one short clause). "
+            "Keep YOUR SECRET WORD above in mind for EVERY answer and answer ONLY about it. Tell the TRUTH "
+            "about its real properties — never lie, never bluff, and answer the SAME way every time about the "
+            "same property (never contradict an earlier answer). If the guesser NAMES the word — in any "
+            "capitalization — say plainly that it is a match. Do NOT end your line with a question mark. Until "
+            f"it is guessed, NEVER write the word '{word}' or any form of it — describe it, never spell it."
         )
         # On a corrective re-ask (set by ``act`` after a rejected reply), tell the model
         # exactly what it did wrong so the retry actually fixes it.
@@ -212,15 +237,17 @@ class SecretKeeper(ManifestAgent):
         correction = f"\n\nCORRECTION: your previous reply was rejected because {reason}. Try again." if reason else ""
         if not question:
             return (
-                f"YOUR SECRET WORD (never write, spell, or quote it — only answer about it): {word}\n"
+                f"YOUR SECRET WORD (keep it in mind; never spell it until it is guessed): {word}\n"
                 "The guesser has not asked yet. In ONE short sentence, invite them to begin asking "
                 "yes/no questions. Do not reveal anything about the word yet." + guard + correction
             )
         consistency = (
-            ("\n\nYour earlier answers (stay consistent with these):\n" + _bullets(already[-6:])) if already else ""
+            ("\n\nYour earlier answers (be truthful and consistent with these):\n" + _bullets(already[-6:]))
+            if already
+            else ""
         )
         return (
-            f"YOUR SECRET WORD (never write, spell, or quote it — only answer about it): {word}\n"
+            f"YOUR SECRET WORD (keep it in mind for this answer; never spell it until it is guessed): {word}\n"
             f'The guesser just asked: "{_trim(question)}"\n'
             "Answer THAT question about your word, truthfully, in ONE short sentence."
             + consistency
@@ -237,15 +264,22 @@ class SecretKeeper(ManifestAgent):
     ) -> Event:
         offline = bool(getattr(self.router, "offline", False))
         word = _word_for_seed(projection.seed)
+        # Did the guesser just NAME the word? On a match the secret is already public (they
+        # said it), so the no-spelling guards below stand down — the keeper confirms the win
+        # in plain words ("Yes — compass, you've got it!") instead of being scrubbed to "thing".
+        pairs = _qa_history(recent_events)
+        open_question = next((q for q, a in reversed(pairs) if a is None), "")
+        matched = _line_names_word(open_question, word)
+
         event = super().act(run_id, turn, projection, recent_events)
         usage_total = dict(self.last_usage)
         text = str(event.payload.get("text", ""))
 
-        # Live quality pass: if the keeper asked a question or spelled the word, re-ask once
-        # with the reason fed back. Offline lines are curated, leak-free answers, so this
-        # never fires there — the deterministic path is identical. The retry's tokens are
-        # summed so the governor still meters both calls (mirrors base ``_verify_verdict``).
-        if not offline and _answer_violation(text, word):
+        # Live quality pass: if the keeper asked a question or (before the word is guessed)
+        # spelled it, re-ask once with the reason fed back. Skipped on a match — there the
+        # keeper is *meant* to name the word. Offline lines are curated, leak-free answers, so
+        # this never fires there. Retry tokens are summed so the governor meters both calls.
+        if not offline and not matched and _answer_violation(text, word):
             self._retry_reason = _answer_violation(text, word)
             try:
                 retry = super().act(run_id, turn, projection, recent_events)
@@ -255,14 +289,15 @@ class SecretKeeper(ManifestAgent):
             self.last_usage = usage_total
             event, text = retry, str(retry.payload.get("text", ""))
 
-        # Absolute guarantee: scrub any spelled-out word before it ships. A no-op offline
-        # and on a clean reply; the safety net when the model leaks anyway (as it did with
-        # "a glowing ember…"). Logged so a persistent leak is visible in the run.
-        scrubbed = _redact_word(text, word)
-        if scrubbed != text:
-            obs.log("twenty_sprouts.redacted_keeper_leak", agent=self.name, turn=turn)
-            text = scrubbed
-            event.payload["text"] = text
+        # Absolute guarantee: scrub any spelled-out word before it ships — UNLESS the guesser
+        # already named it (a match), where confirming the word is the whole point. A no-op
+        # offline and on a clean reply; the safety net when the model leaks anyway.
+        if not matched:
+            scrubbed = _redact_word(text, word)
+            if scrubbed != text:
+                obs.log("twenty_sprouts.redacted_keeper_leak", agent=self.name, turn=turn)
+                text = scrubbed
+                event.payload["text"] = text
 
         # The keeper must answer, not ask: a reply still ending in a question after the
         # re-ask is skipped (live only) rather than shown asking. Redaction above can't fix
@@ -405,13 +440,14 @@ class SproutJudge(JudgedCompetition):
     def _guessed(recent_events: tuple[Event, ...], secret: str) -> bool:
         """True if the dealt word appears in ANY guesser line — a win sticks once made.
 
-        Scanning every guesser ``agent.spoke`` (not just the latest) is the fix for the
-        live bug where a correct guess was later buried under further guessing and the
-        round was wrongly scored a miss."""
-        needle = secret.lower()
+        Uses the same case-insensitive whole-word test the keeper uses to confirm a match
+        (:func:`_line_names_word`), so judge and keeper always agree on what counts as a win.
+        Scanning every guesser ``agent.spoke`` (not just the latest) is the fix for the live
+        bug where a correct guess was later buried under further guessing and the round was
+        wrongly scored a miss."""
         return any(
             e.actor == _GUESSER_NAME
             and e.kind == "agent.spoke"
-            and needle in set(_WORD.findall(str(e.payload.get("text", "")).lower()))
+            and _line_names_word(str(e.payload.get("text", "")), secret)
             for e in recent_events
         )

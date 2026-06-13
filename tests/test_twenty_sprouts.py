@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from dataclasses import dataclass, field
+
 from src.agents.twenty_sprouts import (
     _WORDS,
     SecretKeeper,
@@ -17,6 +19,7 @@ from src.agents.twenty_sprouts import (
     _answer_violation,
     _classify_answer,
     _contains_word,
+    _line_names_word,
     _qa_history,
     _questions_since_guess,
     _redact_word,
@@ -140,6 +143,88 @@ def test_keeper_question_guard_is_a_passthrough_offline():
     event = keeper.act(_RUN, 1, StageProjection(seed="seed-A"), _qa(("Is it alive?", None)))
     assert event.kind == "agent.spoke"
     assert event.payload["secret"] == _word_for_seed("seed-A")  # ground truth stamped on
+
+
+def test_keeper_prompt_demands_truth_and_consistency():
+    prompt = _keeper()._build_extra_prompt(StageProjection(seed="seed-A"), _qa(("Is it warm?", None)))
+    low = prompt.lower()
+    assert "never lie" in low  # don't bluff about the word
+    assert "never contradict" in low  # stay consistent across answers
+    assert "keep your secret word" in low or "keep it in mind" in low  # word stays in context
+
+
+# ── the keeper confirms a correct guess in ANY capitalization (the asked-for fix) ─────
+
+
+@pytest.mark.parametrize(
+    "text,word,names",
+    [
+        ("My guess is: COMPASS.", "COMPASS", True),
+        ("my guess is: compass", "COMPASS", True),
+        ("Is it a Compass?", "COMPASS", True),  # any capitalization is a match
+        ("it encompasses the grove", "COMPASS", False),  # whole-word, not a substring
+        ("Is it a map?", "COMPASS", False),
+    ],
+)
+def test_line_names_word_is_case_insensitive_whole_word(text, word, names):
+    assert _line_names_word(text, word) is names
+
+
+@pytest.mark.parametrize("caser", [str.upper, str.lower, str.title])
+def test_keeper_prompt_confirms_a_match_in_any_case(caser):
+    word = _word_for_seed("seed-A")
+    guess = f"My guess is: {caser(word)}."
+    prompt = _keeper()._build_extra_prompt(StageProjection(seed="seed-A"), _qa((guess, None)))
+    low = prompt.lower()
+    assert "match" in low and "named your secret word" in low
+    assert "do not deny" in low  # must not deflect a correct guess
+
+
+@dataclass
+class _ScriptedProvider:
+    """A hand-written provider stand-in (à la test_memory._RaisingIndex) that returns a
+    fixed line — so we can drive the keeper's live-path guards deterministically, no mocks."""
+
+    line: str
+    last_usage: dict = field(default_factory=lambda: {"total_tokens": 5})
+    last_reasoning: str = ""
+    model_id: str = "scripted"
+
+    def complete(self, role: str, prompt: str) -> str:
+        return self.line
+
+
+@dataclass
+class _ScriptedRouter:
+    provider: _ScriptedProvider
+    offline: bool = False  # exercise the LIVE guards (match/leak/scrub), not the stub path
+
+    def for_profile(self, key: str):
+        return self.provider
+
+
+def _scripted_keeper(line: str) -> SecretKeeper:
+    agent = SecretKeeper(_ScriptedRouter(_ScriptedProvider(line)))
+    agent.manifest = Registry.from_dir().agents["secret-keeper"]
+    return agent
+
+
+def test_keeper_acknowledges_a_match_with_the_word_intact():
+    # The guesser named the word, so confirming it WITH the word is the point — the leak
+    # scrub must stand down (no "thing" mangling of the winning acknowledgment).
+    word = _word_for_seed("seed-A")
+    guess = f"My guess is: {word.lower()}."
+    keeper = _scripted_keeper(f"Yes — {word.lower()}, you've found it!")
+    event = keeper.act(_RUN, 5, StageProjection(seed="seed-A"), _qa((guess, None)))
+    assert word.lower() in event.payload["text"].lower()  # the word survives on a match
+
+
+def test_keeper_still_scrubs_a_leak_when_it_is_not_a_match():
+    # A normal question (no guess) where the model blurts the word → still scrubbed.
+    word = _word_for_seed("seed-A")
+    keeper = _scripted_keeper(f"Yes, a {word.lower()} guides you.")
+    event = keeper.act(_RUN, 5, StageProjection(seed="seed-A"), _qa(("Is it used for direction?", None)))
+    assert word.lower() not in event.payload["text"].lower()  # leak scrubbed away
 
 
 # ── the keeper never leaks the word (the worst bug: it spelled "ember" aloud) ─────

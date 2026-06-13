@@ -2,6 +2,11 @@
 
 *What we've built, what broke in the best possible way, and where the forest theater goes next.*
 
+> **Archival snapshot.** This is a dated milestone report, kept as-written. For the evergreen
+> walkthrough — pitch to internals — start at the
+> [Field Notes series index](00-field-notes-index.md). Figures here (test counts, scenario
+> tables) reflect the engine at the time of writing.
+
 ---
 
 The elevator pitch hasn't changed: a forest where small specialist AI models — each one
@@ -17,7 +22,7 @@ models in a single cast. A Fishbowl UI with MindCards and a mind-reader. Seven h
 and forty-one passing tests with no mocks and no API key required. This is the next
 chapter.
 
-[1]: engine-architecture.md
+[1]: 03-one-engine-three-costumes.md
 
 ---
 
