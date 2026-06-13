@@ -939,7 +939,7 @@ footer { display: none !important; }
 .fishbowl.fb-split .splitview { padding: 6px 0 0; max-width: 100%; }
 
 /* ---- FEED pane: read like a live transcript, comfortable scroll ---- */
-.fishbowl.fb-feed .feed { padding: 4px 4px 8px; max-height: 70vh; }
+.fishbowl.fb-feed .feed { padding: 4px 4px 8px; max-height: 50vh; }
 .fishbowl .fe.narr p { font-size: 13px; }
 
 /* ---- NARRATOR feed entrance is already animated (feIn); add a hover tint ---- */

@@ -155,3 +155,45 @@ def test_provider_resolves_trust_remote_code_from_catalogue():
     assert LocalTransformersProvider(model="Qwen/Qwen2.5-3B-Instruct")._trust_remote_code() is False
     # An off-catalogue repo defaults to the safe choice.
     assert LocalTransformersProvider(model="some/random-repo")._trust_remote_code() is False
+
+
+# ── ZeroGPU contract: CUDA only inside @spaces.GPU, never in the parent ───────────────
+# Regression guard for the production crash "Low-level CUDA init (torch._C._cuda_init)
+# reached … ZeroGPU's emulation did not intercept": the parent process gets no GPU, so any
+# CUDA placement outside the @spaces.GPU window (a lazy .to("cuda") at request time) kills
+# the worker. The forward pass can only be exercised with a GPU + weights (integration),
+# so we pin the *structural* invariant — where CUDA may be touched — by source contract.
+
+
+def test_parent_loader_never_initialises_cuda():
+    import ast
+    import inspect
+
+    from src.models import local_provider
+
+    # _ensure_loaded runs in the parent (warm CPU cache, inherited by the fork). It must
+    # not perform any CUDA operation — placement happens later, inside the decorated
+    # function. Check the executable body with the docstring stripped (the docstring
+    # explains the invariant in prose, so it legitimately mentions CUDA); the dangerous
+    # ops are the device move and any torch.cuda.* call.
+    fn = ast.parse(inspect.getsource(local_provider._ensure_loaded)).body[0]
+    if ast.get_docstring(fn):
+        fn.body = fn.body[1:]
+    code = ast.unparse(fn)
+    assert 'to("cuda")' not in code
+    assert "torch.cuda" not in code
+    assert ".cuda(" not in code
+
+
+def test_gpu_transfer_lives_inside_the_spaces_gpu_function():
+    from pathlib import Path
+
+    from src.models import local_provider
+
+    # _generate is wrapped by @spaces.GPU, so read the module source and isolate its block.
+    module_src = Path(local_provider.__file__).read_text()
+    gen_block = module_src.split("def _generate(", 1)[1].split("\ndef ", 1)[0]
+    # The CPU→GPU move is here (the one place ZeroGPU grants a device)…
+    assert '.to("cuda")' in gen_block
+    # …and the function carries the decorator the platform registers.
+    assert "@spaces.GPU" in module_src.split("def _generate(", 1)[0].rsplit("\n\n", 1)[-1]

@@ -24,7 +24,7 @@ drift from the log.
 | Competitive scenarios | ◐ only The Steeped is a real game; Open Table and Oracle Grove have **no judge at all** | `config/scenarios/*.yaml` |
 | Leaderboard / history UI | ❌ none | `src/ui/fishbowl/` |
 | Commentator | ❌ none (narrator feed is a transcript, not commentary) | `src/ui/fishbowl/show.py` |
-| Models | ◐ Modal vLLM (Nemotron 4B/30B/14B, MiniCPM 8B + o-4.5, Gemma 4 12B/26B), HF serverless (Arch-Router-1.5B), stub. No llama.cpp, no fine-tune, no gpt-oss | `modal/catalogue.py:144-296`, `src/models/hf_catalogue.py:71-85` |
+| Models | ◐ Modal vLLM (Nemotron 4B/30B/14B, MiniCPM 8B + o-4.5, Gemma 4 12B/26B), HF serverless (Arch-Router-1.5B), in-process Local GPU (Qwen2.5-3B/7B, MiniCPM4.1-8B — ADR-0033), stub. No fine-tune, no gpt-oss | `modal/catalogue.py:144-296`, `src/models/hf_catalogue.py:71-85`, `src/models/local_catalogue.py` |
 
 ---
 
@@ -177,10 +177,13 @@ engine change:
    OpenAI open model is in the catalogue. Add `gpt-oss-20b` (vLLM serves it) and
    make it the `strong`-tier default for the live demo path. Highest strategic
    priority in this workstream.
-2. **llama.cpp backend** (🦙 *Llama Champion*) — third backend in
-   `src/models/inference.py`'s registry: `LLAMA_CPP_BASE_URL` env var, a tiny
-   static catalogue (`llamacpp:` key prefix), OpenAI-compatible transport
-   already handled by LiteLLM. ~1 day, unlocks a badge.
+2. **Local GPU backend** (✅ *shipped* — ADR-0033) — third backend in
+   `src/models/inference.py`'s registry: in-process `transformers` via
+   `@spaces.GPU` (`local:` key prefix, `LOCAL_INFERENCE=1` opt-in). Works on
+   ZeroGPU, dedicated-GPU Spaces, and local CUDA boxes. Supports the Community-
+   Choice / Tiny-Titan / OpenBMB lanes. **Note:** this replaces the earlier
+   llama.cpp design (ADR-0032) — the 🦙 Llama Champion runtime badge is not
+   pursued; on-device inference ships instead as the in-process GPU path.
 3. **Broaden the Modal catalogue** with strong ≤32B chat models so arena seats
    differ meaningfully: Qwen3 (4B/8B/14B/32B), Llama-3.1-8B-Instruct,
    Phi-4-14B, Mistral-Small-24B. Prefer models vLLM serves without
@@ -305,7 +308,8 @@ Phase D (reach)       W4 models (gpt-oss → llama.cpp → catalogue → fine-tu
   no-API-key stub path kept fully working.
 - Prize coverage per phase: A unlocks 📡 trace export; B unlocks the Best
   Agent/Best Demo arena story; C is the delight criterion + 🐜 Tiny Titan; D is
-  OpenAI track + 🦙 + 🎯.
+  OpenAI track + 🎯 (Local GPU / on-device inference already ships for Community-
+  Choice, OpenBMB, and Tiny-Titan lanes — 🦙 Llama Champion is not pursued).
 
 ## Beyond (post-arena ideas, in rough value order)
 

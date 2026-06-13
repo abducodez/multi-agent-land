@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted (extends ADR-0024 *second inference backend / unified registry*, amends
-ADR-0015 *LiteLLM gateway*, ADR-0022 *per-agent explicit model binding*)
+Superseded by ADR-0033. llama.cpp's persistent `llama-server` cannot hold a GPU under
+ZeroGPU's per-call grant model; replaced by an in-process `transformers` backend that
+works on any HF Space hardware (ADR-0024 *second inference backend / unified registry*,
+ADR-0015 *LiteLLM gateway*, ADR-0022 *per-agent explicit model binding* remain in
+force; this ADR is retained as a historical record only).
 
 ## Context
 

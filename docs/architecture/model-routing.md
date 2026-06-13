@@ -77,7 +77,7 @@ Profiles map to the OpenAI-compatible vLLM endpoints served on Modal
 The LiteLLM model string for an OpenAI-compatible custom endpoint is
 `openai/<served_model_id>` with `api_base` pointing at the endpoint's `/v1` URL.
 
-### Backends: Modal · Hugging Face · llama.cpp
+### Backends: Modal · Hugging Face · Local GPU
 
 A *backend* is just a catalogue + a binding rule, unified behind one registry
 (`src/models/inference.py`, ADR-0024). Models are named by a **backend-qualified
@@ -88,25 +88,37 @@ working. Three backends ship today:
 |---|---|---|---|
 | Modal | *(bare)* | vLLM endpoints you deploy on Modal GPUs | `MODAL_WORKSPACE` / `MODAL_LLM_BASE_URL` |
 | Hugging Face | `hf:` | serverless Inference Providers router | `HF_TOKEN` |
-| llama.cpp | `llamacpp:` | **local** GGUF via `llama-server`, GPU when present | `LLAMACPP_BASE_URL` |
+| Local GPU | `local:` | in-process `transformers` model on the host's own GPU | `SPACES_ZERO_GPU` / `LOCAL_INFERENCE=1` / CUDA auto-detected |
 
-The llama.cpp backend (ADR-0032) runs a cast fully on your own machine. Launch a
-model and export the URL it prints:
+The local backend (ADR-0033, supersedes ADR-0032) runs a cast fully in-process —
+no HTTP server, no extra process, no token. It loads a small instruct model via
+`transformers` inside a `@spaces.GPU` function (`LocalTransformersProvider`,
+`src/models/local_provider.py`). The hardware path is transparent:
 
-```bash
-uv run python -m src.models.llamacpp_server nemotron-3-nano-4b   # GPU auto-detected
-export LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
-```
+- **ZeroGPU Space** — `@spaces.GPU` allocates a GPU per call from the shared pool
+  (~5 min/day free quota). Enabled when `SPACES_ZERO_GPU` is set.
+- **Dedicated-GPU Space** (T4 / L4 / L40S / A100) — persistent GPU, no per-call
+  quota. Enabled with `LOCAL_INFERENCE=1`.
+- **Local CUDA box** — the same `LOCAL_INFERENCE=1` flag, or CUDA auto-detected at
+  startup.
 
-The launcher detects an accelerator — Apple Metal on macOS, NVIDIA CUDA via
-`nvidia-smi`, else CPU — and offloads every layer to the GPU (`-ngl 999`) when one
-is present. `llama-server` downloads the GGUF on first run (`-hf`) and serves it
-under `--alias <key>`, so the engine binds to a stable id (`openai/<key>`) through
-the same LiteLLM transport. Bind a tier to a local model with a qualified key:
+Off ZeroGPU and without `LOCAL_INFERENCE=1`, `@spaces.GPU` is a no-op and the
+engine falls back to the deterministic stub — so the demo is always reproducible on
+CPU-only hosts. Pick "Local GPU" in the Lab's backend radio to opt in per run.
+
+Available models (all ≤32B; select via `local:<repo_id>`):
+
+| Key | Model | Notes |
+|---|---|---|
+| `local:Qwen/Qwen2.5-3B-Instruct` | Qwen 2.5 3B | **tiny default** — latency + quota guardrail |
+| `local:openbmb/MiniCPM4.1-8B` | MiniCPM 4.1 8B | alternate; OpenBMB prize lane |
+| `local:Qwen/Qwen2.5-7B-Instruct` | Qwen 2.5 7B | alternate |
+
+Bind a tier to a local model with a qualified key:
 
 ```yaml
 profiles:
-  tiny: { endpoint: "llamacpp:nemotron-3-nano-4b", temperature: 0.7, max_tokens: 192 }
+  tiny: { endpoint: "local:Qwen/Qwen2.5-3B-Instruct", temperature: 0.7, max_tokens: 192 }
 ```
 
 ### Real cost → Governor
@@ -182,9 +194,9 @@ everything on the big model.
 - `src/core/registry.py` — `Registry.from_world()` (a UI/LLM-composed run on the same path)
 - `src/models/litellm_provider.py` — `LiteLLMProvider` (live transport, real cost)
 - `src/models/modal_catalogue.py` — engine view of the catalogue (key → binding)
-- `src/models/inference.py` — unified backend registry (Modal · HF · llama.cpp); qualified keys
-- `src/models/llamacpp_catalogue.py` — local GGUF catalogue (key → binding)
-- `src/models/llamacpp_server.py` — `llama-server` launcher: GPU detection + command building
+- `src/models/inference.py` — unified backend registry (Modal · HF · Local GPU); qualified keys
+- `src/models/local_catalogue.py` — local model catalogue + capability gate (`has_credentials`)
+- `src/models/local_provider.py` — `LocalTransformersProvider`: in-process `@spaces.GPU` inference
 - `src/core/manifest.py` — `resolve_model()` (env → catalogue default)
 - `src/core/registry.py` — `build_router()`, `_resolve_model_endpoints()`, `_expand_env()`
 - `src/models/provider.py` — `ModelProvider.last_usage`, `estimate_tokens()`

@@ -14,14 +14,16 @@ one decorated ``_generate`` covers every flavour:
   * **Dedicated GPU / local CUDA** — the decorator is a passthrough; the model runs on
     the persistent GPU.
 
-**Why the model loads in the parent, not inside ``@spaces.GPU``.** On ZeroGPU each call
-forks a GPU worker that inherits the parent's already-loaded model (CUDA is *emulated* in
-the parent, materialised on the real GPU inside the call). Loading inside the decorated
-function would reload the weights on every call — the HF docs call this out as
-"significantly less efficient". So :meth:`complete` warms a module-level cache in the
-parent first (lazily, on first use — never at app boot), and the decorated ``_generate``
-only runs the forward pass. On a dedicated GPU the same cache simply keeps the model
-resident across calls.
+**Where the weights load vs. where CUDA is touched.** ZeroGPU grants a real GPU *only*
+for the duration of a ``@spaces.GPU`` call (each call forks a worker); the parent process
+never gets one, and any low-level CUDA init outside such a call — including a lazy
+``.to("cuda")`` at request time, which ZeroGPU's startup hook does not capture — trips the
+fork guard and kills the process. So the split is: :meth:`complete` warms a module-level
+**CPU** cache in the parent first (lazily, on first use — never at app boot, never on
+CUDA), and the decorated ``_generate`` moves those weights onto the GPU **inside the
+granted window** and runs the forward pass. The forked worker inherits the parent's CPU
+weights, so it pays a host→device copy, not a disk reload; on a dedicated GPU the cached
+module simply stays resident across calls (the move is a no-op after the first).
 
 Heavy imports (``torch`` / ``transformers``) are lazy — confined to the functions that
 need them — so importing this module never initialises CUDA (which would trip ZeroGPU's
@@ -49,18 +51,20 @@ _LOADED: dict[str, tuple] = {}
 
 
 def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
-    """Load (once, cached) the tokenizer + model for *repo_id*, placed on CUDA.
+    """Load (once, cached) the tokenizer + model for *repo_id* **on CPU**.
 
-    Called from :meth:`LocalTransformersProvider.complete` in the parent process so the
-    placement happens under ZeroGPU's CUDA emulation (or directly on a dedicated GPU) and
-    every later ``@spaces.GPU`` call inherits it. ``dtype="auto"`` lets transformers pick
-    the weights' native precision; we fall back to the legacy ``torch_dtype`` kwarg name
-    for older transformers, and to CPU when no CUDA is present (the gate normally prevents
-    that, but it keeps the path honest).
+    Called from :meth:`LocalTransformersProvider.complete` in the parent process to warm
+    the weights in host RAM. It deliberately **never touches CUDA**: under ZeroGPU the
+    parent process gets no GPU, and any low-level CUDA init outside a ``@spaces.GPU`` call
+    (a lazy ``.to("cuda")`` at request time is not captured by ZeroGPU's startup hook)
+    trips the fork guard and kills the process. The CPU→GPU transfer happens inside the
+    decorated :func:`_generate`, where a real GPU is granted; the forked worker inherits
+    these CPU weights, so it pays a device copy, not a disk reload. ``dtype="auto"`` lets
+    transformers pick the weights' native precision (fallback to the legacy ``torch_dtype``
+    kwarg name on older transformers).
     """
     if repo_id in _LOADED:
         return _LOADED[repo_id]
-    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=trust_remote_code)
@@ -68,8 +72,6 @@ def _ensure_loaded(repo_id: str, trust_remote_code: bool) -> tuple:
         model = AutoModelForCausalLM.from_pretrained(repo_id, dtype="auto", trust_remote_code=trust_remote_code)
     except TypeError:  # pragma: no cover - older transformers use the torch_dtype kwarg name
         model = AutoModelForCausalLM.from_pretrained(repo_id, torch_dtype="auto", trust_remote_code=trust_remote_code)
-    if torch.cuda.is_available():
-        model = model.to("cuda")
     model.eval()
     _LOADED[repo_id] = (tokenizer, model)
     return _LOADED[repo_id]
@@ -90,13 +92,19 @@ def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temper
     """Run one chat completion on the GPU; return ``(text, prompt_tokens, completion_tokens)``.
 
     Module-level and decorated so ZeroGPU registers it and grants a GPU for the call. The
-    model is fetched from the parent-warmed cache (a hit — never a reload here); only the
-    input tensors are built and moved to the device inside the GPU window.
+    model weights are fetched from the parent-warmed CPU cache (a hit — never a disk reload
+    here) and moved onto the device **inside this GPU window** — the only place ZeroGPU
+    permits CUDA init. On ZeroGPU the forked worker inherits CPU weights and pays one
+    device copy per call; on a dedicated GPU the cached module is already resident after
+    the first call, so the move is a no-op. Input tensors are built and placed on the same
+    device.
     """
     import torch
 
     tokenizer, model = _ensure_loaded(repo_id, trust_remote_code)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+    device = next(model.parameters()).device
     messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
     inputs = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt").to(device)
     do_sample = temperature and float(temperature) > 0

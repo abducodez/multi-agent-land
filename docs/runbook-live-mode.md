@@ -74,12 +74,32 @@ catalogue key in `config/models.yaml` (source of truth: `modal/catalogue.py`).
 ### Option B — one explicit endpoint
 
 Point every profile at a single OpenAI-compatible base URL (one Modal-served
-model, or a local llama.cpp / vLLM box):
+model, or any other OpenAI-compatible endpoint):
 
 ```ini
 # .env
 MODAL_LLM_BASE_URL=https://your-workspace--google-llms-gemma-4-12b.modal.run/v1
 ```
+
+### Option C — Local GPU (in-process transformers)
+
+Run inference in-process on the host's own GPU — no server to launch, no token.
+The engine uses `LocalTransformersProvider` behind a `@spaces.GPU` function,
+which works on ZeroGPU Spaces, dedicated-GPU Spaces (T4/L4/L40S/A100), and local
+CUDA boxes. On a CPU-only host the call is a no-op and the stub remains active.
+
+**On a CUDA box or dedicated-GPU Space:**
+
+```ini
+# .env
+LOCAL_INFERENCE=1
+```
+
+Then pick **"Local GPU"** in the Lab's backend radio. On a ZeroGPU Space,
+`SPACES_ZERO_GPU` is set automatically — no `.env` change needed, just select the
+backend in the UI. See
+[`docs/architecture/model-routing.md`](architecture/model-routing.md) for the
+full model list and per-tier config syntax (`local:<repo_id>`).
 
 ### Per-profile overrides
 
