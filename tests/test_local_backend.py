@@ -197,3 +197,29 @@ def test_gpu_transfer_lives_inside_the_spaces_gpu_function():
     assert '.to("cuda")' in gen_block
     # …and the function carries the decorator the platform registers.
     assert "@spaces.GPU" in module_src.split("def _generate(", 1)[0].rsplit("\n\n", 1)[-1]
+
+
+def test_generate_unpacks_batchencoding_never_passes_a_positional_dict():
+    # Regression guard for the production AttributeError "inputs_tensor.shape[0]" in
+    # transformers.generate: in transformers 5.x apply_chat_template(return_tensors="pt")
+    # defaults to a BatchEncoding *dict*, and passing that dict positionally into
+    # model.generate(inputs) makes generate() do .shape on a dict. The fix: request the
+    # dict explicitly (return_dict=True) and unpack it with ** so input_ids + attention_mask
+    # are fed as kwargs. Pinned by AST so the call shape can't silently regress.
+    import ast
+    from pathlib import Path
+
+    from src.models import local_provider
+
+    tree = ast.parse(Path(local_provider.__file__).read_text())
+    gen = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_generate")
+    calls = [c for c in ast.walk(gen) if isinstance(c, ast.Call)]
+
+    # apply_chat_template asks for the dict form explicitly (robust whatever the default).
+    act = next(c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "apply_chat_template")
+    assert any(k.arg == "return_dict" and k.value.value is True for k in act.keywords)
+
+    # model.generate(**inputs, …): the encoding is unpacked, never a positional dict.
+    gen_call = next(c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "generate")
+    assert not gen_call.args, "generate() must take no positional arg (the old bug passed the dict positionally)"
+    assert any(k.arg is None and isinstance(k.value, ast.Name) and k.value.id == "inputs" for k in gen_call.keywords)

@@ -106,20 +106,28 @@ def _generate(repo_id, trust_remote_code, system, prompt, max_new_tokens, temper
         model = model.to("cuda")
     device = next(model.parameters()).device
     messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
-    inputs = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt").to(device)
+    # return_dict=True yields a BatchEncoding (input_ids + attention_mask). This is the
+    # default in transformers 5.x and we request it explicitly so the call is robust across
+    # versions: a bare-tensor return (older default) would be passed positionally into
+    # generate() as `inputs`, and 5.x's generate() then does inputs.shape[0] on the dict →
+    # AttributeError. Unpacking with ** feeds input_ids AND the attention mask correctly.
+    inputs = tokenizer.apply_chat_template(
+        messages, add_generation_prompt=True, return_tensors="pt", return_dict=True
+    ).to(device)
+    input_len = int(inputs["input_ids"].shape[-1])
     do_sample = temperature and float(temperature) > 0
     with torch.no_grad():
         output = model.generate(
-            inputs,
+            **inputs,
             max_new_tokens=int(max_new_tokens),
             do_sample=bool(do_sample),
             temperature=float(temperature) if do_sample else None,
             top_p=float(top_p) if do_sample else None,
             pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
         )
-    generated = output[0][inputs.shape[-1] :]
+    generated = output[0][input_len:]
     text = tokenizer.decode(generated, skip_special_tokens=True).strip()
-    return text, int(inputs.shape[-1]), int(generated.shape[-1])
+    return text, input_len, int(generated.shape[-1])
 
 
 @dataclass
