@@ -11,6 +11,7 @@ other call. Routing (offline vs live, which endpoint) lives in :mod:`src.media.r
 from __future__ import annotations
 
 import base64
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
@@ -21,6 +22,20 @@ from src.media.stub_speech import chime
 # A consistent look for the live image model — the engine stays clean; the prompt
 # engineering rides here, next to the call that uses it.
 _IMAGE_STYLE = "a whimsical painterly storybook illustration, soft phosphor glow, no text:"
+
+
+def _media_timeout() -> float:
+    """Per-call wall-clock budget for a live media request (env ``MEDIA_TIMEOUT_S``).
+
+    Media is best-effort garnish: a down or crash-looping endpoint must fail FAST and
+    let the beat degrade to text, never block the synchronous turn. The OpenAI SDK
+    otherwise defaults to a 600s timeout with 2 retries (~30 min worst case), which reads
+    as the whole show hanging. We cap it and disable retries. Generous enough for a warm
+    few-step image / short TTS clip; tune up if a warm call legitimately needs longer."""
+    try:
+        return max(5.0, float(os.getenv("MEDIA_TIMEOUT_S", "120")))
+    except ValueError:
+        return 120.0
 
 
 @dataclass
@@ -96,7 +111,11 @@ class HTTPImageProvider(ImageProvider):
 
         framed = f"{(style or _IMAGE_STYLE).rstrip(':')}: {prompt}".strip()
         with obs.span("media.call", **{"media.system": "openai", "media.kind": "image", "media.model": self.model}):
-            client = OpenAI(base_url=self.base_url, api_key=self.api_key or "sk-noauth")
+            # Bounded timeout, no retries: a failure degrades to a text-only beat fast (the
+            # caller catches and skips media), never hanging the synchronous turn.
+            client = OpenAI(
+                base_url=self.base_url, api_key=self.api_key or "sk-noauth", timeout=_media_timeout(), max_retries=0
+            )
             resp = client.images.generate(
                 model=self.model, prompt=framed, size=self.size, n=1, response_format="b64_json"
             )
@@ -118,7 +137,11 @@ class HTTPSpeechProvider(SpeechProvider):
         from openai import OpenAI
 
         with obs.span("media.call", **{"media.system": "openai", "media.kind": "speech", "media.model": self.model}):
-            client = OpenAI(base_url=self.base_url, api_key=self.api_key or "sk-noauth")
+            # Bounded timeout, no retries: a failure degrades the beat to text fast (the
+            # caller catches and skips audio), never hanging the synchronous turn.
+            client = OpenAI(
+                base_url=self.base_url, api_key=self.api_key or "sk-noauth", timeout=_media_timeout(), max_retries=0
+            )
             resp = client.audio.speech.create(
                 model=self.model, input=text, voice=voice or self.voice, response_format="wav"
             )

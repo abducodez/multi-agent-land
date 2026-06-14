@@ -38,6 +38,19 @@ def register_image_model(app: modal.App, cfg: ImageModel) -> modal.Function:
     # Gated repos (FLUX.2) need a Hugging Face token at download time.
     secrets = [modal.Secret.from_name(HF_SECRET_NAME)] if cfg.gated else []
 
+    # Capture plain primitives (no catalogue class) into the closure: with serialized=True
+    # the function is pickled and unpickled in the container, which does NOT have the
+    # ``media_catalogue`` module — so referencing ``cfg`` directly inside serve() crashes
+    # the container on deserialize (ModuleNotFoundError). Mirrors service.py, whose
+    # serialized serve() captures only a plain command list.
+    repo_id = cfg.repo_id
+    pipeline_class = cfg.pipeline_class
+    dtype_name = cfg.dtype
+    steps = cfg.steps
+    guidance = cfg.guidance
+    cpu_offload = cfg.cpu_offload
+    cache_path = HF_CACHE_PATH
+
     @app.function(
         name=cfg.endpoint_name,
         image=image,
@@ -56,19 +69,19 @@ def register_image_model(app: modal.App, cfg: ImageModel) -> modal.Function:
 
         import diffusers
         import torch
-        from fastapi import FastAPI, Request
+        from fastapi import FastAPI
 
         # Resolve the pipeline class by name. ``DiffusionPipeline`` auto-resolves newer
         # architectures (FLUX.2) from the repo config; classic models fall back to the
         # text2image autodetector.
-        pipeline_cls = getattr(diffusers, cfg.pipeline_class, diffusers.AutoPipelineForText2Image)
-        dtype = getattr(torch, cfg.dtype, torch.float16)
+        pipeline_cls = getattr(diffusers, pipeline_class, diffusers.AutoPipelineForText2Image)
+        dtype = getattr(torch, dtype_name, torch.float16)
 
         # Load the pipeline once per container; subsequent requests reuse it.
-        pipe = pipeline_cls.from_pretrained(cfg.repo_id, torch_dtype=dtype, cache_dir=HF_CACHE_PATH)
+        pipe = pipeline_cls.from_pretrained(repo_id, torch_dtype=dtype, cache_dir=cache_path)
         # CPU offload keeps peak VRAM low (only the active module is resident) so a large
         # model loads on a modest GPU; otherwise pin the whole pipeline on-device for speed.
-        if cfg.cpu_offload:
+        if cpu_offload:
             pipe.enable_model_cpu_offload()
         else:
             pipe = pipe.to("cuda")
@@ -77,11 +90,15 @@ def register_image_model(app: modal.App, cfg: ImageModel) -> modal.Function:
 
         @web.get("/v1/models")
         def models() -> dict:
-            return {"object": "list", "data": [{"id": cfg.repo_id, "object": "model"}]}
+            return {"object": "list", "data": [{"id": repo_id, "object": "model"}]}
 
+        # Take the JSON body as a ``dict`` param (not a raw ``Request``): with
+        # ``from __future__ import annotations`` active, FastAPI resolves the annotation
+        # string against module globals, where ``Request`` (a local import inside serve())
+        # is invisible — so a ``request: Request`` param is mis-read as a query field and
+        # 422s. ``dict`` resolves via builtins and is parsed as the request body.
         @web.post("/v1/images/generations")
-        async def generate(request: Request) -> dict:
-            body = await request.json()
+        async def generate(body: dict) -> dict:
             prompt = str(body.get("prompt", ""))
             try:
                 w, h = (int(x) for x in str(body.get("size", "1024x1024")).lower().split("x"))
@@ -90,9 +107,9 @@ def register_image_model(app: modal.App, cfg: ImageModel) -> modal.Function:
             n = max(1, int(body.get("n", 1) or 1))
             # A distilled (CFG-free) model wants no guidance_scale at all — pass it only
             # when configured, matching the reference impl's prompt-and-steps-only call.
-            kwargs: dict = {"prompt": prompt, "num_inference_steps": cfg.steps, "width": w, "height": h}
-            if cfg.guidance is not None:
-                kwargs["guidance_scale"] = cfg.guidance
+            kwargs: dict = {"prompt": prompt, "num_inference_steps": steps, "width": w, "height": h}
+            if guidance is not None:
+                kwargs["guidance_scale"] = guidance
             out: list[dict] = []
             for _ in range(n):
                 img = pipe(**kwargs).images[0]

@@ -42,6 +42,17 @@ def register_tts_model(app: modal.App, cfg: TTSModel) -> modal.Function:
     image = build_image(cfg)
     target_inputs = max(1, (cfg.max_concurrent_inputs * 3) // 4)
 
+    # Capture plain primitives (no catalogue class) into the closure: with serialized=True
+    # the function is unpickled in the container, which lacks the ``media_catalogue`` module —
+    # referencing ``cfg`` directly inside serve() crashes the container on deserialize
+    # (ModuleNotFoundError). Mirrors service.py's serialized serve(), which captures only
+    # primitives.
+    repo_id = cfg.repo_id
+    default_voice = cfg.default_voice
+    default_sample_rate = cfg.sample_rate
+    cfg_value = cfg.cfg_value
+    inference_timesteps = cfg.inference_timesteps
+
     @app.function(
         name=cfg.endpoint_name,
         image=image,
@@ -58,25 +69,28 @@ def register_tts_model(app: modal.App, cfg: TTSModel) -> modal.Function:
 
         import numpy as np
         import soundfile as sf
-        from fastapi import FastAPI, Request, Response
+        from fastapi import FastAPI, Response
         from voxcpm import VoxCPM
 
         # Load once per container; load_denoiser=False keeps startup lean (no reference-audio
         # denoiser — we synthesize from text/voice-design, not from a noisy reference clip).
-        model = VoxCPM.from_pretrained(cfg.repo_id, load_denoiser=False)
-        sample_rate = int(getattr(model.tts_model, "sample_rate", cfg.sample_rate))
+        model = VoxCPM.from_pretrained(repo_id, load_denoiser=False)
+        sample_rate = int(getattr(model.tts_model, "sample_rate", default_sample_rate))
 
         web = FastAPI()
 
         @web.get("/v1/models")
         def models() -> dict:
-            return {"object": "list", "data": [{"id": cfg.repo_id, "object": "model"}]}
+            return {"object": "list", "data": [{"id": repo_id, "object": "model"}]}
 
+        # Body as a ``dict`` param, not a raw ``Request``: with stringized annotations
+        # (``from __future__ import annotations``) FastAPI can't resolve the locally-imported
+        # ``Request`` type and mis-reads it as a query field (422). ``dict`` resolves via
+        # builtins and is parsed as the JSON body.
         @web.post("/v1/audio/speech")
-        async def speech(request: Request) -> Response:
-            body = await request.json()
+        async def speech(body: dict) -> Response:
             text = str(body.get("input", ""))
-            voice = str(body.get("voice") or cfg.default_voice)
+            voice = str(body.get("voice") or default_voice)
             # VoxCPM2 voice design: a non-"default" voice is a natural-language description
             # (gender, age, tone, pace…) the model renders from, prepended to the line in
             # parentheses. Skip if the caller already supplied their own ``(…)`` prefix.
@@ -84,8 +98,8 @@ def register_tts_model(app: modal.App, cfg: TTSModel) -> modal.Function:
                 text = f"({voice}){text}"
             wav = model.generate(
                 text=text,
-                cfg_value=cfg.cfg_value,
-                inference_timesteps=cfg.inference_timesteps,
+                cfg_value=cfg_value,
+                inference_timesteps=inference_timesteps,
             )
             wav = np.asarray(wav, dtype="float32")
             buf = io.BytesIO()
