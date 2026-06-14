@@ -49,6 +49,18 @@ except Exception:  # pragma: no cover - degrade gracefully if the archive unit i
         return "▶ (run)"
 
 
+try:  # hall of fame: the competitive high-score board (Workstream 6.2 + 6.3)
+    from src.ui.fishbowl.hall_of_fame import build_hall_of_fame, wire_sessions_render
+except Exception:  # pragma: no cover - degrade gracefully if the unit is absent
+
+    def build_hall_of_fame() -> dict:
+        gr.HTML('<div class="fishbowl"><div class="fishbowl-placeholder">🏆 Hall of Fame — coming soon.</div></div>')
+        return {}
+
+    def wire_sessions_render(*_args, **_kwargs) -> None:
+        return None
+
+
 # ── loop-safety backstop ────────────────────────────────────────────────────────
 # Belt-and-suspenders against a runaway autoplay loop: even when the governor never
 # trips (e.g. a generous budget) the timer halts after this many consecutive auto-ticks
@@ -635,6 +647,8 @@ def build_app() -> gr.Blocks:
                 show_handles = build_show()
             with gr.Tab("Telemetry", id="telemetry"):
                 build_telemetry()
+            with gr.Tab("🏆 Hall of Fame", id="hall"):
+                hall_handles = build_hall_of_fame()
 
         # CRT foreground layers (scanlines + vignette, above content, click-through).
         gr.HTML(_CRT_FG_HTML)
@@ -642,6 +656,23 @@ def build_app() -> gr.Blocks:
         # The Archive's gr.render runs client-side after build; by then show_handles
         # exists, so it reads the live panes through this ref.
         archive_refs["show_handles"] = show_handles or {}
+
+        # The Hall of Fame's Replay buttons target the Show panes; wire them after all
+        # tabs build (mirrors the Archive's deferred show_handles trick at :644).
+        wire_sessions_render(
+            hall_handles or {},
+            refs=archive_refs,
+            tabs=tabs,
+            states={
+                "session": session_state,
+                "k": k_state,
+                "scenario": scenario_state,
+                "layout": layout_state,
+                "mind": mind_reader_state,
+                "stopped": stopped_state,
+                "ticks": tick_count_state,
+            },
+        )
 
         _wire(
             tabs=tabs,

@@ -38,11 +38,11 @@ app.py (repo root)         thin shim → from src.ui.fishbowl.app import demo
 The dependency arrow is one-way: `src/ui/fishbowl/` reads the engine's public surface;
 **the engine never imports the UI** (test-enforced by `tests/test_modularity.py`).
 
-## The two tabs
+## The three tabs
 
-Fishbowl is a `gr.Blocks` with a top bar and a `gr.Tabs` holding **The Lab** and
-**The Show**. A per-session `gr.State` carries the live `FishbowlSession` and the
-play-head, so concurrent visitors never share a world.
+Fishbowl is a `gr.Blocks` with a top bar and a `gr.Tabs` holding **The Lab**,
+**The Show**, and **Hall of Fame**. A per-session `gr.State` carries the live
+`FishbowlSession` and the play-head, so concurrent visitors never share a world.
 
 ### The Lab — compose a run
 
@@ -72,6 +72,37 @@ Split); a **"Read their minds" `gr.Checkbox`**; a transport (scrubber `gr.Slider
 ⏮ / ▶ / ⏭, speed `gr.Radio`, and a `gr.Timer`); and a poke strip that injects labelled
 disturbances. `build_show` returns component handles only — every callback is wired in
 `app.py`.
+
+### Hall of Fame — the permanent record
+
+`hall_of_fame.py` (`build_hall_of_fame`) is a read-only tab backed by the dedicated
+`leaderboard_entries` table ([ADR-0035](../adr/0035-hall-of-fame-leaderboard.md)).
+On each render it calls `make_leaderboard_store().entries()` to fetch the rows, then
+passes them to the five aggregation functions in `src/core/leaderboard.py`. It never
+reads the event ledger and never touches the live `Conductor` or the session state.
+The `events` log stays the trace; this table is the scoreboard — linked back via
+`run_id` for replay, not duplicated.
+
+- **Scenario picker** (`gr.Dropdown`) filters all tables to one scenario. The "All
+  scenarios" view is the model leaderboard's default — the cross-scenario headline.
+- **Sessions table** (`gr.Dataframe` of `SessionRow`) lists every finished competitive
+  run: date, cast summary, winner, winning model endpoint, turns, tokens, and end
+  reason. Newest first.
+- **Replay button** — each row carries a run id; clicking it calls `load_replay` from
+  `src/ui/fishbowl/archive.py` (ADR-0027) and hands the `ReplaySession` to The Show.
+  No new transport mechanism; replay is the same path the Archive drawer uses.
+- **Model leaderboard** (`gr.Dataframe` of `ModelRow`) — plays, wins, win rate, and
+  scenarios per model endpoint. This is the headline demo artifact: a single ledger
+  fold turns "MiniCPM-8B has beaten Gemma-12B 7–3 at Debate Duel" into a table cell.
+- **Agent / fairness tables** (`gr.Dataframe` of `AgentRow` and `SeatRow`) — per-seat
+  win rates for the selected scenario. Judges and other non-seat cast members are
+  excluded from `SeatRow` counts so the asymmetry is honest, not hidden.
+- **Headline** — the `headline()` projection renders a single prose sentence above the
+  tables when the ledger holds ≥1 symmetric-seat scenario with ≥2 models having won.
+  Returns `None` at app start (no runs yet) and renders nothing; the UI handles both.
+
+The Hall of Fame refreshes on tab focus, not on a timer. It holds no derived state —
+every render is a fresh projection fold.
 
 ## The render loop — `gr.HTML` + `gr.Timer`
 
@@ -265,3 +296,6 @@ stays green by construction.
 - [observer-pattern.md](observer-pattern.md) — the decoupled-rendering contract this
   realizes.
 - [ADR-0002](../adr/0002-gradio-first.md) — chose Gradio and anticipated this migration.
+- [ADR-0035](../adr/0035-hall-of-fame-leaderboard.md) — Hall of Fame: dedicated
+  `leaderboard_entries` table detached from the event ledger; the five aggregation
+  functions in `leaderboard.py` and the replay reuse via `run_id`.
