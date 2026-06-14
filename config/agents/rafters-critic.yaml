@@ -10,10 +10,11 @@ persona: >
   to what just happened, and nothing else.
 # Never event-woken (subscribes_to: []) so it can never re-trigger on its own remark;
 # instead it is POLLED every turn (schedule.tick_every: 1) and the `commentator` handler
-# decides whether to speak — it holds its tongue until each active cast member has spoken
-# a few times since its last remark (a per-speaker quorum, tunable via MAL_COMMENTATOR_EVERY),
-# then drops one funny, illustrated, spoken-aloud beat. Remove this name from a scenario's
-# cast and the engine never knows it existed (ADR-0011).
+# decides whether to speak — it holds its tongue until a few public speech beats have
+# landed since its last remark (a simple count, default 4, tunable via MAL_COMMENTATOR_EVERY),
+# then drops one funny, illustrated, spoken-aloud beat. A plain count (not a per-speaker
+# quorum) means a stalled speaker can never wedge it, so the media beat always fires.
+# Remove this name from a scenario's cast and the engine never knows it existed (ADR-0011).
 subscribes_to: []
 may_emit:
   - commentary.posted

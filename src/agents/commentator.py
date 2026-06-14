@@ -3,10 +3,12 @@
 Most agents are pure declarative config; the commentator needs a handler for two
 things the generic turn cannot express:
 
-  1. **Cadence.** It holds its tongue until *each* active cast member has spoken a
-     few times since its last remark — a per-speaker quorum, not a fixed turn count.
-     It is polled every turn (``schedule.tick_every: 1``) and ABSTAINS (returns
-     ``None``) until the quorum is met, then delivers exactly one beat.
+  1. **Cadence.** It holds its tongue until a few public speech beats have landed
+     since its last remark — a simple count (``MAL_COMMENTATOR_EVERY``, default 4),
+     not a per-speaker quorum. It is polled every turn (``schedule.tick_every: 1``)
+     and ABSTAINS (returns ``None``) until that many beats accrue, then delivers
+     exactly one beat. A plain count means a stalled or errored speaker can never
+     wedge the cadence (so the illustrated/spoken media beat always eventually fires).
 
   2. **Media.** When it does speak it draws an image of the beat and says the line
      aloud, folding both onto its event — the :class:`FortuneTeller` tool pattern,
@@ -36,53 +38,50 @@ from src.core.registry import register_handler
 _SPEECH_KINDS = frozenset({"agent.spoke", "agent.thought", "oracle.spoke", "world.observed"})
 
 _COMMENTARY_KIND = "commentary.posted"
-_DEFAULT_PER_AGENT = 3
+_DEFAULT_EVERY = 1
 
 
 @register_handler("commentator")
 class Commentator(ManifestAgent):
-    """Color commentary on a quorum cadence, with an illustrated, spoken beat."""
+    """Color commentary on a fixed-cadence beat counter, with an illustrated, spoken beat."""
 
     # ── cadence ───────────────────────────────────────────────────────────────
 
-    def _per_agent(self) -> int:
-        """How many times each active speaker must speak before the next remark.
+    def _every(self) -> int:
+        """How many public speech beats must land before the next remark (default 4).
 
-        A handler constant with a ``MAL_COMMENTATOR_EVERY`` env override — the manifest
-        is ``extra='forbid'`` so this cannot be a YAML field yet (a typed CommentaryConfig
-        sub-schema is the clean follow-up). Floored at 1 so a bad value can't wedge it."""
+        A simple count, not a per-speaker quorum: a stalled or errored speaker can never
+        wedge the cadence (the old quorum required *every* speaker who ever spoke to keep
+        speaking, so one silent agent blocked commentary forever — and starved the media
+        beat with it). A handler constant with a ``MAL_COMMENTATOR_EVERY`` env override —
+        the manifest is ``extra='forbid'`` so this cannot be a YAML field yet (a typed
+        CommentaryConfig sub-schema is the clean follow-up). Floored at 1 so a bad value
+        can't wedge it."""
         try:
-            return max(1, int(os.getenv("MAL_COMMENTATOR_EVERY", str(_DEFAULT_PER_AGENT))))
+            return max(1, int(os.getenv("MAL_COMMENTATOR_EVERY", str(_DEFAULT_EVERY))))
         except ValueError:
-            return _DEFAULT_PER_AGENT
+            return _DEFAULT_EVERY
 
     def _window_since_last(self, events: tuple[Event, ...]) -> tuple[Event, ...]:
-        """Events after this agent's most recent remark — its quorum resets each beat."""
+        """Events after this agent's most recent remark — its counter resets each beat."""
         last = -1
         for i, event in enumerate(events):
             if event.kind == _COMMENTARY_KIND and event.actor == self.name:
                 last = i
         return events[last + 1 :]
 
-    def _active_speakers(self, events: tuple[Event, ...]) -> set[str]:
-        """Cast members (never self) who have spoken at least once this run.
-
-        Judges — whose verdicts are not speech kinds — and the commentator itself fall
-        out naturally, so the quorum tracks only the talking cast."""
+    def _beats_since_last(self, events: tuple[Event, ...]) -> int:
+        """Count cast speech beats (never self) since this critic's last remark."""
         cast = set(self.cast_names)
-        return {e.actor for e in events if e.kind in _SPEECH_KINDS and e.actor in cast and e.actor != self.name}
+        return sum(
+            1
+            for e in self._window_since_last(events)
+            if e.kind in _SPEECH_KINDS and e.actor in cast and e.actor != self.name
+        )
 
-    def _quorum_met(self, events: tuple[Event, ...]) -> bool:
-        """True once every active speaker has spoken ``_per_agent`` times since the last beat."""
-        speakers = self._active_speakers(events)
-        if not speakers:
-            return False
-        need = self._per_agent()
-        counts = dict.fromkeys(speakers, 0)
-        for event in self._window_since_last(events):
-            if event.kind in _SPEECH_KINDS and event.actor in counts:
-                counts[event.actor] += 1
-        return all(counts[name] >= need for name in speakers)
+    def _ready(self, events: tuple[Event, ...]) -> bool:
+        """True once enough fresh speech has landed since the last beat to chime in."""
+        return self._beats_since_last(events) >= self._every()
 
     # ── prompt steering ─────────────────────────────────────────────────────────
 
@@ -104,8 +103,8 @@ class Commentator(ManifestAgent):
         projection: StageProjection,
         recent_events: tuple[Event, ...],
     ) -> Event | None:
-        # Hold until each active speaker has spoken enough since the last remark.
-        if not self._quorum_met(recent_events):
+        # Hold until enough fresh speech beats have landed since the last remark.
+        if not self._ready(recent_events):
             return None
         # The generic turn writes the funny line (offline → the curated stub keyed on
         # this agent's name); kind is constrained to ``commentary.posted`` by may_emit.

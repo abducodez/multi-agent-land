@@ -37,19 +37,20 @@ def _critic(cast_names: list[str]):
 
 
 class TestCadence:
-    def test_abstains_below_quorum(self, monkeypatch):
-        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "2")
+    def test_abstains_below_count(self, monkeypatch):
+        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "4")
         critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
-        # One message from each speaker → the quorum (2 apiece) is not met yet.
+        # Only 2 speech beats so far → the cadence (4) is not met yet.
         events = (
             _ev("world.observed", "scene-whisperer", text="the wood hums"),
             _ev("agent.spoke", "pocket-actor", text="I want the moon"),
         )
         assert critic.act("r", 1, _projection(), events) is None
 
-    def test_emits_one_beat_at_quorum(self, monkeypatch):
-        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "2")
+    def test_emits_one_beat_at_count(self, monkeypatch):
+        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "4")
         critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
+        # 4 speech beats since the last remark → chime in exactly once.
         events = (
             _ev("world.observed", "scene-whisperer", text="a"),
             _ev("agent.spoke", "pocket-actor", text="b"),
@@ -61,7 +62,22 @@ class TestCadence:
         assert event.kind == "commentary.posted"
         assert event.payload.get("text")
 
-    def test_no_active_speakers_means_silence(self, monkeypatch):
+    def test_one_silent_speaker_does_not_wedge_cadence(self, monkeypatch):
+        """A stalled speaker can't block the beat — the old per-speaker quorum bug."""
+        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "4")
+        critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
+        # pocket-actor spoke once then went silent (errored out); scene-whisperer carries
+        # the show. A count-based cadence still fires; a per-speaker quorum never would.
+        events = (
+            _ev("agent.spoke", "pocket-actor", text="I want the moon"),
+            _ev("world.observed", "scene-whisperer", text="a"),
+            _ev("world.observed", "scene-whisperer", text="b"),
+            _ev("world.observed", "scene-whisperer", text="c"),
+        )
+        event = critic.act("r", 5, _projection(), events)
+        assert event is not None and event.kind == "commentary.posted"
+
+    def test_no_speakers_means_silence(self, monkeypatch):
         monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "1")
         critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
         # Only the critic's own / non-speech events exist → nobody to comment on.
@@ -69,8 +85,8 @@ class TestCadence:
         assert critic.act("r", 1, _projection(), events) is None
 
     def test_window_resets_after_a_remark(self, monkeypatch):
-        """The self-trigger guard: a posted beat resets the quorum window."""
-        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "2")
+        """The self-trigger guard: a posted beat resets the cadence window."""
+        monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "4")
         critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
         events = (
             _ev("world.observed", "scene-whisperer", text="a"),
@@ -101,7 +117,7 @@ class TestModularity:
         scenario = reg.build_scenario("thousand-token-wood", tools=default_tool_registry())
         conductor = Conductor(scenario, governor=reg.governor_for("thousand-token-wood"), ledger=Ledger())
         conductor.reset("a village of stage props wakes up")
-        conductor.step(8)  # default quorum (3) trips by ~turn 3
+        conductor.step(8)  # default cadence (4 beats, ~2 turns) trips early in the run
         kinds = [e.kind for e in conductor.ledger.events_for_run(conductor.run_id)]
         assert "commentary.posted" in kinds
 

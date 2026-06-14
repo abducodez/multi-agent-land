@@ -51,6 +51,17 @@ _ctx = ContextBuilder()
 # domain `may_emit` grant — reflection compacts memory, it is not a world action.
 _REFLECTION_KIND = "agent.reflected"
 
+# Anti-loop corrective re-ask: when the whole cast shares one backend, every agent
+# samples the same model and they drift toward the same line. Rather than silently
+# DROP a near-duplicate turn (which sidelines that agent from the round — one model
+# repeating made it look like a single agent monopolised the show), we nudge once for
+# something new and only skip if it still repeats. Keeps the round collaborative.
+_ANTI_REPEAT_NUDGE = (
+    "\n\nIMPORTANT: another voice just said something almost identical to your draft. "
+    "Say something DIFFERENT this turn — a fresh image, a new beat, your own angle. "
+    "Do not echo or paraphrase a line that was already spoken."
+)
+
 # Live fallback when structured output fails: ask for a plain spoken line, NOT JSON.
 # Weak/reasoning models echo a JSON schema (and its example) and leak their reasoning;
 # asking for prose gives a clean line we can strip and ship.
@@ -170,8 +181,11 @@ class ManifestAgent(Agent):
 
         parsed = self._resolve_payload(self.manifest.name, base_prompt, allowed, extra_fields)
 
-        # Don't echo the table: if this line near-duplicates a recent spoken one, skip
-        # the turn (the conductor records it and moves on) so the conversation advances.
+        # Don't echo the table: if this line near-duplicates a recent spoken one, give the
+        # agent ONE corrective re-ask for something new before skipping. A shared backend
+        # makes the whole cast drift toward the same line, so dropping every duplicate
+        # silently sidelines agents from the round; the nudge keeps each one talking. Only
+        # if the re-ask still repeats do we skip the turn so the conversation advances.
         # Live only — the offline stub's curated catalogue is reproducible by design, and
         # de-duplicating its small set of lines would starve demos and tests of events.
         if (
@@ -179,8 +193,11 @@ class ManifestAgent(Agent):
             and parsed.get("kind") in _SPEECH_KINDS
             and self._is_repeat(parsed.get("text", ""), recent_events)
         ):
-            obs.log("agent.repeat_skip", agent=self.manifest.name, text=str(parsed.get("text", ""))[:120])
-            raise AgentOutputError(f"{self.manifest.name}: repeated a recent line — skipped to keep it moving")
+            obs.log("agent.repeat_retry", agent=self.manifest.name, text=str(parsed.get("text", ""))[:120])
+            parsed = self._resolve_payload(self.manifest.name, base_prompt + _ANTI_REPEAT_NUDGE, allowed, extra_fields)
+            if parsed.get("kind") in _SPEECH_KINDS and self._is_repeat(parsed.get("text", ""), recent_events):
+                obs.log("agent.repeat_skip", agent=self.manifest.name, text=str(parsed.get("text", ""))[:120])
+                raise AgentOutputError(f"{self.manifest.name}: repeated a recent line — skipped to keep it moving")
 
         obs.log("agent.acted", agent=self.manifest.name, kind=parsed["kind"], text=str(parsed.get("text", ""))[:160])
         return Event(
