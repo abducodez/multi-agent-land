@@ -72,26 +72,26 @@ def _verdict_line(item: dict) -> str:
 
 
 def _commentate_line(item: dict) -> str:
-    """A color-commentary card: a funny line plus an optional image and audio clip.
+    """A color-commentary card: the critic's funny line, with badges for any media.
 
-    Degrades gracefully — with neither image nor audio it is just the tagged line, so a
-    text-only beat (offline before media is wired, or a live media failure) still renders.
-    ``src`` is a ``/file=`` URL or a ``data:`` URI: it is attribute-escaped (``quote=True``),
-    NEVER body-escaped; the caption and ``alt`` are body-escaped."""
+    The image and audio themselves render as NATIVE gr.Image / gr.Audio in the "FROM THE
+    RAFTERS" cutaway (app shell), not as inline ``<img>``/``<audio>`` here — in Gradio 5+
+    the static-file route moved to ``/gradio_api/file=``, so the old hand-built ``/file=``
+    tags 404. The feed keeps the text beat plus small ``🎨 illustrated`` / ``🔊 voiced``
+    badges so the transcript still records that a beat carried media; a text-only beat
+    (offline, or a live media failure) renders as just the tagged line."""
     text = html.escape(item.get("text") or "")
+    badges = []
+    if (item.get("image") or {}).get("src"):
+        badges.append('<span class="cm-badge">&#127912; illustrated</span>')
+    if (item.get("audio") or {}).get("src"):
+        badges.append('<span class="cm-badge">&#128266; voiced</span>')
+    badge_html = f'<div class="cm-badges">{"".join(badges)}</div>' if badges else ""
     parts = [
         f'<span class="poke-tag cm-tag">{_QUILL} FROM THE RAFTERS</span>',
         f'<p class="cm-text">{text}</p>',
+        badge_html,
     ]
-    image = item.get("image") or {}
-    if image.get("src"):
-        alt = html.escape(image.get("alt") or "the critic's vision")
-        parts.append(f'<img class="cm-img" src="{html.escape(image["src"], quote=True)}" alt="{alt}" loading="lazy">')
-    audio = item.get("audio") or {}
-    if audio.get("src"):
-        parts.append(
-            f'<audio class="cm-audio" controls preload="none" src="{html.escape(audio["src"], quote=True)}"></audio>'
-        )
     # Wear the critic's own phosphor (its manifest hue), like every other coloured feed line.
     hue = item.get("hue")
     style = f' style="--ac:{agent_color(int(hue))};--acd:{agent_color_dim(int(hue))}"' if hue is not None else ""

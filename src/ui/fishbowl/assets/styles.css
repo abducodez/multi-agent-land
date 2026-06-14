@@ -754,8 +754,51 @@ footer { display: none !important; }
 .fishbowl .fe.commentate { border: 1px solid var(--ac, var(--cyan)); border-radius: var(--r); padding: 10px 12px; background: var(--glass); box-shadow: 0 0 16px color-mix(in oklab, var(--ac, var(--cyan)) 22%, transparent); }
 .fishbowl .cm-tag { color: var(--ac, var(--cyan)); border-color: color-mix(in oklab, var(--ac, var(--cyan)) 42%, transparent); }
 .fishbowl .cm-text { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; color: var(--ink); font-style: italic; }
-.fishbowl .cm-img { display: block; width: 100%; max-width: 360px; border-radius: var(--r); border: 1px solid var(--line); margin: 8px 0 4px; box-shadow: 0 0 20px color-mix(in oklab, var(--ac, var(--cyan)) 18%, transparent); }
-.fishbowl .cm-audio { width: 100%; max-width: 360px; height: 32px; margin-top: 6px; }
+/* The image + audio themselves render in the native "FROM THE RAFTERS" cutaway (see
+   #rafters-box below); the feed card keeps small badges noting a beat carried media. */
+.fishbowl .cm-badges { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.fishbowl .cm-badge { font-family: var(--font-display); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--ac, var(--cyan)); padding: 3px 8px; border-radius: 999px; border: 1px solid color-mix(in oklab, var(--ac, var(--cyan)) 40%, transparent); background: color-mix(in oklab, var(--ac, var(--cyan)) 10%, transparent); }
+
+/* ============================================================
+   FROM THE RAFTERS — the heckler's native illustrated + spoken cutaway.
+   Native gr.Image / gr.Audio live OUTSIDE the .fishbowl HTML islands, so these
+   rules are global (the stylesheet is injected app-wide via gr.Blocks(css=...)).
+   A vintage broadcast "now showing" box in the critic's hot magenta (hue 320).
+   ============================================================ */
+#rafters-box {
+  --cm: #ff5cc8;                       /* the heckler's hot magenta */
+  position: relative; margin: 0 0 12px; padding: 11px 11px 9px;
+  border-radius: var(--r-lg, 8px);
+  border: 1px solid color-mix(in oklab, var(--cm) 55%, transparent);
+  background:
+    radial-gradient(130% 90% at 50% -15%, color-mix(in oklab, var(--cm) 20%, transparent), transparent 62%),
+    var(--panel, rgba(8, 26, 33, .9));
+  box-shadow: 0 0 24px color-mix(in oklab, var(--cm) 26%, transparent),
+              inset 0 0 0 1px color-mix(in oklab, var(--cm) 12%, transparent);
+  overflow: hidden; animation: rafters-in .45s ease both;
+}
+@keyframes rafters-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+#rafters-box::before {            /* a sweeping stage-light bar across the top edge */
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cm), transparent); opacity: .85;
+}
+#rafters-box .rafters-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; font-family: var(--font-display, ui-monospace); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--cm); text-shadow: 0 0 10px color-mix(in oklab, var(--cm) 60%, transparent); }
+#rafters-box .rafters-quill { font-size: 13px; }
+#rafters-box .rafters-head::after {     /* blinking "on air" dot */
+  content: ""; margin-left: auto; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--cm); box-shadow: 0 0 9px var(--cm); animation: rafters-blink 1.5s steps(1) infinite;
+}
+@keyframes rafters-blink { 0%, 62% { opacity: 1; } 63%, 100% { opacity: .25; } }
+#rafters-box .rafters-img img {
+  width: 100% !important; border-radius: var(--r, 4px) !important;
+  border: 1px solid color-mix(in oklab, var(--cm) 45%, transparent) !important;
+  box-shadow: 0 0 18px color-mix(in oklab, var(--cm) 22%, transparent);
+  animation: rafters-fade .5s ease both;
+}
+@keyframes rafters-fade { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+#rafters-box .rafters-cap { margin: 9px 2px 5px; font-family: var(--font-body, ui-monospace); font-style: italic; font-size: 12.5px; line-height: 1.5; color: var(--ink, #d2f7f0); }
+#rafters-box .rafters-cap::before { content: "\201C"; } #rafters-box .rafters-cap::after { content: "\201D"; }
+#rafters-box .rafters-audio { margin-top: 4px; }
 
 /* ---- meters ---- */
 .fishbowl .meters { margin: 0 14px 14px; padding: 13px 15px; flex: none; display: flex; flex-direction: column; gap: 12px; }

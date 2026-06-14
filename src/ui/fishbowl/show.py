@@ -72,6 +72,36 @@ def build_show() -> dict[str, object]:
                     elem_classes=["stage-panel"],
                 )
             with gr.Column(scale=2, min_width=300, elem_classes=["rail"]):
+                # ---- FROM THE RAFTERS : the critic's illustrated, spoken cutaway ----
+                # Native gr.Image / gr.Audio (NOT raw <img>/<audio> in the feed HTML): in
+                # Gradio 5+ the static-file route is /gradio_api/file=, so hand-built
+                # /file= URLs 404. The native components emit the correct URL automatically
+                # and auto-allow the served file. The whole box is hidden until the
+                # rafters-critic lands its first illustrated/voiced beat (app shell toggles
+                # visibility), then shows the latest beat as a broadcast-style cutaway.
+                with gr.Column(visible=False, elem_id="rafters-box", elem_classes=["rafters-box"]) as rafters_box:
+                    gr.HTML(
+                        '<div class="rafters-marquee"><span class="rafters-quill">&#9998;</span>'
+                        " FROM THE RAFTERS</div>",
+                        elem_classes=["rafters-head"],
+                    )
+                    handles["rafters_img"] = gr.Image(
+                        value=None,
+                        interactive=False,
+                        show_label=False,
+                        container=False,
+                        elem_classes=["rafters-img"],
+                    )
+                    handles["rafters_cap"] = gr.HTML("", elem_classes=["rafters-cap-wrap"])
+                    handles["rafters_audio"] = gr.Audio(
+                        value=None,
+                        interactive=False,
+                        show_label=False,
+                        container=False,
+                        elem_classes=["rafters-audio"],
+                    )
+                handles["rafters_box"] = rafters_box
+
                 handles["feed_html"] = gr.HTML(
                     value="<div class='feed scroll' aria-label='narrator feed'></div>",
                     elem_id="feed-html",

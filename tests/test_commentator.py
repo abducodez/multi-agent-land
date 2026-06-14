@@ -136,7 +136,9 @@ class TestFeedCard:
         scenario = default_registry().build_scenario("thousand-token-wood", tools=default_tool_registry())
         return [a.manifest for a in scenario.agents]
 
-    def test_renders_image_and_audio(self):
+    def test_renders_media_badges_not_inline_tags(self):
+        """Media now plays in the native gr.Image/gr.Audio cutaway, so the feed card shows
+        badges — not inline <img>/<audio> (those used a /file= route dead in Gradio 5+)."""
         events = (
             _ev("run.started", "conductor", turn=0, seed="s", goal="g"),
             _ev(
@@ -153,9 +155,11 @@ class TestFeedCard:
         assert "fe commentate" in html
         assert "FROM THE RAFTERS" in html
         assert "bold choice, unionising the mushrooms" in html
-        assert "<img" in html and "cm-img" in html
-        assert "/file=runs/media/r/003-img.png" in html
-        assert "<audio" in html and "cm-audio" in html
+        # Badges note the media; the media itself is rendered by the native cutaway.
+        assert "cm-badge" in html and "illustrated" in html and "voiced" in html
+        # No dead inline media tags / hand-built /file= URLs.
+        assert "<img" not in html and "<audio" not in html
+        assert "/file=" not in html
 
     def test_degrades_to_text_only(self):
         events = (

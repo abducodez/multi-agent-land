@@ -479,14 +479,96 @@ def render_show_html(
     )
 
 
+_FILE_PREFIX = "/file="
+
+
+def _media_local_path(src: str | None, kind: str) -> str | None:
+    """Turn a feed media ``src`` into something a native gr.Image/gr.Audio can load.
+
+    Live refs are ``/file=<abs path>`` — strip the prefix to the real filesystem path
+    (Gradio 5+ serves it under ``/gradio_api/file=`` automatically, so the hand-built
+    ``/file=`` URL the HTML feed used would 404). Offline/stub refs are ``data:`` URIs,
+    which native components can't take directly: decode once to a stable, content-hashed
+    file under the media dir (idempotent across ticks → no churn or flicker). An http(s)
+    URL passes through untouched."""
+    if not src:
+        return None
+    if src.startswith(_FILE_PREFIX):
+        return src[len(_FILE_PREFIX) :]
+    if src.startswith("data:"):
+        return _data_uri_to_file(src, kind)
+    return src
+
+
+def _data_uri_to_file(src: str, kind: str) -> str | None:
+    """Decode a ``data:<mime>;base64,<payload>`` URI to a content-hashed file; path or None."""
+    import base64
+    import hashlib
+
+    from src.media.inference import media_output_dir
+
+    try:
+        header, payload = src.split(",", 1)
+        mime = header[5:].split(";")[0]
+        ext = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/webp": "webp",
+            "audio/wav": "wav",
+            "audio/x-wav": "wav",
+            "audio/mpeg": "mp3",
+        }.get(mime, "bin")
+        raw = base64.b64decode(payload)
+        out_dir = media_output_dir() / "_native"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"{kind}-{hashlib.sha1(raw).hexdigest()[:16]}.{ext}"
+        if not path.exists():
+            path.write_bytes(raw)
+        return str(path)
+    except Exception:  # noqa: BLE001 — media is garnish; never break a render
+        return None
+
+
+def _rafters_updates(vm: dict) -> tuple:
+    """Updates for the native "FROM THE RAFTERS" cutaway (box, image, audio, caption).
+
+    Reflects the latest ``commentate`` beat carrying media in the current play-head view —
+    so scrubbing before the first beat hides the box again. Returns four ``gr.update``
+    values aligned to the rafters outputs appended to ``show_outs``."""
+    import html as _html
+
+    latest = None
+    for item in vm.get("feed") or []:
+        if item.get("kind") != "commentate":
+            continue
+        if (item.get("image") or {}).get("src") or (item.get("audio") or {}).get("src"):
+            latest = item  # keep the most recent illustrated/voiced beat
+    if latest is None:
+        return (gr.update(visible=False), gr.update(value=None), gr.update(value=None), gr.update(value=""))
+
+    img_path = _media_local_path((latest.get("image") or {}).get("src"), "img")
+    audio_path = _media_local_path((latest.get("audio") or {}).get("src"), "tts")
+    caption = _html.escape(latest.get("text") or "")
+    cap_html = f'<p class="rafters-cap">{caption}</p>' if caption else ""
+    return (
+        gr.update(visible=True),
+        gr.update(value=img_path),
+        gr.update(value=audio_path),
+        gr.update(value=cap_html),
+    )
+
+
 def _render_at(
     session: FishbowlSession | None, k: int, *, layout: str, mind_reader: bool, thinking: str | None = None
-) -> tuple[str, str, str, str]:
+) -> tuple:
     """Render the Show at play-head *k* (pure prefix view), or empty if no session.
 
+    Returns the four HTML panes (stage, feed, meters, verdict) followed by the four
+    native rafters-cutaway updates (box, image, audio, caption) — aligned to ``show_outs``.
     ``thinking`` (a "who's thinking…" label) overlays the stage while a model call runs."""
     vm = session.snapshot(k) if session is not None else _empty_vm()
-    return render_show_html(vm, layout=layout, mind_reader=mind_reader, thinking=thinking)
+    panes = render_show_html(vm, layout=layout, mind_reader=mind_reader, thinking=thinking)
+    return (*panes, *_rafters_updates(vm))
 
 
 def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max_auto_ticks: int = _MAX_AUTO_TICKS):
@@ -702,7 +784,19 @@ def _wire(
     feed_out = _h(show_handles, "feed", "feed_html")
     meters_out = _h(show_handles, "meters", "meters_html")
     verdict_out = _h(show_handles, "verdict", "verdict_html")
-    show_outs = [c for c in (stage_out, feed_out, meters_out, verdict_out) if c is not None]
+    # The native "FROM THE RAFTERS" cutaway (box visibility + image + audio + caption),
+    # appended AFTER the four HTML panes so the existing positional pane indices
+    # (verdict == panes[3]) are untouched. _render_at returns matching trailing values;
+    # _pad_values trims to len(show_outs), so a build without these handles still works.
+    rafters_box = _h(show_handles, "rafters_box")
+    rafters_img = _h(show_handles, "rafters_img")
+    rafters_audio = _h(show_handles, "rafters_audio")
+    rafters_cap = _h(show_handles, "rafters_cap")
+    show_outs = [
+        c
+        for c in (stage_out, feed_out, meters_out, verdict_out, rafters_box, rafters_img, rafters_audio, rafters_cap)
+        if c is not None
+    ]
 
     # Transport controls (looked up early so output lists can include the timer + the
     # single Play/Pause hero button — its label travels in the tails so it reverts to
