@@ -1,10 +1,11 @@
 """Text-to-speech serving for Modal — an OpenAI-compatible ``/v1/audio/speech`` route.
 
 Same shape as ``image_service.py``: one autoscaling ``@app.function`` per model serving a
-small FastAPI ASGI app that loads the TTS pipeline once per container and answers the
-OpenAI speech shape (``{model, input, voice, response_format}`` → WAV bytes). The engine's
-OpenAI SDK client (``client.audio.speech.create``) calls it unchanged. The model is ~82M
-params — the ≤4B "Tiny Titan" story — and runs comfortably on a small GPU.
+small FastAPI ASGI app that loads the TTS model once per container and answers the OpenAI
+speech shape (``{model, input, voice, response_format}`` → WAV bytes). The engine's OpenAI
+SDK client (``client.audio.speech.create``) calls it unchanged. The model is VoxCPM2 — a 2B
+tokenizer-free diffusion-autoregressive TTS on a MiniCPM-4 backbone — under the ≤4B "Tiny
+Titan" bar and ~8GB VRAM, so it runs comfortably on a small GPU.
 
 Deploy:  uv run scripts/deploy_modal.py tts --keep-warm
 """
@@ -21,17 +22,18 @@ hf_cache_vol = modal.Volume.from_name("huggingface-cache", create_if_missing=Tru
 
 
 def build_image(cfg: TTSModel) -> modal.Image:
-    # Kokoro pulls misaki[en] → spacy-curated-transformers → curated-tokenizers, which
-    # compiles a bundled sentencepiece from C++ source at install time. Modal's add_python
-    # uses a python-build-standalone interpreter whose sysconfig compiler is clang/clang++,
-    # so the build needs clang (+ a C/C++ toolchain) on PATH — the CUDA image ships neither
-    # by default (the "clang++: No such file or directory" build failure). espeak-ng is
-    # Kokoro's runtime grapheme-to-phoneme fallback for out-of-vocabulary words.
+    # VoxCPM2 is tokenizer-free, but its dep chain (voxcpm → funasr → editdistance) compiles
+    # a Cython C++ extension from source at install time. Modal's add_python uses a
+    # python-build-standalone interpreter whose sysconfig compiler is clang/clang++, so the
+    # build needs clang (+ a C/C++ toolchain) on PATH — the CUDA image ships neither by
+    # default (the "clang++: No such file or directory" build failure). ffmpeg backs
+    # torchaudio's audio I/O. VoxCPM2 wants torch ≥2.5; the CUDA 12.9 base meets its CUDA
+    # ≥12.0 floor.
     return (
         modal.Image.from_registry(CUDA_IMAGE, add_python=PYTHON_VERSION)
         .entrypoint([])
-        .apt_install("espeak-ng", "clang", "build-essential")
-        .uv_pip_install("torch", *cfg.extra_pip)
+        .apt_install("ffmpeg", "clang", "build-essential")
+        .uv_pip_install("torch>=2.5.0", *cfg.extra_pip)
         .env({"HF_HUB_CACHE": HF_CACHE_PATH, "HF_XET_HIGH_PERFORMANCE": "1"})
     )
 
@@ -57,9 +59,12 @@ def register_tts_model(app: modal.App, cfg: TTSModel) -> modal.Function:
         import numpy as np
         import soundfile as sf
         from fastapi import FastAPI, Request, Response
-        from kokoro import KPipeline
+        from voxcpm import VoxCPM
 
-        pipeline = KPipeline(lang_code=cfg.lang_code)
+        # Load once per container; load_denoiser=False keeps startup lean (no reference-audio
+        # denoiser — we synthesize from text/voice-design, not from a noisy reference clip).
+        model = VoxCPM.from_pretrained(cfg.repo_id, load_denoiser=False)
+        sample_rate = int(getattr(model.tts_model, "sample_rate", cfg.sample_rate))
 
         web = FastAPI()
 
@@ -72,12 +77,19 @@ def register_tts_model(app: modal.App, cfg: TTSModel) -> modal.Function:
             body = await request.json()
             text = str(body.get("input", ""))
             voice = str(body.get("voice") or cfg.default_voice)
-            if voice == "default":
-                voice = cfg.default_voice
-            chunks = [audio for _, _, audio in pipeline(text, voice=voice)]
-            wav = np.concatenate(chunks) if chunks else np.zeros(1, dtype="float32")
+            # VoxCPM2 voice design: a non-"default" voice is a natural-language description
+            # (gender, age, tone, pace…) the model renders from, prepended to the line in
+            # parentheses. Skip if the caller already supplied their own ``(…)`` prefix.
+            if voice and voice != "default" and not text.lstrip().startswith("("):
+                text = f"({voice}){text}"
+            wav = model.generate(
+                text=text,
+                cfg_value=cfg.cfg_value,
+                inference_timesteps=cfg.inference_timesteps,
+            )
+            wav = np.asarray(wav, dtype="float32")
             buf = io.BytesIO()
-            sf.write(buf, wav, cfg.sample_rate, format="WAV")
+            sf.write(buf, wav, sample_rate, format="WAV")
             return Response(content=buf.getvalue(), media_type="audio/wav")
 
         return web

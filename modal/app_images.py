@@ -1,4 +1,4 @@
-"""Image-generation serving app (small turbo diffusion).
+"""Image-generation serving app (FLUX.2 [klein] 4B text-to-image).
 
 Deploy:    modal deploy modal/app_images.py   (or: uv run scripts/deploy_modal.py images)
 Serve dev: modal serve modal/app_images.py

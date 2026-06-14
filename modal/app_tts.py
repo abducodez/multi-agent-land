@@ -1,4 +1,4 @@
-"""Text-to-speech serving app (small ~82M TTS).
+"""Text-to-speech serving app (VoxCPM2 — a 2B MiniCPM-4-backbone TTS).
 
 Deploy:    modal deploy modal/app_tts.py   (or: uv run scripts/deploy_modal.py tts)
 Serve dev: modal serve modal/app_tts.py
