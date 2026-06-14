@@ -23,7 +23,8 @@ class TestDefaultRegistry:
     def test_build_scenario_yields_manifest_agents_with_profiles(self):
         reg = default_registry()
         sc = reg.build_scenario("thousand-token-wood")
-        assert len(sc.agents) == 4
+        assert len(sc.agents) == 5  # incl. the rafters-critic commentator
+        assert "rafters-critic" in {a.name for a in sc.agents}
         assert all(isinstance(a, ManifestAgent) for a in sc.agents)
         assert sc.goal  # goal threaded from config
         profiles = {a.name: a.manifest.model_profile for a in sc.agents}
@@ -89,7 +90,7 @@ class TestFromWorld:
         reg = Registry.from_world(self._world())
         assert set(reg.agents) >= {"scene-whisperer", "pocket-actor", "echo"}
         sc = reg.build_scenario("thousand-token-wood")
-        assert len(sc.agents) == 4
+        assert len(sc.agents) == 5  # incl. the rafters-critic commentator
         pocket = next(a for a in sc.agents if a.name == "pocket-actor")
         assert pocket.manifest.model_endpoint == "minicpm-4-1-8b"
         assert pocket._route_key == "minicpm-4-1-8b"

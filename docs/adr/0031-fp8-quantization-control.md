@@ -100,10 +100,7 @@ output quantized, we can pin `quantization="fp8"` on it in the catalogue.
   `--quantization fp8` is a different code path and is unaffected. To actually run FP8
   KV cache on such a model, drop `gpu_snapshot` (trade the fast cold start for the KV
   win) — or revisit once the vLLM pin advances past the bug.
-- Possible future unlock: FP8 weights halve the host-RAM needed for sleep level 1,
-  which was the stated blocker for snapshotting `nemotron-3-nano-30b` (~60GB BF16,
-  ADR-0030). Unverified — Nemotron-H may reject on-the-fly FP8 entirely — so this
-  stays a note, not a plan.
+
 - `tests/test_modal_build_command.py` is the first test to assert on `build_command`'s
   argv: it pins the per-model field, the env override precedence, and the force-disable
   token, plus the deploy-script env wiring. Zero mocks (plain `ModelConfig` in, argv

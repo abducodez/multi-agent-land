@@ -1,0 +1,31 @@
+# Logical media capabilities → small models served on Modal behind OpenAI-compatible routes.
+#
+# offline:
+#   null  = live if a media backend is configured (MODAL_WORKSPACE, or a MEDIA_*_BASE_URL
+#           override), else the deterministic stub. UNLIKE config/models.yaml — which
+#           refuses to start without a backend — media GRACEFULLY falls back to the stub:
+#           it is an experimental garnish and must never break a run or the no-key demo.
+#   true  = force the deterministic stub (the test/dev seam).
+#   false = same as null.
+#
+# Each capability names its Modal app + endpoint slug + served model id. The engine builds
+# the URL as https://${MODAL_WORKSPACE}--<app>-<endpoint>.modal.run/v1 (or a
+# MEDIA_IMAGE_BASE_URL / MEDIA_SPEECH_BASE_URL override) and calls it with the OpenAI SDK
+# (.images.generate / .audio.speech.create). The served model ids live in modal/
+# media_catalogue.py (the deploy source of truth). Deploy with:
+#   uv run scripts/deploy_modal.py images tts --keep-warm
+# Both models are ≤4B — the small-model story (a ~1B turbo diffusion image model, an ~82M
+# TTS model), squarely in Tiny Titan territory.
+offline: null
+image:
+  default:
+    app: image-gen        # modal/app_images.py → modal.App("image-gen")
+    endpoint: sd-turbo    # the @modal endpoint slug (matches media_catalogue.py)
+    model: stabilityai/sd-turbo  # ~1B single-step diffusion → fast, ≤4B
+    size: "512x512"
+speech:
+  default:
+    app: audio-tts        # modal/app_tts.py → modal.App("audio-tts")
+    endpoint: kokoro-82m
+    model: hexgrad/Kokoro-82M    # ~82M params → squarely ≤4B (Tiny Titan)
+    voice: default

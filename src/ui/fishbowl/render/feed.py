@@ -26,6 +26,7 @@ from src.ui.fishbowl.adapter import agent_color, agent_color_dim
 
 _BOLT = "⚡"  # poke lines carry a lightning bolt
 _SCALES = "⚖"  # the verdict line carries the scales of judgement
+_QUILL = "✒"  # the rafters-critic tags its color commentary
 
 
 def _last_narrate_index(feed: list[dict]) -> int | None:
@@ -68,6 +69,33 @@ def _poke_line(item: dict) -> str:
 def _verdict_line(item: dict) -> str:
     text = html.escape(item.get("text") or "")
     return f'<div class="fe verdict-fe"><span class="poke-tag">{_SCALES} VERDICT</span><p>{text}</p></div>'
+
+
+def _commentate_line(item: dict) -> str:
+    """A color-commentary card: a funny line plus an optional image and audio clip.
+
+    Degrades gracefully — with neither image nor audio it is just the tagged line, so a
+    text-only beat (offline before media is wired, or a live media failure) still renders.
+    ``src`` is a ``/file=`` URL or a ``data:`` URI: it is attribute-escaped (``quote=True``),
+    NEVER body-escaped; the caption and ``alt`` are body-escaped."""
+    text = html.escape(item.get("text") or "")
+    parts = [
+        f'<span class="poke-tag cm-tag">{_QUILL} FROM THE RAFTERS</span>',
+        f'<p class="cm-text">{text}</p>',
+    ]
+    image = item.get("image") or {}
+    if image.get("src"):
+        alt = html.escape(image.get("alt") or "the critic's vision")
+        parts.append(f'<img class="cm-img" src="{html.escape(image["src"], quote=True)}" alt="{alt}" loading="lazy">')
+    audio = item.get("audio") or {}
+    if audio.get("src"):
+        parts.append(
+            f'<audio class="cm-audio" controls preload="none" src="{html.escape(audio["src"], quote=True)}"></audio>'
+        )
+    # Wear the critic's own phosphor (its manifest hue), like every other coloured feed line.
+    hue = item.get("hue")
+    style = f' style="--ac:{agent_color(int(hue))};--acd:{agent_color_dim(int(hue))}"' if hue is not None else ""
+    return f'<div class="fe commentate"{style}>' + "".join(parts) + "</div>"
 
 
 def render_feed(
@@ -115,6 +143,8 @@ def render_feed(
             rows.append(_verdict_line(item))
         elif kind == "say":
             rows.append(_say_line(item, mind_reader=mind_reader))
+        elif kind == "commentate":
+            rows.append(_commentate_line(item))
         # unknown kinds are silently skipped
 
     container_cls = "feed scroll dense" if dense else "feed scroll"

@@ -25,7 +25,6 @@ servers:
           the modal.App (nvidia-llms / openbmb-llms / google-llms) and endpoint_name
           is the per-model slug from registry.py.
         enum:
-          - nvidia-llms-nemotron-3-nano-30b
           - nvidia-llms-nemotron-3-nano-4b
           - openbmb-llms-minicpm-o-4-5
           - openbmb-llms-minicpm-4-1-8b

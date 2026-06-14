@@ -44,7 +44,7 @@ call() {
 
 # ---- one block per model (run individually if you prefer) -------------------
 run_1() { call 1 "NVIDIA Nemotron-3-Nano-4B (tiny)"      "nvidia-llms"  "nemotron-3-nano-4b"   "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"; }
-run_2() { call 2 "NVIDIA Nemotron-3-Nano-30B (H200)"     "nvidia-llms"  "nemotron-3-nano-30b"  "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"; }
+# run_2 (nemotron-3-nano-30b) removed — dropped from the catalogue for the 8-fn cap.
 run_3() { call 3 "NVIDIA Nemotron-Cascade-14B-Thinking"  "nvidia-llms"  "nemotron-cascade-14b" "nvidia/Nemotron-Cascade-14B-Thinking"; }
 run_4() { call 4 "OpenBMB MiniCPM4.1-8B (fast)"          "openbmb-llms" "minicpm-4-1-8b"       "openbmb/MiniCPM4.1-8B"; }
 run_5() { call 5 "OpenBMB MiniCPM-o-4.5 (omni)"          "openbmb-llms" "minicpm-o-4-5"        "openbmb/MiniCPM-o-4_5"; }
@@ -55,5 +55,5 @@ run_7() { call 7 "Google Gemma-4-26B (strong, H200)"     "google-llms"  "gemma-4
 if [ "$#" -ge 1 ]; then
   "run_$1"
 else
-  for i in 1 2 3 4 5 6 7; do "run_$i"; done
+  for i in 1 3 4 5 6 7; do "run_$i"; done
 fi

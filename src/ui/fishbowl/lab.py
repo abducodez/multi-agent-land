@@ -57,6 +57,7 @@ TOOL_CHOICES: list[tuple[str, str]] = [
     ("mood.read · sense the table", "mood.read"),
     ("oracle · ask the unseen", "oracle"),
     ("tts.speak · give it a voice", "tts.speak"),
+    ("image.render · draw the scene", "image.render"),
 ]
 
 # Friendly labels for the tool ids, for the per-agent tool picker.

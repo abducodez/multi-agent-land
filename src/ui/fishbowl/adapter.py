@@ -223,6 +223,19 @@ def event_to_feed_item(event: Event, cast_names: list[str] | None = None) -> dic
             "thought": p.get("text"),
             "mood": normalize_mood(p.get("mood")),
         }
+    if kind == "commentary.posted":
+        # The rafters-critic's beat: a funny line plus an OPTIONAL generated image and
+        # spoken clip. Mapped BEFORE the ``"text" in p`` catch-all below so its media
+        # refs survive — the catch-all would flatten it to a plain ``say`` line and drop
+        # them. ``image``/``audio`` are ``{"src", ...}`` refs (a ``/file=`` URL or a
+        # ``data:`` URI) or absent → the renderer degrades to a text-only card.
+        return {
+            "kind": "commentate",
+            "agent": event.actor,
+            "text": p.get("text", ""),
+            "image": p.get("image"),
+            "audio": p.get("audio"),
+        }
     if kind in ("agent.spoke", "oracle.spoke") or "text" in p:
         return {
             "kind": "say",

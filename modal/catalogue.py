@@ -156,19 +156,11 @@ NVIDIA_MODELS: tuple[ModelConfig, ...] = (
         # model still reasons — the <think> block just stays inline in the content.
         # Add them later via extra_vllm_args if structured reasoning/tools are needed.
     ),
-    ModelConfig(
-        name="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-        endpoint_name="nemotron-3-nano-30b",
-        # Hybrid Mamba-2 + MoE: ~31B total params in BF16 (~62GB), ~3B active per
-        # token. Needs an 80GB card — an alternate strong model, not a tier default.
-        params_b=31,
-        gpu="A100",
-        max_model_len=32768,
-        trust_remote_code=True,
-        gated=True,
-        max_concurrent_inputs=64,
-        # Same plain-chat posture as the 4B (custom `nano_v3` parser plugin omitted).
-    ),
+    # NOTE: nemotron-3-nano-30b (NVIDIA-Nemotron-3-Nano-30B-A3B-BF16, ~31B/A3B on an
+    # A100) was removed to stay within the workspace's 8 Web-Function cap — it was an
+    # unbound specialist (no tier, unreferenced by the engine/config), so dropping it
+    # costs the live cast nothing. Re-add a ModelConfig here (and free a slot, or lift
+    # the plan cap) to bring it back. See modal/README.md.
     ModelConfig(
         name="nvidia/Nemotron-Cascade-14B-Thinking",
         # Keep the slug short: the public URL is one DNS label

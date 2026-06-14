@@ -195,8 +195,12 @@ def _generate(repo_id, trust_remote_code, use_cache, system, prompt, max_new_tok
     # versions: a bare-tensor return (older default) would be passed positionally into
     # generate() as `inputs`, and 5.x's generate() then does inputs.shape[0] on the dict →
     # AttributeError. Unpacking with ** feeds input_ids AND the attention mask correctly.
+    # enable_thinking=False: a reasoning model (e.g. MiniCPM5) otherwise opens a <think>
+    # block and can spend the whole token budget reasoning, leaving an empty spoken line once
+    # the engine strips the trace (src/core/structured.py). We want a direct line; the kwarg
+    # is forwarded to the chat template and harmlessly ignored by non-reasoning templates.
     inputs = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt", return_dict=True
+        messages, add_generation_prompt=True, return_tensors="pt", return_dict=True, enable_thinking=False
     ).to(device)
     input_len = int(inputs["input_ids"].shape[-1])
     do_sample = temperature and float(temperature) > 0

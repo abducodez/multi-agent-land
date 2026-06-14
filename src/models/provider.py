@@ -218,6 +218,12 @@ class DeterministicTinyModel(ModelProvider):
                 "Please do not applaud yet; my shadow is still rehearsing.",
                 "I lost the map, but the map keeps sending postcards.",
             ],
+            # ── the rafters-critic: affectionate heckles on the wood's beats ─────
+            "rafters-critic": [
+                "Bold choice, unionising the mushrooms before Act Two — I've seen kingdoms held together with less.",
+                "A ladder to the moon? Ambitious. The blocking is immaculate and completely unhinged, and I am here for it.",
+                "Ten minutes in and the compass is pointing at FEELINGS — somewhere a director is weeping into a prop acorn.",
+            ],
             # ── the-steeped spy game: public clues (never the secret word) ──────
             "spy-cara": [
                 "Mine's something you make first thing in the morning. Fuel.",

@@ -12,6 +12,7 @@ MCP server — the capability check is unchanged either way.  The MCP client is
 imported lazily inside the gate, so ``import src.*`` and ``import app`` never
 require ``mcp``.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -58,7 +59,19 @@ def default_tool_registry() -> ToolRegistry:
         # MCP path: leave the registry's in-process table empty so granted tools
         # resolve over MCP; the capability check is unaffected.
         registry.set_resolver(resolver)
+    # Media tools (image.render / tts.speak) back the commentator's illustrated, spoken
+    # beats. They are in-process regardless of the MCP gate, and offline (no media backend)
+    # they resolve to deterministic stubs — so the no-key demo stays whole.
+    _register_media(registry)
     return registry
+
+
+def _register_media(registry: ToolRegistry) -> None:
+    """Attach image.render / tts.speak, backed by an offline-safe media router."""
+    from src.media.inference import build_media_router, media_output_dir
+    from src.media.tools import register_media_tools
+
+    register_media_tools(registry, build_media_router(), media_output_dir())
 
 
 def _mcp_resolver():

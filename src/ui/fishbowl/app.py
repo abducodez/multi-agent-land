@@ -1502,6 +1502,15 @@ def _launch_kwargs() -> dict:
     theme = FishbowlTheme() if callable(FishbowlTheme) else FishbowlTheme
     if theme is not None:
         kwargs["theme"] = theme
+    # Serve the commentator's live media (the rafters-critic's generated images/audio) via
+    # Gradio's /file= path. Live artifacts are written here and referenced by path, so the
+    # exported ledger/trace stays lean; offline stub media is inlined as a data: URI and
+    # needs no allow-listing. The dir may not exist yet — created on first write.
+    from src.media import media_output_dir
+
+    media_dir = media_output_dir()
+    media_dir.mkdir(parents=True, exist_ok=True)
+    kwargs["allowed_paths"] = [str(media_dir)]
     return kwargs
 
 

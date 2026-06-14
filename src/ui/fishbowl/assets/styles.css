@@ -749,6 +749,13 @@ footer { display: none !important; }
 .fishbowl .fe.poke, .fishbowl .fe.verdict-fe { border: 1px solid var(--amber); border-radius: var(--r); padding: 9px 11px; background: rgba(255,207,107,0.07); }
 .fishbowl .poke-tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--amber); border: 1px solid rgba(255,207,107,0.4); border-radius: 999px; padding: 2px 8px; margin-bottom: 6px; }
 .fishbowl .fe.poke p, .fishbowl .fe.verdict-fe p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink); }
+/* The rafters-critic's color-commentary card: a glass panel wearing the critic's own
+   phosphor (--ac, set inline from its hue), holding a funny line + optional image + audio. */
+.fishbowl .fe.commentate { border: 1px solid var(--ac, var(--cyan)); border-radius: var(--r); padding: 10px 12px; background: var(--glass); box-shadow: 0 0 16px color-mix(in oklab, var(--ac, var(--cyan)) 22%, transparent); }
+.fishbowl .cm-tag { color: var(--ac, var(--cyan)); border-color: color-mix(in oklab, var(--ac, var(--cyan)) 42%, transparent); }
+.fishbowl .cm-text { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; color: var(--ink); font-style: italic; }
+.fishbowl .cm-img { display: block; width: 100%; max-width: 360px; border-radius: var(--r); border: 1px solid var(--line); margin: 8px 0 4px; box-shadow: 0 0 20px color-mix(in oklab, var(--ac, var(--cyan)) 18%, transparent); }
+.fishbowl .cm-audio { width: 100%; max-width: 360px; height: 32px; margin-top: 6px; }
 
 /* ---- meters ---- */
 .fishbowl .meters { margin: 0 14px 14px; padding: 13px 15px; flex: none; display: flex; flex-direction: column; gap: 12px; }

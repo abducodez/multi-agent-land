@@ -77,7 +77,6 @@ deliberately **off** where the recipe is unproven or impossible:
 | Model | Why not |
 | --- | --- |
 | Gemma 4 12B / 26B | Nightly vLLM + Transformers modeling backend; sleep mode unverified on that path. |
-| Nemotron-3-Nano-30B | ~60GB BF16 weights won't fit host RAM during sleep level 1. |
 | MiniCPM-o 4.5 | Omni-modal custom code path; kept conservative like its other knobs. |
 
 Rolling back any model is a one-line `gpu_snapshot=False` — the plain function

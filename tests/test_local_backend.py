@@ -293,6 +293,9 @@ def test_generate_unpacks_batchencoding_never_passes_a_positional_dict():
     # apply_chat_template asks for the dict form explicitly (robust whatever the default).
     act = next(c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "apply_chat_template")
     assert any(k.arg == "return_dict" and k.value.value is True for k in act.keywords)
+    # Reasoning models (e.g. MiniCPM5) are told not to think, so a <think> block can't eat the
+    # token budget and leave an empty spoken line; harmlessly ignored by non-reasoning templates.
+    assert any(k.arg == "enable_thinking" and k.value.value is False for k in act.keywords)
 
     # model.generate(**inputs, …): the encoding is unpacked, never a positional dict.
     gen_call = next(c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr == "generate")

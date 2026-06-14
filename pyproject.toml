@@ -47,6 +47,7 @@ dependencies = [
   # `from_pretrained(...).to("cuda")` can leave meta tensors and crash ("Cannot copy out of
   # meta tensor"). Only used on the live local-GPU path; the offline stub never imports it.
   "accelerate>=1.14.0",
+  "pillow>=12.2.0",
 ]
 
 [project.optional-dependencies]

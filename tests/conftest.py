@@ -45,3 +45,11 @@ def _mock_infra(request, monkeypatch):
         return ModelRouter(offline=True, specs=specs)
 
     monkeypatch.setattr(Registry, "build_router", _stub_build_router)
+
+    # Media (image / TTS) also defaults to the deterministic stub in tests, mirroring the
+    # text router — so a dev with MODAL_WORKSPACE set never makes live media calls in the
+    # suite. ``default_tool_registry`` re-imports this name on each call, so the patch sticks.
+    from src.media import inference as media_inference
+    from src.media.router import MediaRouter
+
+    monkeypatch.setattr(media_inference, "build_media_router", lambda env=None: MediaRouter(offline=True))

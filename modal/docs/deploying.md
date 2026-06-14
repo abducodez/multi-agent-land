@@ -246,12 +246,11 @@ total parameter count.
 
 | Model                              | Params (total / active) | Starting GPU |
 | ---------------------------------- | ----------------------- | ------------ |
-| Nemotron-3-Nano-30B-A3B            | ~31B / ~3B (Mamba MoE)  | `H200:1`     |
 | Nemotron-Cascade-14B-Thinking      | ~14B (dense, Qwen3)     | `L40S:1`     |
 | Nemotron-3-Nano-4B                 | ~4B (Tiny Titan)        | `L4:1`       |
 | MiniCPM-o-4_5 (omni)               | ~9B + media encoders    | `L40S:1`     |
 | MiniCPM4.1-8B                      | 8B                      | `L40S:1`     |
-| Gemma-4-26B-A4B-it                 | ~25B / ~4B (MoE)        | `H200:1`     |
+| Gemma-4-26B-A4B-it                 | ~25B / ~4B (MoE)        | `A100:1`     |
 | Gemma-4-12B-it                     | ~12B (dense)            | `L40S:1`     |
 
 These are starting points. If a container OOMs, lower `max_model_len`, raise the
