@@ -15,8 +15,10 @@ from __future__ import annotations
 from src import observability as obs
 from src.core.conductor import Conductor
 from src.core.ledger_factory import make_ledger
+from src.core.leaderboard_store import build_entry, make_leaderboard_store
 from src.core.manifest import AgentManifest
 from src.core.registry import Registry, default_registry
+from src.core.run_index import index_runs
 from src.tools.builtins import default_tool_registry
 from src.ui.fishbowl.view_model import view_model_at
 
@@ -50,6 +52,14 @@ class FishbowlSession:
             governor=self._registry.governor_for(scenario_name),
             ledger=make_ledger(),
         )
+        # The leaderboard's dedicated scoreboard table (ADR-0035) — a *separate* table in
+        # the same database as the event ledger, never the events log.  Built defensively
+        # so a store/config hiccup can never break a live run; a None store just means no
+        # scoreboard row is recorded.
+        try:
+            self._leaderboard = make_leaderboard_store()
+        except Exception:  # pragma: no cover - no store configured (defensive)
+            self._leaderboard = None
         obs.log(
             "session.created",
             scenario=scenario_name,
@@ -182,6 +192,34 @@ class FishbowlSession:
             winning_model=winning_model,
             winning_models=winning_models,
         )
+        self._record_leaderboard()
+
+    def _record_leaderboard(self) -> None:
+        """Write this run's scoreboard row to the dedicated leaderboard table (ADR-0035).
+
+        Detached from the event ledger: the run's events stay the source of truth for the
+        trace, while this persists one denormalised result row to ``leaderboard_entries``
+        — but only when :func:`build_entry` deems the run eligible (finished, a winner, a
+        concrete winning model, and a competitive scenario).  Idempotent via the store's
+        upsert-on-``run_id``, so a verdict that supersedes a budget close replaces the row.
+
+        Fully defensive: any failure is logged and swallowed so a leaderboard hiccup never
+        breaks the show."""
+        store = getattr(self, "_leaderboard", None)
+        if store is None:
+            return
+        try:
+            run_events = self.conductor.ledger.events_for_run(self.conductor.run_id)
+            summary = next((s for s in index_runs(run_events) if s.run_id == self.conductor.run_id), None)
+            if summary is None:
+                return
+            scenario = self._registry.scenarios.get(self._scenario_name)
+            entry = build_entry(summary, getattr(scenario, "competition", None))
+            if entry is not None:
+                store.record(entry)
+                obs.log("leaderboard.recorded", run_id=entry.run_id, scenario=entry.scenario, winner=entry.winner)
+        except Exception:  # pragma: no cover - never let a scoreboard write break a run
+            obs.log("leaderboard.record_failed", level="warning", run_id=self.conductor.run_id)
 
     @property
     def cast(self) -> list[AgentManifest]:

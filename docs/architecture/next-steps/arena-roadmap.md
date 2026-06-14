@@ -257,8 +257,16 @@ here.
 
 ## Workstream 6 — Hall of Fame (leaderboard)
 
-Pure projection over the ledger — no new storage, fits ADR-0001 exactly.
-Requires W1 (run lifecycle) + W2 (structured winner).
+> ✅ *Shipped — 2026-06-14.* The dedicated `leaderboard_entries` table, the five
+> aggregation functions, and the Gradio tab are live.
+> See [ADR-0035](../../adr/0035-hall-of-fame-leaderboard.md) for the as-built record.
+> The plan below is preserved as the original spec.
+
+Dedicated detached table — not a pure projection. A separate `leaderboard_entries`
+table (same Postgres instance as the event ledger, never sharing rows with `events`)
+stores one denormalised result row per decided competitive run. The Hall of Fame reads
+this small table directly; the `events` log stays the trace. `run_id` on every row
+links back to the full trace for replay. Requires W1 (run lifecycle) + W2 (structured winner).
 
 ### 6.1 `src/core/leaderboard.py` — pure functions
 
