@@ -195,6 +195,31 @@ def _cast_defaults(scenario: ScenarioConfig, backend: str = inference.DEFAULT_BA
     return defaults
 
 
+def _merge_roster_model_defaults(
+    scenario: ScenarioConfig,
+    roster: list[str] | None,
+    current_models: dict[str, str] | None,
+    backend: str = inference.DEFAULT_BACKEND,
+) -> dict[str, str]:
+    """Seed default model keys for any *newly-added* worker in *roster*, keeping prior picks.
+
+    When a mind is pulled in from another scenario via the roster edit, its freshly rendered
+    model dropdown never fires ``.change``, so ``cast_models`` would carry no entry for it and
+    Summon would drop its model.  This merges a default key for each worker missing from
+    *current_models* while preserving every selection the user already made.  The Judge is
+    excluded (bound under §04).  ``collect_world_config`` reads only roster names, so any stale
+    entry left from a removed mind is harmless.
+    """
+    caps = scenario_ui_caps(scenario, cast_override=roster)
+    merged = dict(current_models or {})
+    for manifest in caps.worker_cast:
+        if manifest.name not in merged:
+            key = _default_model_key(manifest, backend)
+            if key:
+                merged[manifest.name] = key
+    return merged
+
+
 def _voice_choices() -> list[tuple[str, str]]:
     """Narrator dropdown choices: (friendly label, voice id) for the four voices."""
     return [(f"{name} · {desc}", voice_id) for voice_id, (name, desc) in VOICES.items()]
@@ -506,6 +531,23 @@ def build_lab() -> dict[str, gr.components.Component]:
     backend_radio.change(_reseed_judge_scenario, inputs=[handles["scenario"], backend_radio], outputs=_judge_outputs)
     cast_roster.change(
         _reseed_judge_roster, inputs=[handles["scenario"], backend_radio, cast_roster], outputs=_judge_outputs
+    )
+
+    # Adding a mind from another scenario into this one (a roster edit) renders its card with
+    # a default model, but a freshly rendered dropdown never fires ``.change`` — so without
+    # this the added mind has *no* entry in ``cast_models`` and Summon would drop its model.
+    def _seed_roster_models(scenario_value, backend_value, roster_value, current_models):
+        scn = _resolve_scenario(scenario_value)
+        if scn is None:
+            return current_models or {}
+        return _merge_roster_model_defaults(
+            scn, roster_value, current_models, backend_value or inference.DEFAULT_BACKEND
+        )
+
+    cast_roster.change(
+        _seed_roster_models,
+        inputs=[handles["scenario"], backend_radio, cast_roster, cast_models],
+        outputs=[cast_models],
     )
 
     # Switching scenario *or backend* re-seeds the per-agent states, the roster, and the

@@ -140,6 +140,57 @@ def test_cast_defaults_cover_non_judge_cast_with_catalogue_keys():
     assert all(v in _CATALOGUE_KEYS for v in defaults.values())
 
 
+def test_merge_roster_model_defaults_seeds_added_agent_and_keeps_picks():
+    """A mind imported from another scenario gets a default model; prior picks survive."""
+    registry = default_registry()
+    scenario = registry.scenarios["thousand-token-wood"]
+    # An agent the registry knows but this scenario's cast does not include.
+    outsider = next(n for n, m in sorted(registry.agents.items()) if n not in scenario.cast and m.role != "judge")
+    existing_worker = next(n for n in scenario.cast if registry.agents[n].role != "judge")
+    roster = list(scenario.cast) + [outsider]
+    pinned = {existing_worker: _CATALOGUE_KEYS[-1]}
+
+    merged = lab._merge_roster_model_defaults(scenario, roster, pinned)
+
+    # The newly-added mind now has a real catalogue key — Summon won't drop its model.
+    assert outsider in merged
+    assert merged[outsider] in _CATALOGUE_KEYS
+    # The user's existing selection is preserved untouched.
+    assert merged[existing_worker] == _CATALOGUE_KEYS[-1]
+    # The judge is excluded (it is bound under §04, not the cast picker).
+    judge = next((n for n in roster if registry.agents.get(n) and registry.agents[n].role == "judge"), None)
+    assert judge not in merged
+
+
+def test_added_agent_from_another_scenario_runs_with_its_model():
+    """End-to-end: an imported mind, once seeded, is pinned in the assembled run."""
+    registry = default_registry()
+    scenario = registry.scenarios["thousand-token-wood"]
+    outsider = next(n for n, m in sorted(registry.agents.items()) if n not in scenario.cast and m.role != "judge")
+    roster = list(scenario.cast) + [outsider]
+    # Seed the way the cast_roster.change handler does, starting from an empty state.
+    cast_models = lab._merge_roster_model_defaults(scenario, roster, {})
+
+    world = lab.collect_world_config(
+        scenario=scenario.title,
+        premise=scenario.goal,
+        seed=scenario.default_seed,
+        cast_models=cast_models,
+        judge_policy="Majority Vote",
+        judge_model=_CATALOGUE_KEYS[-1],
+        judge_strictness=50,
+        tools=[],
+        tokens=120_000,
+        max_rounds=25,
+        cast_roster=roster,
+    )
+
+    by_name = {a.name: a for a in world.agents}
+    assert outsider in by_name
+    assert by_name[outsider].model_endpoint in _CATALOGUE_KEYS
+    assert registry.agents[outsider].model_endpoint is None  # registry untouched
+
+
 def test_collect_world_config_pins_selected_models_as_endpoints():
     registry = default_registry()
     scenario = registry.scenarios["thousand-token-wood"]
