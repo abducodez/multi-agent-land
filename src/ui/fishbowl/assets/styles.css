@@ -784,8 +784,9 @@ footer { display: none !important; }
 }
 #rafters-box .rafters-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; font-family: var(--font-display, ui-monospace); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--cm); text-shadow: 0 0 10px color-mix(in oklab, var(--cm) 60%, transparent); }
 #rafters-box .rafters-quill { font-size: 13px; }
+#rafters-box .rafters-count { margin-left: auto; font-size: 10px; letter-spacing: .1em; color: color-mix(in oklab, var(--cm) 75%, var(--ink, #d2f7f0)); opacity: .92; }
 #rafters-box .rafters-head::after {     /* blinking "on air" dot */
-  content: ""; margin-left: auto; width: 7px; height: 7px; border-radius: 50%;
+  content: ""; margin-left: 8px; width: 7px; height: 7px; border-radius: 50%;
   background: var(--cm); box-shadow: 0 0 9px var(--cm); animation: rafters-blink 1.5s steps(1) infinite;
 }
 @keyframes rafters-blink { 0%, 62% { opacity: 1; } 63%, 100% { opacity: .25; } }
@@ -799,6 +800,12 @@ footer { display: none !important; }
 #rafters-box .rafters-cap { margin: 9px 2px 5px; font-family: var(--font-body, ui-monospace); font-style: italic; font-size: 12.5px; line-height: 1.5; color: var(--ink, #d2f7f0); }
 #rafters-box .rafters-cap::before { content: "\201C"; } #rafters-box .rafters-cap::after { content: "\201D"; }
 #rafters-box .rafters-audio { margin-top: 4px; }
+/* ‹ Prev / Next › — walk the critic's run of beats */
+#rafters-box .rafters-nav { display: flex; gap: 8px; margin-top: 10px; }
+#rafters-box .rafters-navbtn { flex: 1; min-width: 0; font-family: var(--font-display, ui-monospace); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--cm); padding: 7px 10px; border-radius: var(--r, 4px); border: 1px solid color-mix(in oklab, var(--cm) 42%, transparent); background: color-mix(in oklab, var(--cm) 9%, transparent); transition: background .15s ease, box-shadow .15s ease, transform .1s ease; }
+#rafters-box .rafters-navbtn:hover:not([disabled]):not(.disabled) { background: color-mix(in oklab, var(--cm) 20%, transparent); box-shadow: 0 0 13px color-mix(in oklab, var(--cm) 38%, transparent); }
+#rafters-box .rafters-navbtn:active:not([disabled]):not(.disabled) { transform: translateY(1px); }
+#rafters-box .rafters-navbtn[disabled], #rafters-box .rafters-navbtn.disabled { opacity: .3; cursor: default; box-shadow: none; }
 
 /* ---- meters ---- */
 .fishbowl .meters { margin: 0 14px 14px; padding: 13px 15px; flex: none; display: flex; flex-direction: column; gap: 12px; }

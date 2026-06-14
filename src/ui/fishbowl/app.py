@@ -529,46 +529,38 @@ def _data_uri_to_file(src: str, kind: str) -> str | None:
         return None
 
 
-def _rafters_updates(vm: dict) -> tuple:
-    """Updates for the native "FROM THE RAFTERS" cutaway (box, image, audio, caption).
+def _rafters_cards(vm: dict) -> list[dict]:
+    """Every illustrated/voiced ``commentate`` beat in this view, as navigable cards.
 
-    Reflects the latest ``commentate`` beat carrying media in the current play-head view —
-    so scrubbing before the first beat hides the box again. Returns four ``gr.update``
-    values aligned to the rafters outputs appended to ``show_outs``."""
+    Each card is ``{"image": path|None, "audio": path|None, "caption": text}`` with media
+    refs already resolved to native-component-loadable filesystem paths. Drives the
+    "FROM THE RAFTERS" gallery under the chat (a ``@gr.render`` over a cards ``gr.State``),
+    so the critic's whole run of beats is browsable, not just the latest."""
     import html as _html
 
-    latest = None
+    cards: list[dict] = []
     for item in vm.get("feed") or []:
         if item.get("kind") != "commentate":
             continue
-        if (item.get("image") or {}).get("src") or (item.get("audio") or {}).get("src"):
-            latest = item  # keep the most recent illustrated/voiced beat
-    if latest is None:
-        return (gr.update(visible=False), gr.update(value=None), gr.update(value=None), gr.update(value=""))
-
-    img_path = _media_local_path((latest.get("image") or {}).get("src"), "img")
-    audio_path = _media_local_path((latest.get("audio") or {}).get("src"), "tts")
-    caption = _html.escape(latest.get("text") or "")
-    cap_html = f'<p class="rafters-cap">{caption}</p>' if caption else ""
-    return (
-        gr.update(visible=True),
-        gr.update(value=img_path),
-        gr.update(value=audio_path),
-        gr.update(value=cap_html),
-    )
+        img = _media_local_path((item.get("image") or {}).get("src"), "img")
+        audio = _media_local_path((item.get("audio") or {}).get("src"), "tts")
+        if not (img or audio):
+            continue  # a text-only beat has no card in the gallery
+        cards.append({"image": img, "audio": audio, "caption": _html.escape(item.get("text") or "")})
+    return cards
 
 
 def _render_at(
     session: FishbowlSession | None, k: int, *, layout: str, mind_reader: bool, thinking: str | None = None
-) -> tuple:
+) -> tuple[str, str, str, str]:
     """Render the Show at play-head *k* (pure prefix view), or empty if no session.
 
-    Returns the four HTML panes (stage, feed, meters, verdict) followed by the four
-    native rafters-cutaway updates (box, image, audio, caption) — aligned to ``show_outs``.
+    Returns the four HTML panes (stage, feed, meters, verdict). The "FROM THE RAFTERS"
+    media gallery is driven separately (a cards ``gr.State`` + ``@gr.render``), NOT here —
+    so the high-frequency autoplay re-render never resets the native audio player mid-load.
     ``thinking`` (a "who's thinking…" label) overlays the stage while a model call runs."""
     vm = session.snapshot(k) if session is not None else _empty_vm()
-    panes = render_show_html(vm, layout=layout, mind_reader=mind_reader, thinking=thinking)
-    return (*panes, *_rafters_updates(vm))
+    return render_show_html(vm, layout=layout, mind_reader=mind_reader, thinking=thinking)
 
 
 def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max_auto_ticks: int = _MAX_AUTO_TICKS):
@@ -784,19 +776,14 @@ def _wire(
     feed_out = _h(show_handles, "feed", "feed_html")
     meters_out = _h(show_handles, "meters", "meters_html")
     verdict_out = _h(show_handles, "verdict", "verdict_html")
-    # The native "FROM THE RAFTERS" cutaway (box visibility + image + audio + caption),
-    # appended AFTER the four HTML panes so the existing positional pane indices
-    # (verdict == panes[3]) are untouched. _render_at returns matching trailing values;
-    # _pad_values trims to len(show_outs), so a build without these handles still works.
-    rafters_box = _h(show_handles, "rafters_box")
-    rafters_img = _h(show_handles, "rafters_img")
-    rafters_audio = _h(show_handles, "rafters_audio")
-    rafters_cap = _h(show_handles, "rafters_cap")
-    show_outs = [
-        c
-        for c in (stage_out, feed_out, meters_out, verdict_out, rafters_box, rafters_img, rafters_audio, rafters_cap)
-        if c is not None
-    ]
+    show_outs = [c for c in (stage_out, feed_out, meters_out, verdict_out) if c is not None]
+
+    # The "FROM THE RAFTERS" gallery is driven on its own clock (a cards gr.State + a
+    # @gr.render in show.py), decoupled from show_outs so the autoplay re-render never
+    # resets the native audio player. Here we just poll the session into the cards state.
+    rafters_cards_state = _h(show_handles, "rafters_cards")
+    rafters_idx_state = _h(show_handles, "rafters_idx")
+    rafters_timer = _h(show_handles, "rafters_timer")
 
     # Transport controls (looked up early so output lists can include the timer + the
     # single Play/Pause hero button — its label travels in the tails so it reverts to
@@ -1277,6 +1264,31 @@ def _wire(
             on_tick,
             inputs=[session_state, k_state, layout_state, mind_reader_state, tick_count_state, play_active_state],
             outputs=[k_state, *show_outs, *_tail_outs, tick_count_state],
+        )
+
+    # ── FROM THE RAFTERS gallery → poll the session into the cards state ──────────
+    # Decoupled from the show re-render so the native audio player isn't reset every
+    # autoplay tick (the cause of the "voice stuck loading"): this low-frequency clock
+    # rebuilds the critic's beat list and writes it to the cards gr.State ONLY when it
+    # actually changed (gr.skip() otherwise → @gr.render doesn't re-run → audio is
+    # left alone). When a NEW beat lands it jumps the view to it; navigating between
+    # cards (the @gr.render's ‹/› buttons) sets the index directly and is never clobbered.
+    if rafters_timer is not None and rafters_cards_state is not None and rafters_idx_state is not None:
+
+        def _refresh_rafters(session, old_cards, old_idx):
+            cards = _rafters_cards(session.snapshot(session.head)) if session is not None else []
+            old_cards = old_cards or []
+            if cards == old_cards:
+                return gr.skip(), gr.skip()  # nothing new → don't touch the gallery
+            # A fresh beat arrives → reveal it; otherwise clamp the current view in range.
+            idx = len(cards) - 1 if len(cards) > len(old_cards) else min(int(old_idx or 0), max(0, len(cards) - 1))
+            return cards, idx
+
+        rafters_timer.tick(
+            _refresh_rafters,
+            inputs=[session_state, rafters_cards_state, rafters_idx_state],
+            outputs=[rafters_cards_state, rafters_idx_state],
+            show_progress="hidden",
         )
 
     # ── speed radio → timer interval; play/pause → timer.active ──────────────────

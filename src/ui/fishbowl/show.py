@@ -72,41 +72,68 @@ def build_show() -> dict[str, object]:
                     elem_classes=["stage-panel"],
                 )
             with gr.Column(scale=2, min_width=300, elem_classes=["rail"]):
-                # ---- FROM THE RAFTERS : the critic's illustrated, spoken cutaway ----
-                # Native gr.Image / gr.Audio (NOT raw <img>/<audio> in the feed HTML): in
-                # Gradio 5+ the static-file route is /gradio_api/file=, so hand-built
-                # /file= URLs 404. The native components emit the correct URL automatically
-                # and auto-allow the served file. The whole box is hidden until the
-                # rafters-critic lands its first illustrated/voiced beat (app shell toggles
-                # visibility), then shows the latest beat as a broadcast-style cutaway.
-                with gr.Column(visible=False, elem_id="rafters-box", elem_classes=["rafters-box"]) as rafters_box:
-                    gr.HTML(
-                        '<div class="rafters-marquee"><span class="rafters-quill">&#9998;</span>'
-                        " FROM THE RAFTERS</div>",
-                        elem_classes=["rafters-head"],
-                    )
-                    handles["rafters_img"] = gr.Image(
-                        value=None,
-                        interactive=False,
-                        show_label=False,
-                        container=False,
-                        elem_classes=["rafters-img"],
-                    )
-                    handles["rafters_cap"] = gr.HTML("", elem_classes=["rafters-cap-wrap"])
-                    handles["rafters_audio"] = gr.Audio(
-                        value=None,
-                        interactive=False,
-                        show_label=False,
-                        container=False,
-                        elem_classes=["rafters-audio"],
-                    )
-                handles["rafters_box"] = rafters_box
-
                 handles["feed_html"] = gr.HTML(
                     value="<div class='feed scroll' aria-label='narrator feed'></div>",
                     elem_id="feed-html",
                     elem_classes=["feed-panel"],
                 )
+
+                # ---- FROM THE RAFTERS : the critic's navigable illustrated + spoken gallery,
+                # sitting UNDER the chat. Native gr.Image / gr.Audio (the /file= route is dead
+                # in Gradio 5+; native components emit the correct /gradio_api/file= URL and
+                # auto-allow the file). Driven by a cards gr.State (the app shell polls the
+                # ledger into it) + a view index, rendered via @gr.render so it only (re)builds
+                # — and only reloads the audio — when a NEW beat arrives or the visitor
+                # navigates, never on the high-frequency autoplay re-render (which previously
+                # reset the audio every tick → "voice stuck loading"). ‹ Prev / Next › walk the
+                # critic's whole run of beats; the newest reveals itself the moment it lands.
+                rafters_cards = gr.State([])
+                rafters_idx = gr.State(0)
+                handles["rafters_cards"] = rafters_cards
+                handles["rafters_idx"] = rafters_idx
+                handles["rafters_timer"] = gr.Timer(value=1.2)
+
+                @gr.render(inputs=[rafters_cards, rafters_idx])
+                def _rafters_gallery(cards, idx):
+                    cards = cards or []
+                    if not cards:
+                        return  # nothing until the heckler's first illustrated/voiced beat
+                    n = len(cards)
+                    i = max(0, min(int(idx or 0), n - 1))
+                    card = cards[i]
+                    with gr.Column(elem_id="rafters-box", elem_classes=["rafters-box"]):
+                        gr.HTML(
+                            '<div class="rafters-head"><span class="rafters-quill">&#9998;</span>'
+                            f' FROM THE RAFTERS<span class="rafters-count">{i + 1}&#8202;/&#8202;{n}</span></div>'
+                        )
+                        if card.get("image"):
+                            gr.Image(
+                                card["image"],
+                                interactive=False,
+                                show_label=False,
+                                container=False,
+                                elem_classes=["rafters-img"],
+                            )
+                        if card.get("caption"):
+                            gr.HTML(f'<p class="rafters-cap">{card["caption"]}</p>')
+                        if card.get("audio"):
+                            # autoplay: the critic's line speaks the moment its card appears.
+                            gr.Audio(
+                                card["audio"],
+                                interactive=False,
+                                show_label=False,
+                                container=False,
+                                autoplay=True,
+                                elem_classes=["rafters-audio"],
+                            )
+                        with gr.Row(elem_classes=["rafters-nav"]):
+                            prev_btn = gr.Button("‹ Prev", elem_classes=["rafters-navbtn"], scale=1, interactive=i > 0)
+                            next_btn = gr.Button(
+                                "Next ›", elem_classes=["rafters-navbtn"], scale=1, interactive=i < n - 1
+                            )
+                        prev_btn.click(lambda i=i: max(0, i - 1), outputs=rafters_idx)
+                        next_btn.click(lambda i=i, n=n: min(n - 1, i + 1), outputs=rafters_idx)
+
                 handles["meters_html"] = gr.HTML(
                     value="<div class='meters panel' aria-label='meters'></div>",
                     elem_id="meters-html",
