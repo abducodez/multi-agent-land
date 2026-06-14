@@ -93,6 +93,14 @@ def build_show() -> dict[str, object]:
                 handles["rafters_idx"] = rafters_idx
                 handles["rafters_timer"] = gr.Timer(value=1.2)
 
+                # Every component carries a STABLE ``key`` so @gr.render treats it as the
+                # same component across re-renders (Gradio docs) and updates it in place
+                # instead of destroying + recreating it. That is the real fix for the audio
+                # "AbortError: signal is aborted without reason": without a key the <gr.Audio>
+                # was unmounted on every new beat, aborting its in-flight loadAudio(); keyed,
+                # the player persists and just swaps its source. ``preserved_by_key=[]`` on the
+                # value-bearing components forces the new card's value to apply each render
+                # (they are display-only, never user-edited, so nothing needs preserving).
                 @gr.render(inputs=[rafters_cards, rafters_idx])
                 def _rafters_gallery(cards, idx):
                     cards = cards or []
@@ -101,10 +109,12 @@ def build_show() -> dict[str, object]:
                     n = len(cards)
                     i = max(0, min(int(idx or 0), n - 1))
                     card = cards[i]
-                    with gr.Column(elem_id="rafters-box", elem_classes=["rafters-box"]):
+                    with gr.Column(elem_id="rafters-box", elem_classes=["rafters-box"], key="rafters-box"):
                         gr.HTML(
                             '<div class="rafters-head"><span class="rafters-quill">&#9998;</span>'
-                            f' FROM THE RAFTERS<span class="rafters-count">{i + 1}&#8202;/&#8202;{n}</span></div>'
+                            f' FROM THE RAFTERS<span class="rafters-count">{i + 1}&#8202;/&#8202;{n}</span></div>',
+                            key="rafters-head",
+                            preserved_by_key=[],
                         )
                         if card.get("image"):
                             gr.Image(
@@ -113,9 +123,15 @@ def build_show() -> dict[str, object]:
                                 show_label=False,
                                 container=False,
                                 elem_classes=["rafters-img"],
+                                key="rafters-img",
+                                preserved_by_key=[],
                             )
                         if card.get("caption"):
-                            gr.HTML(f'<p class="rafters-cap">{card["caption"]}</p>')
+                            gr.HTML(
+                                f'<p class="rafters-cap">{card["caption"]}</p>',
+                                key="rafters-cap",
+                                preserved_by_key=[],
+                            )
                         if card.get("audio"):
                             # autoplay: the critic's line speaks the moment its card appears.
                             gr.Audio(
@@ -125,11 +141,23 @@ def build_show() -> dict[str, object]:
                                 container=False,
                                 autoplay=True,
                                 elem_classes=["rafters-audio"],
+                                key="rafters-audio",
+                                preserved_by_key=[],
                             )
-                        with gr.Row(elem_classes=["rafters-nav"]):
-                            prev_btn = gr.Button("‹ Prev", elem_classes=["rafters-navbtn"], scale=1, interactive=i > 0)
+                        with gr.Row(elem_classes=["rafters-nav"], key="rafters-nav"):
+                            prev_btn = gr.Button(
+                                "‹ Prev",
+                                elem_classes=["rafters-navbtn"],
+                                scale=1,
+                                interactive=i > 0,
+                                key="rafters-prev",
+                            )
                             next_btn = gr.Button(
-                                "Next ›", elem_classes=["rafters-navbtn"], scale=1, interactive=i < n - 1
+                                "Next ›",
+                                elem_classes=["rafters-navbtn"],
+                                scale=1,
+                                interactive=i < n - 1,
+                                key="rafters-next",
                             )
                         prev_btn.click(lambda i=i: max(0, i - 1), outputs=rafters_idx)
                         next_btn.click(lambda i=i, n=n: min(n - 1, i + 1), outputs=rafters_idx)
