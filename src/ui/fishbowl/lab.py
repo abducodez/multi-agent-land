@@ -66,6 +66,16 @@ _TOOL_LABELS: dict[str, str] = {tool_id: label for label, tool_id in TOOL_CHOICE
 # The scenario we lead with — the hackathon's north-star world.
 _PREFERRED_SCENARIO = "thousand-token-wood"
 
+# Models retired from the Lab picker.  ``gemma-4-26b`` stays in the catalogue (and the
+# engine can still resolve it if a config names it), but it is not offered or selectable
+# in the UI — any default that would land on it is substituted with ``_DISABLED_MODELS``'
+# replacement (``gemma-4-12b``).  Keyed/valued by the catalogue casting slug.
+_DISABLED_MODELS: dict[str, str] = {
+    "gemma-4-26b": "gemma-4-12b",  # use the 12B in the UI instead of the 26B
+    "nemotron-cascade-14b": "nemotron-3-nano-4b",  # use the 4B nano until cascade is resolved
+    "minicpm-o-4-5": "minicpm-4-1-8b",  # use the 8B text model instead of the multimodal -o
+}
+
 
 # ── data sourcing (read-only over the registry) ─────────────────────────────────
 
@@ -144,6 +154,10 @@ def model_choices(backend: str = inference.DEFAULT_BACKEND) -> list[tuple[str, s
     backend-qualified key (``hf:<repo>`` for HF; a bare slug for Modal)."""
     choices: list[tuple[str, str]] = []
     for entry in inference.entries(backend):
+        # gemma-4-26b is retired from the UI picker (see _DISABLED_MODELS): skip it so it
+        # is never offered or selectable; the cast uses gemma-4-12b instead.
+        if entry["key"] in _DISABLED_MODELS:
+            continue
         served = entry["served_model_id"].split("/")[-1]
         params = f"{entry['params_b']:g}B" if entry.get("params_b") else "?"
         tier = entry["profile"] or "specialist"
@@ -160,10 +174,12 @@ def _default_model_key(manifest: AgentManifest, backend: str = inference.DEFAULT
     default model for the manifest's tier, else the first model in that backend's
     catalogue (or None when it is empty)."""
     if backend == inference.DEFAULT_BACKEND and manifest.model_endpoint:
-        return manifest.model_endpoint
+        return _DISABLED_MODELS.get(manifest.model_endpoint, manifest.model_endpoint)
     tiered = inference.default_key_for_profile(manifest.model_profile, backend)
     if tiered:
-        return tiered
+        # A UI-disabled default (e.g. the strong tier's gemma-4-26b) is swapped for its
+        # replacement so the picker never seeds a model it won't display.
+        return _DISABLED_MODELS.get(tiered, tiered)
     entries = inference.entries(backend)
     return entries[0]["key"] if entries else None
 

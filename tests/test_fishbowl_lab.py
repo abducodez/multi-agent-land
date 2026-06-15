@@ -83,10 +83,14 @@ def test_judge_model_dropdown_offers_only_catalogue_models():
     assert values, "judge model dropdown should list the catalogue"
 
 
-def test_model_choices_are_all_catalogue_keys():
+def test_model_choices_are_catalogue_keys_minus_ui_disabled():
     choices = lab.model_choices()  # defaults to the Modal backend (bare keys)
+    keys = {key for _label, key in choices}
     # Every selectable value is a real catalogue endpoint key — nothing else is offerable.
-    assert {key for _label, key in choices} == set(_CATALOGUE_KEYS)
+    assert keys == set(_CATALOGUE_KEYS) - set(lab._DISABLED_MODELS)
+    # UI-disabled models (e.g. gemma-4-26b) are never offered, even though they remain
+    # in the catalogue for the engine.
+    assert keys.isdisjoint(lab._DISABLED_MODELS)
     # Labels are human-readable and name the served model.
     assert all(" · " in label for label, _ in choices)
 

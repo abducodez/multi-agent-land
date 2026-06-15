@@ -48,7 +48,7 @@ profiles:
     endpoint: gemma-4-12b            # Google Gemma 4 12B (reasoning)
     temperature: 0.8
     max_tokens: 768
-  strong:
-    endpoint: gemma-4-26b            # Google Gemma 4 26B-A4B-it (MoE, ~4B active; reasoning)
-    temperature: 0.6
-    max_tokens: 1024
+  # strong:
+  #   endpoint: gemma-4-26b            # Google Gemma 4 26B-A4B-it (MoE, ~4B active; reasoning)
+  #   temperature: 0.6
+  #   max_tokens: 1024
