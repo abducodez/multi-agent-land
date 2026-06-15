@@ -37,6 +37,22 @@ def _reset_leaderboard_store():
     _reset_store_cache()
 
 
+def _competitive_scenario_names() -> list[str]:
+    """Every shipped scenario whose ``competition.kind != none`` — the worlds that crown a
+    winner (and so must produce a leaderboard row).  Discovered from the registry so a newly
+    added competitive scenario is covered automatically and can never silently stop recording.
+    Reading config needs no inference backend, so this is safe at collection time."""
+    from src.core.registry import default_registry
+
+    registry = default_registry()
+    out: list[str] = []
+    for name in sorted(registry.scenarios):
+        comp = getattr(registry.scenarios[name], "competition", None)
+        if getattr(comp, "kind", "none") not in ("none", None):
+            out.append(name)
+    return out
+
+
 def _entry(
     run_id: str = "r1",
     scenario: str = "Debate Duel",
@@ -571,3 +587,73 @@ class TestLeaderboardE2E:
         # credited (the offline stub label) — proving Gap B (profile agents) is closed too.
         assert row.winning_models, "a profile-bound winner must still be credited a model"
         assert all(m for m in row.winning_models)
+
+    def test_e2e_verdict_records_row_on_the_same_step(self):
+        """The scoreboard row lands the instant the verdict appears — not a tick later.
+
+        The live Show streams one agent per ``step_one`` (what the autoplay timer drives) and
+        reveals the winner modal the moment the judge rules.  The leaderboard write must ride
+        that same step so the row exists when the modal shows — never deferred to a later tick
+        that may never fire (timer halted, user single-stepping).  Drives ``step_one`` on a
+        default profile-bound cast and asserts the row is present on the verdict step itself.
+        """
+        from src.ui.fishbowl.session import FishbowlSession
+
+        store = make_leaderboard_store(url="sqlite://")
+        session = FishbowlSession("debate-duel")
+        session._leaderboard = store
+        session.reset(seed="same-step")
+
+        recorded_on_verdict_step = False
+        for _ in range(300):
+            session.step_one()  # the exact call the autoplay timer makes
+            if session.has_verdict():
+                rows = [r for r in store.entries() if r.run_id == session.conductor.run_id]
+                recorded_on_verdict_step = len(rows) == 1
+                break
+        assert session.has_verdict(), "the judge should rule on its scheduled finale tick"
+        assert recorded_on_verdict_step, "the row must be written on the same step the verdict lands"
+        assert session.is_finalized()
+
+    @pytest.mark.parametrize("scenario_name", _competitive_scenario_names())
+    def test_e2e_every_competitive_scenario_records_a_row(self, scenario_name):
+        """Every competitive world records a scoreboard row once its judge crowns a winner.
+
+        This is the "in all scenarios" guarantee: the operator's requirement is that *any*
+        scenario that can crown a winner fills the Hall of Fame, not just the two the other
+        E2E tests pin.  Parametrised over the registry, so a newly added versus/judged world
+        (or one whose judge wiring silently breaks) is caught here automatically.
+
+        Drives each scenario exactly as the live timer does — autoplay via
+        :func:`advance_one_tick` until it stops, then the curtain-call ``force_verdict`` if the
+        judge hasn't ruled on its own (the same fallback ``on_tick`` applies at a budget/turn
+        cap).  Uses the default profile-bound cast (no endpoint overrides — the plain "press
+        Play" path), so it also proves the router-resolved winning model is credited.
+        """
+        from src.ui.fishbowl import app as fb_app
+        from src.ui.fishbowl.session import FishbowlSession
+
+        store = make_leaderboard_store(url="sqlite://")
+        session = FishbowlSession(scenario_name)
+        session._leaderboard = store
+        session.reset(seed=f"all-{scenario_name}")
+        assert session.has_judge(), f"{scenario_name} is competitive but has no judge to crown a winner"
+
+        k, ticks = session.head, 0
+        for _ in range(200):
+            k, ticks, stop = fb_app.advance_one_tick(session, k, ticks, max_auto_ticks=200)
+            if stop:
+                break
+        if not session.has_verdict():
+            session.force_verdict()  # the curtain call — guarantees a ruling for any judged cast
+
+        assert session.has_verdict(), f"{scenario_name}: the judge must rule"
+        assert session.is_finalized(), f"{scenario_name}: a ruled run must be closed (run.finished)"
+        rows = [r for r in store.entries() if r.run_id == session.conductor.run_id]
+        assert len(rows) == 1, f"{scenario_name}: exactly one scoreboard row must land"
+        row = rows[0]
+        assert row.reason == "verdict", f"{scenario_name}: the row must record a verdict finish"
+        assert row.winner, f"{scenario_name}: the row must name a winner"
+        assert row.winning_models and all(row.winning_models), (
+            f"{scenario_name}: the winner must be credited a concrete model"
+        )

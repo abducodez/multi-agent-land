@@ -88,18 +88,34 @@ class FishbowlSession:
         with obs.span("session.step", **{"session.n_ticks": n_ticks}):
             obs.log("session.step", n_ticks=n_ticks)
             self.conductor.step(n_ticks)
+            self._finalize_if_verdict()
 
     def step_one(self) -> bool:
         """Advance a single agent (streaming): one event per call so the Show reveals
         each mind the moment it responds, not after the whole turn finishes."""
         with obs.span("session.step", **{"session.streaming": True}):
-            return self.conductor.step_one()
+            advanced = self.conductor.step_one()
+            self._finalize_if_verdict()
+            return advanced
+
+    def _finalize_if_verdict(self) -> None:
+        """Close the run the instant the judge rules — from *any* drive path.
+
+        The judge can land a ``judge.verdict`` during normal play (``step`` / ``step_one``,
+        autoplay or a manual step) or on a forced curtain call.  Whichever it is, the winner
+        must be attributed (``run.finished``) and the Hall of Fame row written as soon as the
+        verdict exists — so the scoreboard fills the moment the winner is revealed in the UI,
+        not on some later tick that may never come.  Idempotent: a no-op once the run is
+        already closed (``finalize`` itself is idempotent too)."""
+        if self.has_verdict() and not self.is_finalized():
+            self.finalize("verdict")
 
     def inject(self, text: str, label: str | None = None) -> None:
         obs.log("session.inject", label=label or "", chars=len(text))
         obs.log("session.inject.text", level="debug", label=label or "", text=text)
         self.conductor.inject_user_event(text, label=label)
         self.conductor.step()
+        self._finalize_if_verdict()
 
     # ── read surface (feeds view_model_at) ────────────────────────────────────────
 
@@ -224,6 +240,7 @@ class FishbowlSession:
         breaks the show."""
         store = getattr(self, "_leaderboard", None)
         if store is None:
+            obs.log("leaderboard.no_store", level="warning", run_id=self.conductor.run_id, scenario=self._scenario_name)
             return
         try:
             run_events = self.conductor.ledger.events_for_run(self.conductor.run_id)
@@ -232,11 +249,30 @@ class FishbowlSession:
                 return
             scenario = self._registry.scenarios.get(self._scenario_name)
             entry = build_entry(summary, getattr(scenario, "competition", None))
-            if entry is not None:
-                store.record(entry)
-                obs.log("leaderboard.recorded", run_id=entry.run_id, scenario=entry.scenario, winner=entry.winner)
-        except Exception:  # pragma: no cover - never let a scoreboard write break a run
-            obs.log("leaderboard.record_failed", level="warning", run_id=self.conductor.run_id)
+            if entry is None:
+                # Not eligible (unfinished, no winner, no winning model, or kind:none) — say
+                # *which*, so an empty Hall of Fame can be diagnosed instead of guessed at.
+                obs.log(
+                    "leaderboard.skipped",
+                    level="debug",
+                    run_id=self.conductor.run_id,
+                    scenario=self._scenario_name,
+                    finished=summary.finished_at is not None,
+                    winner=summary.winner,
+                    winning_models=summary.winning_models,
+                )
+                return
+            store.record(entry)
+            obs.log("leaderboard.recorded", run_id=entry.run_id, scenario=entry.scenario, winner=entry.winner)
+        except Exception as exc:  # never let a scoreboard write break a run — but make it visible
+            obs.log(
+                "leaderboard.record_failed",
+                level="warning",
+                run_id=self.conductor.run_id,
+                scenario=self._scenario_name,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
 
     @property
     def cast(self) -> list[AgentManifest]:
