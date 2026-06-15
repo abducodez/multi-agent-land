@@ -8,18 +8,45 @@ sdk_version: "6.16.0"
 python_version: "3.10"
 app_file: app.py
 pinned: true
+tags:
+  - agent-demo-track
+  - track:wood
+  - sponsor:openai
+  - sponsor:nvidia
+  - sponsor:modal
+  - sponsor:openbmb
+  - achievement:offbrand
+  - achievement:sharing
+  - achievement:fieldnotes
 ---
 
 # Multi-Agent Land
 
-Hackathon project for the **Thousand Token Wood** trail: a small-model, multi-agent
-interactive story engine where the AI is load-bearing for the experience.
+**Small models, one shared log, and a clear view of how agents behave in motion.**
 
-> One tiny event-sourced engine can power many delightful worlds.  A whimsical forest
-> theater, a mystery-solving blackboard swarm, and a tool-using oracle grove are not
-> three apps — they are three YAML configs of the *same* engine.  Small specialist
-> agents write, judge, remember, and render strange interactive scenes, each on the
-> small model that fits its job.
+Most multi-agent systems are hard to inspect: agents call each other directly and the
+state gets messy. We wanted to *see* small agents in action — not isolated prompts, but
+small models interacting over time: **debating, collaborating, playing games, and
+pushing each other** in a shared environment.
+
+So we built one. Every action — thoughts, tool calls, state updates — is appended to a
+single **immutable log**. When one agent asks, another answers, a judge evaluates, and a
+keeper tracks progress, *nothing is sent agent-to-agent* — every interaction flows
+through that one shared ledger. So you can follow the whole run, step by step.
+
+---
+
+## Submission
+
+
+- **🎬 Demo video:** https://youtu.be/v8-zR6eTbDM
+- **📣 Social post:** https://www.linkedin.com/posts/gharsallah_huggingface-hackathon-buildsmall-activity-7472383877991501824-8vxO
+- **💻 GitHub link:** https://github.com/abducodez/multi-agent-land
+- **👥 Team (Hugging Face usernames):** <!-- TODO: list every teammate's HF username; each must register + join the org separately -->
+  - `@agharsalah`
+
+> Tags (track + badges) live in the YAML block at the top of this README — without
+> them the project can't be placed in a category.
 
 ---
 
@@ -67,13 +94,18 @@ A **tiny theater engine** powered by specialist small-model agents.  Agents neve
 call each other directly — they post typed events to a shared append-only ledger,
 and every view (the stage, the memory, the UI) is a projection derived from that log.
 
+**The loop is simple:** define the environment and the agent roles, then launch them in
+the multi-agent lab. Each scenario can run for a long time — agents debate, collaborate,
+play games, and push each other — while a live telemetry view lets you follow the whole
+run step by step.
+
 What makes it *super modular*:
 - **Config, not code.** Agents, scenarios, casts, model tiers, tool grants, and
   budgets are declarative YAML under `config/`, validated by a schema. Add a world
   by adding files — proven by `tests/test_modularity.py` (zero engine edits).
 - **A model per agent.** Each agent declares a logical profile (`tiny`/`fast`/
-  `balanced`/`strong`); a `ModelRouter` binds it to a concrete small model. Mix a
-  ≤4B worker with a ≤32B judge in one cast.
+  `balanced`/`strong`); a `ModelRouter` binds it to a concrete small model served on
+  Modal — **Nemotron, MiniCPM, Gemma**. Mix a ≤4B worker with a ≤32B judge in one cast.
 - **Capability-checked tools.** Agents call tools only if their manifest grants
   them — the contract that fronts in-process tools today and MCP servers later.
 - **Built to run for hours.** The ledger is the checkpoint: `restore()` resumes a
@@ -254,3 +286,8 @@ uv run scripts/snapshot_progress.py
 # 4. Confirm nothing broke
 uv run pytest tests/ -q
 ```
+
+---
+
+Small models, one shared log, and a clear view of how agents behave in motion.
+**This is Multi-Agent Land.**

@@ -49,6 +49,15 @@ except Exception:  # pragma: no cover - degrade gracefully if the archive unit i
         return "▶ (run)"
 
 
+try:  # about: a compact project tour — what it is, the architecture, the submission links
+    from src.ui.fishbowl.about import build_about
+except Exception:  # pragma: no cover - degrade gracefully if the unit is absent
+
+    def build_about() -> dict:
+        gr.HTML('<div class="fishbowl"><div class="fishbowl-placeholder">About — coming soon.</div></div>')
+        return {}
+
+
 try:  # hall of fame: the competitive high-score board (Workstream 6.2 + 6.3)
     from src.ui.fishbowl.hall_of_fame import build_hall_of_fame, wire_sessions_render
 except Exception:  # pragma: no cover - degrade gracefully if the unit is absent
@@ -731,6 +740,8 @@ def build_app() -> gr.Blocks:
                 build_telemetry()
             with gr.Tab("🏆 Hall of Fame", id="hall"):
                 hall_handles = build_hall_of_fame()
+            with gr.Tab("About", id="about"):
+                build_about()
 
         # CRT foreground layers (scanlines + vignette, above content, click-through).
         gr.HTML(_CRT_FG_HTML)
