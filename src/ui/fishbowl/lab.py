@@ -791,6 +791,15 @@ def collect_world_config(
         "genesis_text": (genesis.strip() if isinstance(genesis, str) and genesis.strip() else base.genesis_text),
     }
 
+    # Carry the scenario's competition contract (ADR-0029) into the composed world.  Without
+    # it the rebuilt scenario defaults to ``kind: none`` — so a Lab-composed versus/judged run
+    # would crown a winner in the UI yet never qualify for a Hall of Fame row (``build_entry``
+    # gates on ``kind != "none"``), leaving the leaderboard permanently empty.  If a trimmed
+    # roster makes the block incoherent, ``validate_world`` raises and the caller falls back to
+    # the registry scenario (which still carries it), so the contest is never silently dropped.
+    if base.competition is not None:
+        scenario_dict["competition"] = base.competition.model_dump()
+
     # Governor budget from the run knobs (None/blank → omit so defaults apply).  The new
     # governor params win; legacy ``max_rounds`` / ``tokens`` are honoured as fallbacks.
     governor: dict = {}

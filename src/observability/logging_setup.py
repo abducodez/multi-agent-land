@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import logging
 import sys
-import warnings
 
 from .config import ObservabilitySettings
 from .context import current_context
@@ -139,27 +138,53 @@ class _StoreHandler(logging.Handler):
 
 
 def _configure_warnings() -> None:
-    """Route Python warnings through logging, minus one un-actionable third party.
+    """Route Python warnings through logging.
 
     ``captureWarnings(True)`` funnels ``warnings.warn(...)`` into the ``py.warnings``
     logger, so deprecations surface in the CLI stream (``MAL_LOG_LEVEL``) and the
     Telemetry panel instead of being printed raw to stderr once and lost.
 
-    The exception is Gradio's queueing layer, which uses pandas'
-    ``future.no_silent_downcasting`` option — deprecated in pandas 4. It's harmless,
-    not fixable from our code, and only adds noise, so we drop that one message.
+    We previously filtered out a pandas ``future.no_silent_downcasting`` warning from
+    Gradio's queueing layer. That noise is now addressed at the source: pyproject caps
+    ``pandas<3`` so Gradio stays on the pandas APIs it's written against, rather than us
+    suppressing the symptom.
     """
     logging.captureWarnings(True)
-    warnings.filterwarnings(
-        "ignore",
-        message=r".*future\.no_silent_downcasting.*",
-        category=Warning,
-    )
+
+
+def _install_starlette_status_compat() -> None:
+    """Define Starlette's deprecated HTTP-status aliases as concrete module attributes.
+
+    Gradio's routing layer still reads names like ``starlette.status.HTTP_422_UNPROCESSABLE_ENTITY``
+    (renamed to ``..._CONTENT`` per RFC 9110). Starlette serves those old names through a
+    module ``__getattr__`` that emits a ``DeprecationWarning`` on every access — once per
+    request, since Gradio touches it inside ``queue_join_helper``. We can't pin our way out
+    (Gradio requires ``starlette>=1.0.1`` and every 1.x carries the shim) and the real fix
+    is upstream in Gradio.
+
+    Rather than filter the warning (suppressing the symptom), we remove the *condition*:
+    a module ``__getattr__`` only fires for names missing from the module namespace, so
+    binding each deprecated alias to its concrete value makes the lookup resolve normally
+    and the deprecation path never executes. Values come straight from Starlette's own
+    ``__deprecated__`` table, so we change nothing but where the constant lives. Best-effort
+    and version-tolerant: if Starlette drops the table, this no-ops.
+    """
+    try:
+        from starlette import status
+    except Exception:  # pragma: no cover - starlette always present via gradio, but stay safe
+        return
+    deprecated = getattr(status, "__deprecated__", None)
+    if not isinstance(deprecated, dict):
+        return
+    for name, value in deprecated.items():
+        if name not in vars(status):
+            setattr(status, name, value)
 
 
 def setup_logging(settings: ObservabilitySettings, store: TelemetryStore) -> None:
     """Attach the terminal + store handlers to the root logger (idempotent)."""
     _configure_warnings()
+    _install_starlette_status_compat()
     root = logging.getLogger()
     for handler in list(root.handlers):
         if getattr(handler, "_mal", False):

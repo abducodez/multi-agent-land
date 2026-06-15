@@ -12,7 +12,12 @@ dependencies = [
   "python-dotenv>=1.0.1",
   "openai>=1.40.0",
   "pyyaml>=6.0",
-  "pandas>=2.0",
+  # gradio's queueing layer (`_get_df`) is written against pandas 2.x APIs (the `copy=`
+  # keyword on `infer_objects`, the `future.no_silent_downcasting` option). pandas 3.0
+  # deprecates both, so running pandas 3 makes gradio emit Pandas4Warnings on every queue
+  # poll. Cap at <3 to keep gradio on its supported pandas set until upstream updates it;
+  # our own pandas use is a trivial version-agnostic DataFrame constructor.
+  "pandas>=2.0,<3",
   "modal>=1.4.3",
   "opentelemetry-api>=1.20.0",
   "opentelemetry-sdk>=1.20.0",
