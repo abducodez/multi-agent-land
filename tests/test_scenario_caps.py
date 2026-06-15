@@ -60,10 +60,13 @@ def test_oracle_grove_tool_agent_is_the_only_tool_capable_mind():
     assert "scene-whisperer" not in caps.tool_agents
 
 
-def test_open_table_has_no_tool_agents():
+def test_open_table_conversational_seats_grant_no_tools():
+    # The four conversational seats carry no tools; only the color commentator brings
+    # its best-effort media tools (image.render / tts.speak), so the tool picker is
+    # drawn for it alone.
     caps = scenario_ui_caps("open-table")
-    assert caps.has_tools is False
-    assert caps.tool_agents == {}
+    assert caps.tool_agents == {"rafters-critic": ["image.render", "tts.speak"]}
+    assert caps.has_tools is True
 
 
 def test_available_agents_covers_the_whole_registry():

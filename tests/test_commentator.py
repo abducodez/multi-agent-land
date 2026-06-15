@@ -8,6 +8,8 @@ as a graceful feed card (with and without media).
 
 from __future__ import annotations
 
+import dataclasses
+
 from src.core.conductor import Conductor
 from src.core.events import Event
 from src.core.ledger import Ledger
@@ -98,6 +100,47 @@ class TestCadence:
         # No NEW speech since the remark → abstain again (no runaway self-trigger).
         assert critic.act("r", 6, _projection(), events) is None
 
+    def test_rounds_threshold_is_rounds_times_distinct_speakers(self, monkeypatch):
+        """With no absolute override, the cadence is rounds × distinct cast speakers.
+        Two speakers, rounds=1 → fire after the round's two beats, not before."""
+        monkeypatch.delenv("MAL_COMMENTATOR_EVERY", raising=False)
+        monkeypatch.setenv("MAL_COMMENTATOR_ROUNDS", "1")
+        critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
+        one_beat = (_ev("world.observed", "scene-whisperer", text="a"),)
+        # round_size is still 1 here (one distinct speaker), so one beat already meets it.
+        assert critic.act("r", 1, _projection(), one_beat) is not None
+        full_round = (
+            _ev("world.observed", "scene-whisperer", text="a"),
+            _ev("agent.spoke", "pocket-actor", text="b"),
+        )
+        assert critic.act("r", 2, _projection(), full_round) is not None
+
+    def test_more_rounds_means_more_beats_before_speaking(self, monkeypatch):
+        monkeypatch.delenv("MAL_COMMENTATOR_EVERY", raising=False)
+        monkeypatch.setenv("MAL_COMMENTATOR_ROUNDS", "2")
+        critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
+        # Two distinct speakers → round_size 2, rounds 2 → needs 4 beats. Three abstains.
+        three = (
+            _ev("world.observed", "scene-whisperer", text="a"),
+            _ev("agent.spoke", "pocket-actor", text="b"),
+            _ev("world.observed", "scene-whisperer", text="c"),
+        )
+        assert critic.act("r", 1, _projection(), three) is None
+        four = three + (_ev("agent.spoke", "pocket-actor", text="d"),)
+        assert critic.act("r", 2, _projection(), four) is not None
+
+    def test_manifest_rounds_default_used_when_env_unset(self, monkeypatch):
+        """No env knobs set → the manifest's commentary.rounds (1) drives the cadence."""
+        monkeypatch.delenv("MAL_COMMENTATOR_EVERY", raising=False)
+        monkeypatch.delenv("MAL_COMMENTATOR_ROUNDS", raising=False)
+        critic = _critic(["scene-whisperer", "pocket-actor", "rafters-critic"])
+        assert critic.manifest.commentary is not None and critic.manifest.commentary.rounds == 1
+        full_round = (
+            _ev("world.observed", "scene-whisperer", text="a"),
+            _ev("agent.spoke", "pocket-actor", text="b"),
+        )
+        assert critic.act("r", 1, _projection(), full_round) is not None
+
     def test_offline_summary_is_deterministic(self, monkeypatch):
         monkeypatch.setenv("MAL_COMMENTATOR_EVERY", "1")
         events = (
@@ -122,13 +165,32 @@ class TestModularity:
         assert "commentary.posted" in kinds
 
     def test_scenario_without_critic_has_no_commentary(self):
+        """Opt-out (ADR-0011): drop the critic from a cast and the engine never emits a
+        beat. Proven by removing the agent from a built scenario, so it holds no matter
+        which scenarios ship the critic in their YAML."""
         reg = default_registry()
         scenario = reg.build_scenario("mystery-roots", tools=default_tool_registry())
-        conductor = Conductor(scenario, governor=reg.governor_for("mystery-roots"), ledger=Ledger())
+        critic_free = dataclasses.replace(
+            scenario, agents=tuple(a for a in scenario.agents if a.name != "rafters-critic")
+        )
+        conductor = Conductor(critic_free, governor=reg.governor_for("mystery-roots"), ledger=Ledger())
         conductor.reset("who moved the standing stone?")
         conductor.step(6)
         kinds = {e.kind for e in conductor.ledger.events_for_run(conductor.run_id)}
         assert not any(k.startswith("commentary.") for k in kinds)
+
+    def test_beat_lands_in_a_judged_scenario_without_skewing_the_verdict(self):
+        """The critic is universal: it drops into a judged cast and chimes in, but its
+        commentary.posted is not a competitor kind, so it can never be crowned winner."""
+        reg = default_registry()
+        scenario = reg.build_scenario("debate-duel", tools=default_tool_registry())
+        conductor = Conductor(scenario, governor=reg.governor_for("debate-duel"), ledger=Ledger())
+        conductor.reset("this house believes the forest should never be mapped")
+        conductor.step(10)
+        events = conductor.ledger.events_for_run(conductor.run_id)
+        assert any(e.kind == "commentary.posted" for e in events)
+        winners = [e.payload.get("winner") for e in events if e.kind == "judge.verdict"]
+        assert "rafters-critic" not in winners
 
 
 class TestFeedCard:

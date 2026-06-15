@@ -25,6 +25,7 @@ cast:
   - spy-nil
   - spy-ovo
   - spy-host
+  - rafters-critic   # color commentary; reads only public clues, never a mind's secret word
 # A versus contest with ground truth (ADR-0029): spy-nil holds the near-twin word.
 # The spy-host's verdict accuses a mind; the handler scores that accusation against
 # these teams in code — the herd wins iff the accused really is the spy.

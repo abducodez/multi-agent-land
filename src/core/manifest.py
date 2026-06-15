@@ -53,6 +53,21 @@ class ScheduleConfig(BaseModel):
     """Maximum turns in a row this agent can act without a break."""
 
 
+class CommentaryConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    rounds: int = 1
+    """How many speaking *rounds* must pass between remarks, where one round is
+    approximated as "every known speaker has spoken once" (one beat per distinct
+    cast speaker the commentator has seen). This is the user-facing cadence knob:
+    1 = remark after every round, 2 = every other round, and so on.
+
+    A *count* of beats, not a per-speaker quorum, so a stalled or errored speaker
+    can never wedge the cadence (the media beat always eventually fires). Floored
+    at 1. Read only by the ``commentator`` handler; inert for every other agent.
+    The ``MAL_COMMENTATOR_ROUNDS`` env var overrides this at runtime."""
+
+
 # ── manifest ─────────────────────────────────────────────────────────────────
 
 
@@ -98,6 +113,12 @@ class AgentManifest(BaseModel):
 
     # Scheduling
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+
+    # Commentary cadence — read only by the ``commentator`` handler (inert otherwise).
+    commentary: CommentaryConfig | None = None
+    """Optional cadence config for the ``commentator`` handler. None → handler
+    defaults (one remark per round). Lets a scenario or the UI dial how chatty the
+    commentator is without touching engine code (ADR-0011)."""
 
     # Model
     model_profile: ModelProfile = "fast"

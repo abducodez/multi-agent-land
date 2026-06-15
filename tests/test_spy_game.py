@@ -36,7 +36,9 @@ def test_scenario_and_cast_load() -> None:
     assert "the-steeped" in reg.scenarios
     assert set(_CAST) <= set(reg.agents)
     scn = reg.scenarios["the-steeped"]
-    assert list(scn.cast) == list(_CAST)
+    # The four spies and the host, plus the universal color commentator (an observer
+    # that reads only public clues, never a mind's secret word).
+    assert list(scn.cast) == [*_CAST, "rafters-critic"]
 
 
 def test_players_emit_say_think_split() -> None:

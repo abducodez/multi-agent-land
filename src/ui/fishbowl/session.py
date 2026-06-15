@@ -33,6 +33,17 @@ def _ordered_names(registry: Registry) -> list[str]:
     ]
 
 
+def _cast_model(seat: dict | None) -> str | None:
+    """The concrete winning model for one cast seat (ADR-0029 / ADR-0035).
+
+    Prefers the explicit ``model_endpoint`` (the precise catalogue key an operator pinned —
+    the sponsor-track receipt), then the router-resolved ``model`` stamped on ``run.started``
+    so profile-bound agents (``model_endpoint`` is None) are still credited a real model.
+    Either makes the run eligible for the Hall of Fame; without either it stays None."""
+    seat = seat or {}
+    return seat.get("model_endpoint") or seat.get("model")
+
+
 def scenario_titles(registry: Registry | None = None) -> dict[str, str]:
     """Map display title → internal scenario name, in the app's preferred order."""
     registry = registry or default_registry()
@@ -122,6 +133,14 @@ class FishbowlSession:
         its own (no extra token spend)."""
         return any(e.kind == "judge.verdict" for e in self.conductor.ledger.events_for_run(self.conductor.run_id))
 
+    def is_finalized(self) -> bool:
+        """True once this run has been closed with a ``run.finished`` event.
+
+        The autoplay loop consults this so it can close a run whose judge ruled on its own
+        during a normal tick (writing ``run.finished`` and the Hall of Fame row) without
+        re-finalising on every subsequent tick."""
+        return any(e.kind == "run.finished" for e in self.conductor.ledger.events_for_run(self.conductor.run_id))
+
     def peek_next_actor_name(self) -> str | None:
         """Best-effort name of whoever the next :meth:`step_one` will run.
 
@@ -176,14 +195,12 @@ class FishbowlSession:
                 teams = getattr(getattr(scenario, "competition", None), "teams", None) or {}
                 if winner in cast:
                     winner_kind = "agent"
-                    winning_model = (cast.get(winner) or {}).get("model_endpoint")
+                    winning_model = _cast_model(cast.get(winner))
                     winning_models = [winning_model] if winning_model else []
                 elif winner in teams:
                     winner_kind = "team"
                     winning_models = [
-                        endpoint
-                        for member in teams[winner]
-                        if (endpoint := (cast.get(member) or {}).get("model_endpoint"))
+                        endpoint for member in teams[winner] if (endpoint := _cast_model(cast.get(member)))
                     ]
         self.conductor.finalize(
             reason,

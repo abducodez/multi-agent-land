@@ -529,3 +529,45 @@ class TestLeaderboardE2E:
         # The winner's bound endpoint is credited as the winning model.
         assert row.winning_models == [f"openai/test/{row.winner}"]
         assert row.winning_model == f"openai/test/{row.winner}"
+
+    def test_e2e_natural_verdict_via_autoplay_records_row(self):
+        """Regression: a verdict reached *during normal play* records a Hall of Fame row.
+
+        The bug: ``finalize`` (and so the leaderboard write) was only reachable via
+        ``force_verdict``, which the autoplay loop skips once a verdict already exists. A
+        judge that ruled on its own therefore left ``run.finished`` unwritten and no row.
+
+        Here we drive the *autoplay core* (:func:`advance_one_tick`, the timer's engine) on
+        "debate-duel" — whose ``debate-judge`` rules on its scheduled finale tick, never
+        forced — with the **default profile-bound cast** (no ``model_endpoint`` overrides).
+        We assert the run closes and a row lands, crediting the router-resolved (offline
+        stub) winning model — proving both the finalize gap and the profile-agent model gap
+        are closed for the plain "press Play" demo path.
+        """
+        from src.ui.fishbowl import app as fb_app
+        from src.ui.fishbowl.session import FishbowlSession
+
+        store = make_leaderboard_store(url="sqlite://")
+        session = FishbowlSession("debate-duel")
+        session._leaderboard = store
+        session.reset(seed="seed-natural")
+
+        # Drive the autoplay core exactly as the live timer does — never calling
+        # force_verdict — until it reports the show resolved on a naturally reached verdict.
+        k, ticks = session.head, 0
+        for _ in range(200):
+            k, ticks, stop_reason = fb_app.advance_one_tick(session, k, ticks, max_auto_ticks=200)
+            if stop_reason and session.has_verdict():
+                break
+        assert session.has_verdict(), "the judge should rule on its scheduled finale tick"
+        assert session.is_finalized(), "advance_one_tick must close a naturally reached verdict"
+
+        rows = [r for r in store.entries() if r.run_id == session.conductor.run_id]
+        assert len(rows) == 1, "a naturally reached verdict must write exactly one row"
+        row = rows[0]
+        assert row.reason == "verdict"
+        assert row.winner
+        # Default profile-bound cast: no model_endpoint, so the router-resolved model is
+        # credited (the offline stub label) — proving Gap B (profile agents) is closed too.
+        assert row.winning_models, "a profile-bound winner must still be credited a model"
+        assert all(m for m in row.winning_models)

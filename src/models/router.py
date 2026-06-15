@@ -94,6 +94,18 @@ class ModelRouter:
             return {p: f"stub:{p} (deterministic)" for p in _PROFILE_DECODING}
         return {p: self._spec_for(p).model for p in _PROFILE_DECODING}
 
+    def model_for(self, key: str) -> str:
+        """Concrete model name a *route key* resolves to (a profile tier or a catalogue
+        endpoint key — the same key :attr:`BaseAgent._route_key` hands :meth:`for_profile`).
+
+        Unlike :meth:`describe` (the four tiers only) this also resolves an explicit
+        ``model_endpoint`` key, so a profile- or endpoint-bound winner can be attributed a
+        real model name in the trace and the Hall of Fame.  Offline returns the deterministic
+        stub label so the demo still records a concrete, reproducible winning model."""
+        if self.offline:
+            return f"stub:{key} (deterministic)"
+        return self._spec_for(key).model
+
     # ── internals ───────────────────────────────────────────────────────────
 
     def _build(self, profile: str) -> ModelProvider:

@@ -15,6 +15,7 @@ cast:
   - chat-skeptic
   - chat-host
   - table-judge
+  - rafters-critic   # universal color commentary; an observer, never a winner candidate
 governor:
   max_turns: 40
   max_calls_per_turn: 8

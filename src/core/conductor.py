@@ -104,11 +104,31 @@ class Conductor:
         for agent in self.scenario.agents:
             name = getattr(agent, "name", agent.__class__.__name__)
             manifest = getattr(agent, "manifest", None)
+            endpoint = getattr(manifest, "model_endpoint", None)
+            profile = getattr(manifest, "model_profile", None)
             cast[name] = {
-                "model_endpoint": getattr(manifest, "model_endpoint", None),
-                "model_profile": getattr(manifest, "model_profile", None),
+                "model_endpoint": endpoint,
+                "model_profile": profile,
+                # Resolve the *concrete* model this agent routes to (endpoint key or tier),
+                # so the trace — and the winner attribution / Hall of Fame downstream — names
+                # a real model even for profile-bound agents whose ``model_endpoint`` is None.
+                "model": self._resolve_model_name(agent, endpoint or profile),
             }
         return cast
+
+    @staticmethod
+    def _resolve_model_name(agent: object, route_key: str | None) -> str | None:
+        """Best-effort concrete model name for *agent*'s route key via its router.
+
+        Defensive: any resolution hiccup (no router, catalogue unavailable) degrades to
+        ``None`` rather than breaking ``run.started``."""
+        router = getattr(agent, "router", None)
+        if router is None or not route_key:
+            return None
+        try:
+            return router.model_for(route_key)
+        except Exception:  # pragma: no cover - never let model resolution break a run start
+            return None
 
     def reset(self, seed: str, *, session_id: str | None = None) -> None:
         # NOTE: we no longer wipe the ledger — it is a shared, persistent, append-only
