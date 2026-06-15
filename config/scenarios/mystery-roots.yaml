@@ -14,6 +14,7 @@ cast:
   - hypothesis-former
   - devils-advocate
   - mystery-judge
+  - rafters-critic   # universal color commentary; an observer, never a winner candidate
 # A judged scenario (ADR-0029): no ground truth, so the judge's pick *is* the result —
 # its `winner` field names the mind whose hypothesis the verdict endorses.
 competition:

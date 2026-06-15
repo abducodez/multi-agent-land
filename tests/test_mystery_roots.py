@@ -9,9 +9,10 @@ class TestMysteryRootsScenario:
         s = build_scenario()
         assert s.name == "mystery-roots"
 
-    def test_has_four_agents(self):
+    def test_has_five_agents(self):
+        # Four investigators/judge plus the universal color commentator (an observer).
         s = build_scenario()
-        assert len(s.agents) == 4
+        assert len(s.agents) == 5
 
     def test_example_seeds_non_empty(self):
         s = build_scenario()

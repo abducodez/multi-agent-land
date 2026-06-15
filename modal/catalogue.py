@@ -283,8 +283,14 @@ GOOGLE_MODELS: tuple[ModelConfig, ...] = (
         # Standard gemma4 MoE arch (NOT the unified 12B path): served by a native
         # vLLM class on the pinned stable release (0.19.1+), so NO nightly, no
         # transformers pin, and CUDA graphs + async scheduling work — defaults stand.
-        # Text-only in the cast: zero the auto-detected multimodal caps.
-        mm_limits={"image": 0},
+        # Text-only in the cast, but image is this model's ONLY modality: zeroing it
+        # (as the 12B does for image+audio) empties the active-modality set, and vLLM
+        # 0.21.0's MultiModalBudget then calls max() on an empty sequence and crashes
+        # on boot (compute_mm_encoder_budget). The 12B escapes this only because its
+        # nightly wheel carries the defensive fix; on the stable pin we can't zero the
+        # last modality. So keep one image slot: the vision encoder warmup is tiny and
+        # the cast never sends images. Don't drop this to 0 without bumping vLLM.
+        mm_limits={"image": 1},
     ),
 )
 

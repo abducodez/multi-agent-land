@@ -77,7 +77,13 @@ class TestRunStartedPayload:
         started = next(e for e in c.ledger.events_for_run(c.run_id) if e.kind == "run.started")
         assert started.payload["scenario"] == "verdict-world"
         cast = started.payload["cast"]
-        assert cast["judge"] == {"model_endpoint": "model://judge-endpoint", "model_profile": "strong"}
+        # ``model`` is the router-resolved concrete model; None here because this bare test
+        # stub carries no router (real casts resolve it from the agent's ModelRouter).
+        assert cast["judge"] == {
+            "model_endpoint": "model://judge-endpoint",
+            "model_profile": "strong",
+            "model": None,
+        }
 
     def test_run_started_reports_unbound_agent_without_manifest_fields(self):
         c = Conductor(scenario=Scenario(name="s", default_seed="seed", agents=(_SpeakingAgent(),)))

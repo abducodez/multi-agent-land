@@ -582,8 +582,10 @@ def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max
     show should keep playing and a human-readable string once autoplay must halt — on a
     verdict at the head (the show resolved), a tripped governor budget, or the
     ``max_auto_ticks`` backstop.  Replaying the existing prefix (k < head) is free and
-    never counts toward the backstop; only *generating* ticks do.  This is the pure
-    function the timer handler and the loop-safety tests both drive."""
+    never counts toward the backstop; only *generating* ticks do.  When a live run's judge
+    has ruled it also closes the run (idempotent ``finalize("verdict")``) so the winner is
+    recorded — the one non-Gradio side effect.  This is the function the timer handler and
+    the loop-safety tests both drive."""
     k = int(k or 0)
     ticks = int(ticks or 0)
     if session is None:
@@ -595,6 +597,12 @@ def advance_one_tick(session: FishbowlSession | None, k: int, ticks: int, *, max
             return k + 1, ticks, None
         return k, ticks, "end of session — replay complete"
     if session.has_verdict():
+        # The judge ruled (here or on an earlier tick during normal play). Close the run so
+        # the winner is attributed (run.finished) and the Hall of Fame row is written — the
+        # force_verdict() curtain-call path only fires at a budget/turn cap, so a naturally
+        # reached verdict would otherwise never finalize (ADR-0029 / ADR-0035). Idempotent.
+        if not session.is_finalized():
+            session.finalize("verdict")
         return k, ticks, "verdict reached — the show resolved"
     if k < session.head:
         return k + 1, ticks, None  # replay forward through the existing prefix

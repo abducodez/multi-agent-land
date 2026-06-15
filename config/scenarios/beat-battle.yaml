@@ -15,6 +15,7 @@ cast:
   - storyteller-a
   - storyteller-b
   - beat-judge
+  - rafters-critic   # universal color commentary; an observer, never a winner candidate
 governor:
   max_turns: 24
   max_calls_per_turn: 8

@@ -1,14 +1,20 @@
-"""The Commentator — a modular "color commentary" observer.
+"""The Commentator — a universal "color commentary" observer.
 
-Most agents are pure declarative config; the commentator needs a handler for two
-things the generic turn cannot express:
+It is scenario-agnostic by design: it summarises only the public ledger, so it drops
+into *any* cast (a debate, a mystery, a guessing game, a living scene) with no engine
+edits and no per-scenario flavour. Most agents are pure declarative config; the
+commentator needs a handler for two things the generic turn cannot express:
 
-  1. **Cadence.** It holds its tongue until a few public speech beats have landed
-     since its last remark — a simple count (``MAL_COMMENTATOR_EVERY``, default 4),
-     not a per-speaker quorum. It is polled every turn (``schedule.tick_every: 1``)
-     and ABSTAINS (returns ``None``) until that many beats accrue, then delivers
-     exactly one beat. A plain count means a stalled or errored speaker can never
-     wedge the cadence (so the illustrated/spoken media beat always eventually fires).
+  1. **Cadence, measured in rounds.** It holds its tongue until a configurable number
+     of speaking *rounds* have passed since its last remark — where one round is
+     approximated as "every known speaker has spoken once" (one beat per distinct cast
+     speaker it has seen). The knob is ``commentary.rounds`` in the manifest (default 1),
+     overridable at runtime via ``MAL_COMMENTATOR_ROUNDS``; the legacy
+     ``MAL_COMMENTATOR_EVERY`` still pins an *absolute* beat count when set. It is polled
+     every turn (``schedule.tick_every: 1``) and ABSTAINS (returns ``None``) until the
+     threshold accrues, then delivers exactly one beat. The threshold is a *count* of
+     beats, not a per-speaker quorum, so a stalled or errored speaker can never wedge the
+     cadence (the illustrated/spoken media beat always eventually fires).
 
   2. **Media.** When it does speak it draws an image of the beat and says the line
      aloud, folding both onto its event — the :class:`FortuneTeller` tool pattern,
@@ -38,29 +44,61 @@ from src.core.registry import register_handler
 _SPEECH_KINDS = frozenset({"agent.spoke", "agent.thought", "oracle.spoke", "world.observed"})
 
 _COMMENTARY_KIND = "commentary.posted"
-_DEFAULT_EVERY = 1
+_DEFAULT_ROUNDS = 1
+
+
+def _env_int(name: str) -> int | None:
+    """A floored-at-1 positive int from env var *name*, or None if unset/garbage."""
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
 
 
 @register_handler("commentator")
 class Commentator(ManifestAgent):
-    """Color commentary on a fixed-cadence beat counter, with an illustrated, spoken beat."""
+    """Universal color commentary on a round-paced beat counter, with an illustrated, spoken beat."""
 
     # ── cadence ───────────────────────────────────────────────────────────────
 
-    def _every(self) -> int:
-        """How many public speech beats must land before the next remark (default 4).
+    def _rounds(self) -> int:
+        """How many speaking rounds must pass before the next remark (default 1).
 
-        A simple count, not a per-speaker quorum: a stalled or errored speaker can never
-        wedge the cadence (the old quorum required *every* speaker who ever spoke to keep
-        speaking, so one silent agent blocked commentary forever — and starved the media
-        beat with it). A handler constant with a ``MAL_COMMENTATOR_EVERY`` env override —
-        the manifest is ``extra='forbid'`` so this cannot be a YAML field yet (a typed
-        CommentaryConfig sub-schema is the clean follow-up). Floored at 1 so a bad value
-        can't wedge it."""
-        try:
-            return max(1, int(os.getenv("MAL_COMMENTATOR_EVERY", str(_DEFAULT_EVERY))))
-        except ValueError:
-            return _DEFAULT_EVERY
+        Manifest ``commentary.rounds`` is the declared default; ``MAL_COMMENTATOR_ROUNDS``
+        overrides it at runtime (the user-facing knob). Floored at 1 so a bad value can't
+        wedge the cadence."""
+        env = _env_int("MAL_COMMENTATOR_ROUNDS")
+        if env is not None:
+            return env
+        cfg = self.manifest.commentary
+        return max(1, cfg.rounds) if cfg else _DEFAULT_ROUNDS
+
+    def _round_size(self, events: tuple[Event, ...]) -> int:
+        """Distinct cast speakers (never self) seen so far — one round's worth of beats.
+
+        Self-calibrating: it counts only cast members who have actually spoken, so silent
+        observers and the critic itself don't inflate the round, and a scenario with three
+        speakers needs three beats per round where one with five needs five."""
+        cast = set(self.cast_names)
+        speakers = {e.actor for e in events if e.kind in _SPEECH_KINDS and e.actor in cast and e.actor != self.name}
+        return len(speakers)
+
+    def _every(self, events: tuple[Event, ...]) -> int:
+        """How many public speech beats must land before the next remark.
+
+        Legacy ``MAL_COMMENTATOR_EVERY`` pins an *absolute* beat count when set (back-compat);
+        otherwise it is ``rounds × round_size`` — "this many rounds of everyone-speaks-once".
+        A plain count, not a per-speaker quorum: a stalled or errored speaker can never wedge
+        the cadence (the old quorum required *every* speaker who ever spoke to keep speaking,
+        so one silent agent blocked commentary forever — and starved the media beat with it).
+        Floored at 1."""
+        absolute = _env_int("MAL_COMMENTATOR_EVERY")
+        if absolute is not None:
+            return absolute
+        return max(1, self._rounds() * self._round_size(events))
 
     def _window_since_last(self, events: tuple[Event, ...]) -> tuple[Event, ...]:
         """Events after this agent's most recent remark — its counter resets each beat."""
@@ -81,17 +119,28 @@ class Commentator(ManifestAgent):
 
     def _ready(self, events: tuple[Event, ...]) -> bool:
         """True once enough fresh speech has landed since the last beat to chime in."""
-        return self._beats_since_last(events) >= self._every()
+        return self._beats_since_last(events) >= self._every(events)
 
     # ── prompt steering ─────────────────────────────────────────────────────────
 
     def _build_extra_prompt(self, projection: StageProjection, recent_events: tuple[Event, ...]) -> str:
-        """Steer the model toward a short, funny review of the beat (not narration)."""
+        """Steer the model toward a genuinely funny one-line heckle of the beat.
+
+        Small models can't be funny on the word "funny" alone — they default to
+        cheerful narration. So we hand them a comedian's recipe: latch onto one
+        concrete detail, then break it with a twist (absurd comparison, deadpan
+        undercut, or mock-serious overreaction). Specific + surprising = the laugh."""
         return (
             "YOUR JOB\n"
-            "Deliver ONE punchy, funny review of the beat above — one or two sentences, "
-            "like a heckle from the cheap seats. Be specific to what the cast just did. "
-            "No stage directions, no quotation marks, no lists. Just the line."
+            "Heckle the beat above with ONE short, funny line — the kind that gets a laugh, "
+            "not a polite nod. Work the bit like this:\n"
+            "- Grab ONE specific thing the cast just did — a prop, a word, a choice — and make "
+            "THAT the target. Never a vague 'well, that happened'.\n"
+            "- Then break it: an absurd comparison, a deadpan undercut, or a mock-serious "
+            "overreaction. The twist is where the laugh lives — surprise beats cleverness.\n"
+            "- Punch up at the drama, never down at a person. Affectionate, never cruel.\n"
+            "- ONE sentence. No narration, no stage directions, no quotation marks, no lists, "
+            "no emoji, no setup-then-punchline. Just the line, like you shouted it from the rafters."
         )
 
     # ── turn ──────────────────────────────────────────────────────────────────
