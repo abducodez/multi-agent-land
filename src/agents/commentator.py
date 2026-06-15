@@ -124,12 +124,23 @@ class Commentator(ManifestAgent):
     # ── prompt steering ─────────────────────────────────────────────────────────
 
     def _build_extra_prompt(self, projection: StageProjection, recent_events: tuple[Event, ...]) -> str:
-        """Steer the model toward a short, funny summary of the beat (not narration)."""
+        """Steer the model toward a genuinely funny one-line heckle of the beat.
+
+        Small models can't be funny on the word "funny" alone — they default to
+        cheerful narration. So we hand them a comedian's recipe: latch onto one
+        concrete detail, then break it with a twist (absurd comparison, deadpan
+        undercut, or mock-serious overreaction). Specific + surprising = the laugh."""
         return (
             "YOUR JOB\n"
-            "Sum up the beat above in ONE punchy, funny line — capture what the cast just "
-            "did, with affectionate wit, like a heckle from the cheap seats. Be specific. "
-            "No stage directions, no quotation marks, no lists. Just the line."
+            "Heckle the beat above with ONE short, funny line — the kind that gets a laugh, "
+            "not a polite nod. Work the bit like this:\n"
+            "- Grab ONE specific thing the cast just did — a prop, a word, a choice — and make "
+            "THAT the target. Never a vague 'well, that happened'.\n"
+            "- Then break it: an absurd comparison, a deadpan undercut, or a mock-serious "
+            "overreaction. The twist is where the laugh lives — surprise beats cleverness.\n"
+            "- Punch up at the drama, never down at a person. Affectionate, never cruel.\n"
+            "- ONE sentence. No narration, no stage directions, no quotation marks, no lists, "
+            "no emoji, no setup-then-punchline. Just the line, like you shouted it from the rafters."
         )
 
     # ── turn ──────────────────────────────────────────────────────────────────
